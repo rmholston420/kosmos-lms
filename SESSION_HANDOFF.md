@@ -1,28 +1,31 @@
-# Kosmos Session Handoff — 2026-09-10 06:00 EDT
+# Kosmos Session Handoff — 2026-09-10 06:40 EDT
 
 ## Current build-sequencing position
-- **Stage / phase:** Stage 8.2 LANDED · Stage 8.3 next
-- **Plugin / kernel component:** `plugins/tektos/runtime/turn_loop.py::TektosTurnLoop` (grown in-place from Stage 3.13 anchor per ADR-104); kernel `_boot_tektos_turn_loop` slot wired between `_boot_session` and Gnosis seeder
-- **Port(s) in progress:** none (Stage 8.2 is a port-consuming extension, not a port addition)
+- **Stage / phase:** Stage 8.3 **COMPLETE** — Stage 8.4 next
+- **Plugin / kernel component:** `plugins/tektos/{reflection,synthesis,experience}/` landed; Stage 8.4 target is planner + task-decomposer under `plugins/tektos/planner/` (and possibly `plugins/tektos/decomposer/`) with a new formal `PlannerPort` per ADR-105 deferral D9
+- **Port(s) in progress:** none — Stage 8.3 required no new formal port; Stage 8.4 will introduce `PlannerPort`
 
 ## Completed this session
-- Stage 8.2 donor audit (`docs/stage-8-2-donor-audit.md`, 237 lines) — enumerated all donor `src/tektos/` subsystems and classified extend-vs-rewrite-vs-defer disposition; shared to user.
-- ADR-104 authored + ratified with 11 explicit decisions (D1–D11) covering scope, SessionPort/LLMPort/SandboxPort/ResourcePort integrations, HookRegistry rejection, read-only-budget disposition, explicit deferrals, kernel wiring, TektosPlugin dataclass amendment.
-- `docs/adrs/README.md` index updated with ADR-104 row (inserted ahead of ADR-103).
-- `plugins/tektos/runtime/turn_loop.py` grew 322 → 617 lines: `__init__` gains four keyword-only optional ports (`session_port`/`llm`/`sandbox`/`resource`); `run_turn` gains three keyword-only optionals (`session_id`/`system_prompt`/`llm_options`); SessionPort transitions across every stop-reason branch (all wrapped in try/except); single non-streaming `llm.generate` call with `TurnOutcome.llm_response`; per-tool `sandbox.run` when `spec.sandbox_request` set with `ToolCallOutcome.sandbox_result`; post-turn `resource.can_allocate(COMPUTE, 1)` flagging `TurnOutcome.resource_exhausted` (fail-open); two new events `tektos.agent.turn.llm_completed` + `tektos.agent.turn.sandbox_completed`; `session_id` added to every existing event payload when bound; new `TektosTurnLoop.interrupt(session_id, reason)` external surface; new stop reasons `llm_error`/`sandbox_error`/`resource_exhausted`; new type-surface fields on `TurnOutcome`/`ToolCallSpec`/`ToolCallOutcome`.
-- `plugins/tektos/plugin.py` — added `turn_loop: object | None = field(default=None)` field (ADR-104 D11).
-- `kernel/app.py` — added `_BootRegistry.tektos_turn_loop: Any = None` slot; added `_boot_tektos_turn_loop()` between `_boot_session` and Gnosis seeder; env-gate `KOSMOS_TEKTOS_TURN_LOOP={off,on}` (default `off`); ADR-101 degrade when any Stage 3.13 base collaborator (immune/loop_safety/thermal) is missing; best-effort setattr reflects the loop onto `registry.tektos.turn_loop` when the plugin is also mounted.
-- `plugins/tektos/runtime/test_turn_loop_stage_8_2.py` (new, 556 lines) — 19 tests: D2 x 7, D3 x 3, D4 x 4, D5 x 3, D6 x 1, golden-path x 1. All pass.
-- `tests/kernel/test_stage_8_2_tektos_turn_loop_wiring.py` (new, ~270 lines) — 7 tests: env-gate unset / off / unknown / degrade / on-with-base / on-with-session / boot-order proof. All pass.
-- Full regression: **1576 passed / 21 skipped / 1 deselected** in Cloud (baseline 1557 + 19 new turn-loop tests exactly account for the delta; kernel-wiring tests verified via targeted invocation since `tests/kernel/` sits outside default `testpaths`). Baseline preserved modulo the pre-existing Colossus-only Stage 3.12 exit-gate failure already documented in KNOWN_ISSUES.md.
-- Docs fanout: `docs/Kosmos-Build-Spec-v26.md` §17 gained ADR-104 row (inserted ahead of ADR-103); `docs/Kosmos-Build-Sequence-v26.md` gained a full Stage 8.2 stanza after Stage 8.1.
-- BUILD_LOG entry appended (this session).
+- ADR-105 filed (`docs/adrs/ADR-105-tektos-reflection-synthesis-experience-engines.md`, Ratified v25, 218 lines) + ADR index updated
+- `docs/stage-8-3-donor-audit.md` shared as DOC_FILE (176 lines)
+- Three engine subpackages landed under `plugins/tektos/{reflection,synthesis,experience}/` (models + engine/replay + api.py per subpackage)
+- `TektosPlugin` dataclass grew three new optional fields `reflection`, `synthesis`, `experience: object | None = None` (D5)
+- Kernel wiring in `kernel/app.py`: three new `_BootRegistry` slots + shared `_boot_stage_8_3_engine` helper + three `@_try("tektos_<slot>")` boot functions; env-gates `KOSMOS_TEKTOS_{REFLECTION,SYNTHESIS,EXPERIENCE}={off,on}`
+- 45 new tests (14 reflection + 10 synthesis + 11 experience + 10 FastAPI router + 16 kernel wiring) — all green
+- Full regression: **1621 passed / 21 skipped / 1 deselected** (Stage 8.2 baseline 1576 + 45 delta exactly)
+- Docs fanout: `docs/Kosmos-Build-Spec-v26.md` §17 (ADR-105 row inserted above ADR-104) + `docs/Kosmos-Build-Sequence-v26.md` (Stage 8.3 stanza appended after Stage 8.2)
+- BUILD_LOG.md Stage 8.3 completion entry appended
 
 ## Remaining before current Definition of Done
-- Commit + tag `stage-8-2-complete` + push to GitHub. (This handoff is written to reflect current state; commit will include it.)
+- Commit all Stage 8.3 changes with descriptive message covering ADR-105 + implementation + docs fanout
+- Tag `stage-8-3-complete`
+- `git push` with `api_credentials=["github"]`
 
 ## Open questions / awaiting user answer
 - none
 
 ## Exact next action
-- `cd /home/user/workspace/audit/kosmos-lms && git add . && git commit -m "Stage 8.2: TektosTurnLoop grows SessionPort/LLMPort/SandboxPort/ResourcePort (ADR-104)" && git tag stage-8-2-complete && git push origin main --tags` with `api_credentials=["github"]`. Then Stage 8.3 kickoff per Plan v2 (reflection loop).
+- `cd /home/user/workspace/audit/kosmos-lms && git add -A && git commit -m "Stage 8.3 · ADR-105 Tektos reflection + synthesis + experience-replay engines" && git tag stage-8-3-complete && git push --tags` (via bash with `api_credentials=["github"]`)
+
+## Next stage after commit + push
+- **Stage 8.4 · planner + task-decomposer** — introduces `PlannerPort` (deferred from ADR-105 D9); may also introduce `LanguageGame` enum on `ExperienceRecord.context` per ADR-105 D9 deferral; Hegelian-dialectic prompt-side LLM synthesis becomes wireable once the planner arrives (ADR-105 D9)

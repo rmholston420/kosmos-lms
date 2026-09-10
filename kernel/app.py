@@ -123,6 +123,16 @@ class _BootRegistry:
         # ``KOSMOS_TEKTOS_TURN_LOOP=on``. Downstream call sites MUST
         # tolerate ``None`` (ADR-101 degrade pattern).
         self.tektos_turn_loop: Any = None
+        # Stage 8.3 (ADR-105): kernel-owned Tektos reflection + synthesis
+        # + experience-replay engines. All three env-gated via
+        # ``KOSMOS_TEKTOS_{REFLECTION,SYNTHESIS,EXPERIENCE}={off,on}``
+        # (default ``off`` — silent). ``on`` requires
+        # ``registry.relational_memory`` non-None; missing → ADR-101
+        # degrade to ``None`` with a WARN log. Downstream call sites
+        # MUST tolerate ``None`` (ADR-101 degrade pattern).
+        self.tektos_reflection: Any = None
+        self.tektos_synthesis: Any = None
+        self.tektos_experience: Any = None
         # Stage 1.6 Phase 0 (ADR-073): kernel-owned EmbeddingsPort. Separate
         # from ``self.llm`` so chat-only backends (e.g. llama-swap) don't
         # have to satisfy an embeddings surface. Populated by ``_boot_embeddings``.
@@ -853,6 +863,102 @@ async def lifespan(app: FastAPI):
         return loop
 
     registry.tektos_turn_loop = _boot_tektos_turn_loop
+
+    # --- Stage 8.3 (ADR-105) Tektos reflection / synthesis / experience ------
+    # Three env-gated engines that persist through
+    # ``RelationalMemoryPort.write_narrative`` and publish through
+    # ``EventBusPort``. Each boots ``off`` by default; ``on`` requires
+    # ``registry.relational_memory`` non-None. Missing collaborator →
+    # ADR-101 degrade to ``None`` with a WARN log citing ADR-105.
+    def _boot_stage_8_3_engine(
+        *,
+        env_var: str,
+        adr_note: str,
+        engine_factory,
+        plugin_field: str,
+    ):
+        import logging as _kl
+        import os as _os
+
+        _log = _kl.getLogger(__name__)
+        _mode = _os.environ.get(env_var, "off").lower().strip()
+        _ALLOWED = ("off", "on")
+        if _mode not in _ALLOWED:
+            raise RuntimeError(
+                "%s=%r is not one of %s (ADR-105 D6)." % (env_var, _mode, _ALLOWED)
+            )
+        if _mode == "off":
+            return None
+
+        rmem = getattr(registry, "relational_memory", None)
+        ebus = getattr(registry, "event_bus", None)
+        if rmem is None:
+            _log.warning(
+                "kosmos.%s: RelationalMemoryPort unavailable; engine offline "
+                "(%s; ADR-101 degrade pattern)",
+                plugin_field,
+                adr_note,
+            )
+            return None
+
+        engine = engine_factory(relational_memory=rmem, event_bus=ebus)
+        _log.info(
+            "kosmos.%s: wired (%s); event_bus=%s",
+            plugin_field,
+            adr_note,
+            "on" if ebus is not None else "off",
+        )
+
+        # Reflect the wired engine onto the TektosPlugin dataclass slot
+        # too (ADR-105 D5) so plugin-side code paths can reach it.
+        _tp = getattr(registry, "tektos", None)
+        if _tp is not None and hasattr(_tp, plugin_field):
+            try:
+                setattr(_tp, plugin_field, engine)
+            except Exception:  # noqa: BLE001 — frozen dataclass tolerated
+                _log.debug(
+                    "kosmos.%s: TektosPlugin.%s assignment skipped (frozen?)",
+                    plugin_field,
+                    plugin_field,
+                )
+        return engine
+
+    @_try("tektos_reflection")
+    def _boot_tektos_reflection():
+        from plugins.tektos.reflection import ReflectionEngine
+
+        return _boot_stage_8_3_engine(
+            env_var="KOSMOS_TEKTOS_REFLECTION",
+            adr_note="ADR-105",
+            engine_factory=ReflectionEngine,
+            plugin_field="reflection",
+        )
+
+    @_try("tektos_synthesis")
+    def _boot_tektos_synthesis():
+        from plugins.tektos.synthesis import SynthesisEngine
+
+        return _boot_stage_8_3_engine(
+            env_var="KOSMOS_TEKTOS_SYNTHESIS",
+            adr_note="ADR-105",
+            engine_factory=SynthesisEngine,
+            plugin_field="synthesis",
+        )
+
+    @_try("tektos_experience")
+    def _boot_tektos_experience():
+        from plugins.tektos.experience import ExperienceReplay
+
+        return _boot_stage_8_3_engine(
+            env_var="KOSMOS_TEKTOS_EXPERIENCE",
+            adr_note="ADR-105",
+            engine_factory=ExperienceReplay,
+            plugin_field="experience",
+        )
+
+    registry.tektos_reflection = _boot_tektos_reflection
+    registry.tektos_synthesis = _boot_tektos_synthesis
+    registry.tektos_experience = _boot_tektos_experience
 
     # --- Gnosis boot seeder (ADR-064) ----------------------------------------
     # Env-gated by ``KOSMOS_GNOSIS_SEED=1``. Iterates ``ALL_CORPORA`` and

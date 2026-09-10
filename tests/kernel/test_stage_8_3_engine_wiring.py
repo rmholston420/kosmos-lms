@@ -1,0 +1,156 @@
+"""Stage 8.3 — kernel-boot Tektos reflection/synthesis/experience wiring (ADR-105 D6).
+
+Fast-tier tests over the three ``KOSMOS_TEKTOS_{REFLECTION,SYNTHESIS,EXPERIENCE}``
+env-gates wired into ``kernel/app.py``. Scenarios per ADR-105 D6:
+
+- Unset            → registry.tektos_{engine}=None; no error.
+- Explicit ``off`` → same as unset (silent).
+- Unknown value    → registry.errors[<slot>] set.
+- ``on`` without RelationalMemoryPort → None + degrade (ADR-101).
+- Boot order       → three slots wire AFTER _boot_tektos_turn_loop.
+- TektosPlugin dataclass fields exist for reflection/synthesis/experience (ADR-105 D5).
+"""
+
+from __future__ import annotations
+
+import os
+
+# --- Env preamble: pin safe defaults; each test overrides selectively. -----
+os.environ["KOSMOS_MEMORY_BACKEND"] = "in_memory"
+os.environ["KOSMOS_GNOSIS_SEED"] = "0"
+for _v in (
+    "KOSMOS_TEKTOS_REFLECTION",
+    "KOSMOS_TEKTOS_SYNTHESIS",
+    "KOSMOS_TEKTOS_EXPERIENCE",
+):
+    os.environ.pop(_v, None)
+
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+_SLOTS = ("reflection", "synthesis", "experience")
+_ENVS = {
+    "reflection": "KOSMOS_TEKTOS_REFLECTION",
+    "synthesis": "KOSMOS_TEKTOS_SYNTHESIS",
+    "experience": "KOSMOS_TEKTOS_EXPERIENCE",
+}
+
+
+def _reset_env(
+    monkeypatch: pytest.MonkeyPatch, **modes: str | None
+) -> None:
+    monkeypatch.setenv("KOSMOS_MEMORY_BACKEND", "in_memory")
+    monkeypatch.setenv("KOSMOS_GNOSIS_SEED", "0")
+    for slot, env_var in _ENVS.items():
+        mode = modes.get(slot)
+        if mode is None:
+            monkeypatch.delenv(env_var, raising=False)
+        else:
+            monkeypatch.setenv(env_var, mode)
+
+
+def _drive_lifespan_and_inspect():
+    from kernel import app as kernel_app_module
+
+    kernel_app_module.registry.errors.clear()
+    with TestClient(kernel_app_module.app) as _:
+        pass
+    return kernel_app_module.registry
+
+
+# ---------------------------------------------------------------------------
+# Env-gate scenarios per slot
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("slot", _SLOTS)
+def test_unset_leaves_engine_slot_none_silently(
+    monkeypatch: pytest.MonkeyPatch, slot: str
+) -> None:
+    _reset_env(monkeypatch)  # all None → unset
+    registry = _drive_lifespan_and_inspect()
+    assert getattr(registry, f"tektos_{slot}") is None
+    assert f"tektos_{slot}" not in registry.errors
+
+
+@pytest.mark.parametrize("slot", _SLOTS)
+def test_explicit_off_leaves_engine_slot_none_silently(
+    monkeypatch: pytest.MonkeyPatch, slot: str
+) -> None:
+    _reset_env(monkeypatch, **{slot: "off"})
+    registry = _drive_lifespan_and_inspect()
+    assert getattr(registry, f"tektos_{slot}") is None
+    assert f"tektos_{slot}" not in registry.errors
+
+
+@pytest.mark.parametrize("slot", _SLOTS)
+def test_unknown_mode_registers_error(
+    monkeypatch: pytest.MonkeyPatch, slot: str
+) -> None:
+    _reset_env(monkeypatch, **{slot: "mystery"})
+    registry = _drive_lifespan_and_inspect()
+    assert getattr(registry, f"tektos_{slot}") is None
+    assert f"tektos_{slot}" in registry.errors
+    assert "mystery" in registry.errors[f"tektos_{slot}"]
+
+
+@pytest.mark.parametrize("slot", _SLOTS)
+def test_on_without_relational_memory_degrades_to_none(
+    monkeypatch: pytest.MonkeyPatch, slot: str
+) -> None:
+    """ADR-105 D6: ``on`` requires ``registry.relational_memory`` non-None.
+
+    In the fast-tier boot path with ``KOSMOS_MEMORY_BACKEND=in_memory``
+    the relational-memory adapter is not wired (that requires the
+    Postgres env-gates); the engine slot must degrade silently.
+    """
+    _reset_env(monkeypatch, **{slot: "on"})
+    registry = _drive_lifespan_and_inspect()
+    if getattr(registry, "relational_memory", None) is None:
+        # Degrade path took None-return, not exception, so no error
+        # should have been registered.
+        assert getattr(registry, f"tektos_{slot}") is None
+        assert f"tektos_{slot}" not in registry.errors
+
+
+# ---------------------------------------------------------------------------
+# Boot order: three new slots wire AFTER tektos_turn_loop
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("slot", _SLOTS)
+def test_boot_order_engine_slot_after_turn_loop(slot: str) -> None:
+    """Static ordering guarantee: source-level position of each
+    ``registry.tektos_<slot> = _boot_tektos_<slot>`` assignment must be
+    AFTER the ``registry.tektos_turn_loop = _boot_tektos_turn_loop``
+    assignment (Stage 8.2 baseline)."""
+    import inspect
+
+    from kernel import app as kernel_app_module
+
+    src = inspect.getsource(kernel_app_module)
+    idx_turn = src.index("registry.tektos_turn_loop = _boot_tektos_turn_loop")
+    idx_slot = src.index(f"registry.tektos_{slot} = _boot_tektos_{slot}")
+    assert idx_turn < idx_slot, (
+        f"ADR-105 D6 requires _boot_tektos_{slot} to run AFTER "
+        f"_boot_tektos_turn_loop so registry.relational_memory has already "
+        f"been booted."
+    )
+
+
+# ---------------------------------------------------------------------------
+# TektosPlugin dataclass field surface (ADR-105 D5)
+# ---------------------------------------------------------------------------
+
+
+def test_tektos_plugin_dataclass_carries_stage_8_3_engine_fields() -> None:
+    """ADR-105 D5 amends the ``TektosPlugin`` dataclass with three new
+    optional fields — ``reflection``, ``synthesis``, ``experience`` —
+    each defaulting to ``None``."""
+    import dataclasses
+
+    from plugins.tektos.plugin import TektosPlugin
+
+    field_names = {f.name for f in dataclasses.fields(TektosPlugin)}
+    for slot in _SLOTS:
+        assert slot in field_names, f"TektosPlugin missing ADR-105 D5 field: {slot}"

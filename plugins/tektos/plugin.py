@@ -157,6 +157,19 @@ class TektosPlugin:
     # or duck-type off it.
     turn_loop: object | None = field(default=None)
 
+    # Stage 8.3 (ADR-105 D5): optional handles to the kernel-wired
+    # reflection / synthesis / experience-replay engines. Populated at
+    # kernel-boot time by
+    # ``kernel/app.py::_boot_tektos_{reflection,synthesis,experience}``
+    # when the corresponding ``KOSMOS_TEKTOS_{REFLECTION,SYNTHESIS,EXPERIENCE}=on``
+    # env-gate is set and ``registry.relational_memory`` is bound. Each
+    # stays ``None`` when the engine is off, unwired, or
+    # degrade-suppressed. Typed as ``object | None`` for the same
+    # ADR-007 reason as ``turn_loop`` above.
+    reflection: object | None = field(default=None)
+    synthesis: object | None = field(default=None)
+    experience: object | None = field(default=None)
+
     _started: bool = field(default=False, init=False, repr=False)
     _registration: PluginRegistration | None = field(
         default=None, init=False, repr=False
