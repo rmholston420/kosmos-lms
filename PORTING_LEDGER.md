@@ -393,39 +393,61 @@ this file **at the same time** as the ADR that ratifies them, per
 
 Source repo: `rmholston420/tektos-ultima` (public, no LICENSE file at source; sole copyright holder rmholston420 relicenses at port-in). Every entry below is `PLANNED` until landed in a numbered Stage step of `docs/plans/KOSMOS_LMS_INTEGRATION_PLAN.md`.
 
-#### Tektos runtime core — PLANNED (Stage 3)
-- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/orchestrator
-- **Commit / Version:** to pin at port-in
-- **License:** MIT (relicensed at port-in by sole copyright holder rmholston420)
-- **Kosmos location:** `plugins/tektos/runtime/`
-- **Port(s):** `LLMPort`, `EventBusPort`, `LoopSafetyPort` (ADR-080), `ImmunePort` (ADR-079), `MemoryPort`
-- **Modifications:** replace direct `httpx` calls to `llama-server` with `LLMPort`; replace direct WebSocket writes with `EventBusPort.publish()`; every `MemoryPort` write gains `provenance` + `confidence`; loop caps `max_turns=15`, `max_tokens_total=65536`, `max_wall_time_seconds=300` become `LoopSafetyPort` config.
-- **ADR:** ADR-077, ADR-079, ADR-080
+#### Tektos runtime seed (TurnLoop) — VENDORED (Stage 3.13)
+- **Source:** https://github.com/rmholston420/tektos-ultima (author's `orchestrator/*` + `runtime/agent_loop.py` patterns — seed only; no verbatim copy)
+- **Commit / Version:** 2b45cac1f9ac214c85ff53571b949445b5415209 (2026-09-10)
+- **License:** MIT (re-license at port-in per scaffold policy; rmholston420 sole copyright)
+- **Kosmos location:** `plugins/tektos/runtime/turn_loop.py`
+- **Port(s):** `ImmunePort` (ADR-079), `LoopSafetyPort` (ADR-080, ADR-088), `ThermalPort` (ADR-081), `EventBusPort` (ADR-086 `tektos.agent.turn.*` envelopes)
+- **Modifications:** minimal Stage 3.13 vertical slice per ADR-092 §3 — no LLM inference, no planner, no sandbox, no MCP, no RAG, no memory search, no self-modification. Composes the three Stage 3.13 adapters through their formal ports. Wholesale-import of Tektos-Ultima's `orchestrator/` monolith rejected under ADR-007 (would import 25+ runtime siblings without adapters).
+- **ADR:** ADR-077, ADR-079, ADR-080, ADR-088, ADR-092
+- **Logged:** 2026-09-10 01:00 EDT
 
-#### Tektos immune system — PLANNED (Stage 3)
-- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/immune
-- **Commit / Version:** to pin at port-in
-- **License:** MIT (relicensed at port-in)
-- **Kosmos location:** `adapters/immune/tektos/`
+#### Tektos immune system (3 seed detectors) — VENDORED (Stage 3.13)
+- **Source:** https://github.com/rmholston420/tektos-ultima/blob/main/src/tektos/runtime/immune_system.py (lines 1-236 shared types + 238-311 PromptInjection + 558-637 SecretExposure + 639-860 DangerousCommand)
+- **Commit / Version:** 2b45cac1f9ac214c85ff53571b949445b5415209 (2026-09-10)
+- **License:** MIT (re-license at port-in per scaffold policy)
+- **Kosmos location:** `adapters/immune/tektos/vendor/immune_donor.py` (donor snapshot) + `adapters/immune/tektos/adapter.py` (`TektosImmuneAdapter`)
 - **Port(s):** `ImmunePort` (ADR-079)
-- **Modifications:** 12 detectors (including `SecretExposureDetector` with 12 regex patterns) exposed via `ImmunePort.scan(event) -> ImmuneVerdict`; verdicts published on `EventBusPort` under `immune.*` envelope.
-- **ADR:** ADR-079
+- **Modifications:** trimmed donor from 1925 lines → 638 (kept 3 seed detectors + shared types + helpers; dropped 9 other detectors, `ResponseRecord`/`HealthScore` orchestrator types). Donor `Detector.detect(ImmuneContext) -> list[Threat]` wrapped by `_DetectorAdapter` to port's `Detector.evaluate(ImmuneScanRequest) -> tuple[DetectorHit, ...]`. Severity mapping LOW→info, MEDIUM→warn, HIGH/CRITICAL→block. Aggregation policy block>warn>allow. Verdict envelopes on `EventBusPort` (`immune.verdict.<decision>`); block verdicts additionally `write_event(provenance="immune_verdict", confidence=1.0)` on `MemoryPort` per ADR-079 rule 2.
+- **ADR:** ADR-079, ADR-092
+- **Logged:** 2026-09-10 01:00 EDT
 
-#### Tektos loop safety — PLANNED (Stage 3)
-- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/safety
-- **License:** MIT (relicensed at port-in)
-- **Kosmos location:** `adapters/loop_safety/tektos/`
-- **Port(s):** `LoopSafetyPort` (ADR-080)
-- **Modifications:** three tiers (turn cap · token cap · wall-time cap) + repetition detector (`repetition_window=3`) + read-only budget interlock (ADR-088) expressed as `LoopSafetyPort` state machine.
-- **ADR:** ADR-080, ADR-088
+#### Tektos immune system (9 remaining detectors) — PLANNED (Stage 4+)
+- **Source:** https://github.com/rmholston420/tektos-ultima/blob/main/src/tektos/runtime/immune_system.py (SelfModificationDetector, ExfiltrationDetector, PathTraversalDetector, ResourceExhaustionDetector, and 5 others deferred per ADR-092 §4)
+- **License:** MIT (re-license at port-in)
+- **Kosmos location:** future add to `adapters/immune/tektos/vendor/immune_donor.py` + additional `_DetectorAdapter` wrappers.
+- **Port(s):** `ImmunePort` (ADR-079)
+- **Modifications:** land after SandboxPort (ADR-082, Stage 4.7) and self-modification port (ADR-090) so their gating loops exist.
+- **ADR:** ADR-079, ADR-092
 
-#### Tektos thermal control — PLANNED (Stage 3)
-- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/thermal
-- **License:** MIT (relicensed at port-in)
-- **Kosmos location:** `adapters/thermal/tektos/`
+#### Tektos loop safety — VENDORED (Stage 3.13)
+- **Source:** https://github.com/rmholston420/tektos-ultima/blob/main/src/tektos/runtime/loop_safety.py (`LoopSafetyMonitor`, 403 lines)
+- **Commit / Version:** 2b45cac1f9ac214c85ff53571b949445b5415209 (2026-09-10)
+- **License:** MIT (re-license at port-in per scaffold policy)
+- **Kosmos location:** `adapters/loop_safety/tektos/vendor/loop_safety_donor.py` (verbatim snapshot) + `adapters/loop_safety/tektos/adapter.py` (`TektosLoopSafetyAdapter`)
+- **Port(s):** `LoopSafetyPort` (ADR-080, ADR-088)
+- **Modifications:** verbatim import (no source edits). Wrapping adapter owns per-turn `LoopSafetyMonitor` instances keyed by `turn_id`; adds the ADR-088 read-only budget interlock (`LoopCaps.read_only_budget`) donor lacked; publishes state-transition envelopes (`loop_safety.<status>`) on `EventBusPort` per ADR-080 rule 1; terminal states additionally `write_event(provenance="loop_safety", confidence=1.0)` on `MemoryPort` per ADR-080 rule 2. `StopReason→LoopSafetyStatus` mapping: `MAX_TURNS`/`MAX_TOKENS`/`MAX_WALL_TIME`/`CIRCUIT_BREAKER`→`exhausted`; `REPETITION`→`repetition`.
+- **ADR:** ADR-080, ADR-088, ADR-092
+- **Logged:** 2026-09-10 01:00 EDT
+
+#### Tektos thermal metrics — VENDORED (Stage 3.13)
+- **Source:** https://github.com/rmholston420/tektos-ultima/blob/main/src/tektos/thermal/metrics.py (`MetricsCollector` + NVML wrapper, 271 lines)
+- **Commit / Version:** 2b45cac1f9ac214c85ff53571b949445b5415209 (2026-09-10)
+- **License:** MIT (re-license at port-in per scaffold policy)
+- **Kosmos location:** `adapters/thermal/tektos/vendor/thermal_donor.py` (verbatim snapshot) + `adapters/thermal/tektos/adapter.py` (`TektosThermalAdapter` + `ColossusThermalThresholds`)
+- **Port(s):** `ThermalPort` (ADR-081)
+- **Modifications:** verbatim donor import (raw NVML telemetry only). Adapter adds ADR-081 level classification (`_level_from_temp` maps to `green` <51 / `yellow` 51-80 / `cap` 80-88 / `red` ≥88); `sample()` runs `MetricsCollector.collect()` in `asyncio.to_thread`; `pressure()` is sync + non-throwing (returns cached, defaults green/0/None) per ADR-081 rule 3; level-crossing transitions publish `thermal.<level>` on `EventBusPort` per rule 1; red transitions additionally `write_event(provenance="thermal", confidence=1.0)` on `MemoryPort` per rule 2. `apply_power_cap`/`release_power_cap` implemented as event-only stubs (publish envelope + update cached pressure) — nvidia-smi shell-out lands with `ThermalRegulator` PID loop in a later stage. `_NoOpCollector` fallback used when NVML raises so CI can construct the adapter without a GPU.
+- **ADR:** ADR-081, ADR-092
+- **Logged:** 2026-09-10 01:00 EDT
+
+#### Tektos thermal PID regulator — PLANNED (Stage 4+)
+- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/src/tektos/thermal (`ThermalRegulator` PID controller + `nvidia-smi -pl` power-cap actuator; explicitly excluded from Stage 3.13 per ADR-092 §4)
+- **License:** MIT (re-license at port-in)
+- **Kosmos location:** future extension to `adapters/thermal/tektos/adapter.py` (or sibling `regulator.py`).
 - **Port(s):** `ThermalPort` (ADR-081), `ResourcePort` (throttle back-pressure)
-- **Modifications:** yellow 51°C / cap 80°C / red 88°C / 400 W GPU cap PID loop expressed as `ThermalPort.pressure()` samples; throttle events routed to `ResourcePort`.
-- **ADR:** ADR-081
+- **Modifications:** implement real `apply_power_cap(watts)` via `nvidia-smi -pl` subprocess + PID loop; wire throttle events into `ResourcePort`.
+- **ADR:** ADR-081, ADR-092
 
 #### Tektos sandbox — PLANNED (Stage 4)
 - **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/sandbox

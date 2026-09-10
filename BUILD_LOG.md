@@ -3363,3 +3363,101 @@ Use the `kosmos-log-maintenance` Perplexity Computer skill.
 - **Ports / adapters affected:** none (CI infrastructure)
 - **PORTING_LEDGER / ADR updated:** —
 - **Stop-condition status:** met (CI job definition passes YAML lint; local `npx next build` produces `/tektos-ultima` in the prerendered route table)
+
+
+## 2026-09-10 01:00 EDT — Stage 3.1 · Ratify ADR-092 (Tektos runtime absorption scope)
+
+- **Stage / plugin / port:** Stage 3.13 · Tektos runtime · ADR-092
+- **What changed:** Author + ratify ADR-092 locking the Stage 3.13 scope for the Tektos runtime absorption: 3 vendor snapshots + 3 adapters wrapping donors behind Stage 1 formal ports + a minimal `plugins/tektos/runtime/turn_loop.py` composing the three adapters through their ports and `EventBusPort`. Explicit exclusions: `ImmuneSystem` orchestrator, 9 remaining detectors, `ThermalRegulator` PID loop, `loop_guard.py`, and 25+ other runtime siblings (LLM inference, planner, sandbox, MCP, RAG, self-modification) — all deferred to Stage 4.7+.
+- **Files touched:**
+  - `docs/adrs/ADR-092-tektos-runtime-absorption-scope.md` (new)
+  - `docs/adrs/README.md` (index row added; open-decisions paragraph updated)
+- **Ports / adapters affected:** locks scope for `LoopSafetyPort`, `ImmunePort`, `ThermalPort` Tektos adapters + `plugins/tektos/runtime/`
+- **PORTING_LEDGER / ADR updated:** ADR-092 (new, Ratified)
+- **Stop-condition status:** met (two alternatives — wholesale-import of `orchestrator/`, hand-rewrite — considered and rejected; all four decisions in §3 are enforceable)
+
+
+## 2026-09-10 01:05 EDT — Stage 3.2 · Vendor 3 donor snapshots (loop_safety, immune, thermal)
+
+- **Stage / plugin / port:** Stage 3.13 · Tektos runtime · vendor snapshots
+- **What changed:** Vendor three donor snapshots from `rmholston420/tektos-ultima` @ commit `2b45cac1f9ac214c85ff53571b949445b5415209` into `adapters/*/tektos/vendor/`, each carrying an SPDX-MIT + provenance header banner per scaffold policy. `loop_safety_donor.py` and `thermal_donor.py` are verbatim; `immune_donor.py` is trimmed from 1925 lines → 638 (kept 3 seed detectors + shared types + helpers; dropped 9 other detectors and `ResponseRecord`/`HealthScore` orchestrator types).
+- **Files touched:**
+  - `adapters/loop_safety/tektos/vendor/loop_safety_donor.py` (new, 403 lines, verbatim from `src/tektos/runtime/loop_safety.py`)
+  - `adapters/immune/tektos/vendor/immune_donor.py` (new, 638 lines, trimmed from `src/tektos/runtime/immune_system.py`)
+  - `adapters/thermal/tektos/vendor/thermal_donor.py` (new, 271 lines, verbatim from `src/tektos/thermal/metrics.py`)
+  - `adapters/{loop_safety,immune,thermal}/{,tektos/,tektos/vendor/}__init__.py` (new package markers)
+- **Ports / adapters affected:** donor bodies only; no port implementations yet
+- **PORTING_LEDGER / ADR updated:** ADR-092 §1 satisfied (deferred ledger flip until Stage 3.8 batch)
+- **Stop-condition status:** met (all three import cleanly via `python3 -c "from adapters..."`; SPDX-MIT + provenance banners present)
+
+
+## 2026-09-10 01:08 EDT — Stage 3.3 · TektosLoopSafetyAdapter (LoopSafetyPort)
+
+- **Stage / plugin / port:** Stage 3.13 · Tektos runtime · `LoopSafetyPort`
+- **What changed:** Wrote `adapters/loop_safety/tektos/adapter.py` (376 lines) — `TektosLoopSafetyAdapter` wrapping donor `LoopSafetyMonitor` behind `LoopSafetyPort`. Per-turn monitors keyed by `turn_id`. Adapter owns ADR-088 read-only budget interlock (`LoopCaps.read_only_budget`) the donor lacked. Publishes `loop_safety.<status>` envelopes on `EventBusPort` for status transitions; terminal states additionally `write_event(provenance="loop_safety", confidence=1.0)` on `MemoryPort`. `StopReason→LoopSafetyStatus` mapping: MAX_TURNS/MAX_TOKENS/MAX_WALL_TIME/CIRCUIT_BREAKER→exhausted, REPETITION→repetition.
+- **Files touched:**
+  - `adapters/loop_safety/tektos/adapter.py` (new, 376 lines)
+- **Ports / adapters affected:** `LoopSafetyPort` (ADR-080, ADR-088) — first non-fake adapter
+- **PORTING_LEDGER / ADR updated:** ADR-092 §2 (part 1 of 3); ledger flip deferred to Stage 3.8
+- **Stop-condition status:** met (`isinstance(adapter, LoopSafetyPort)` passes; import-smoke clean; mypy clean)
+
+
+## 2026-09-10 01:10 EDT — Stage 3.4 · TektosImmuneAdapter (ImmunePort, 3 seed detectors)
+
+- **Stage / plugin / port:** Stage 3.13 · Tektos runtime · `ImmunePort`
+- **What changed:** Wrote `adapters/immune/tektos/adapter.py` (347 lines) — `TektosImmuneAdapter` + `build_seed_detectors()` helper returning 3 detectors (`prompt_injection`, `secret_exposure`, `dangerous_command`). Private `_DetectorAdapter` wraps donor `detect(ImmuneContext) -> list[Threat]` to port's `Detector.evaluate(ImmuneScanRequest) -> tuple[DetectorHit, ...]`. Severity mapping: donor LOW→info, MEDIUM→warn, HIGH/CRITICAL→block. Aggregation policy: block>warn>allow. Publishes `immune.verdict.<decision>` on `EventBusPort`; block verdicts additionally `write_event(provenance="immune_verdict", confidence=1.0)` on `MemoryPort` per ADR-079 rule 2. Detector exceptions logged but not fatal.
+- **Files touched:**
+  - `adapters/immune/tektos/adapter.py` (new, 347 lines)
+- **Ports / adapters affected:** `ImmunePort` (ADR-079) — first non-fake adapter
+- **PORTING_LEDGER / ADR updated:** ADR-092 §2 (part 2 of 3); ledger flip deferred to Stage 3.8
+- **Stop-condition status:** met (`isinstance(adapter, ImmunePort)` passes; `list_detectors()` returns exactly 3 with correct metadata)
+
+
+## 2026-09-10 01:12 EDT — Stage 3.5 · TektosThermalAdapter (ThermalPort)
+
+- **Stage / plugin / port:** Stage 3.13 · Tektos runtime · `ThermalPort`
+- **What changed:** Wrote `adapters/thermal/tektos/adapter.py` (265 lines) — `TektosThermalAdapter` + `ColossusThermalThresholds` (yellow=51, cap=80, red=88, default_power_cap_w=400). `sample()` runs donor `MetricsCollector.collect()` in `asyncio.to_thread`. `pressure()` sync + non-throwing per ADR-081 rule 3 (returns cached, defaults green/0/None). Level classification via `_level_from_temp`. Level-crossing transitions publish `thermal.<level>` on `EventBusPort`; red transitions additionally `write_event(provenance="thermal", confidence=1.0)` on `MemoryPort`. `apply_power_cap`/`release_power_cap` implemented as event-only stubs (publish envelope + update cached pressure) — real nvidia-smi shell-out lands with ThermalRegulator PID loop in a later stage. `_NoOpCollector` fallback used when NVML raises so CI can construct the adapter without a GPU.
+- **Files touched:**
+  - `adapters/thermal/tektos/adapter.py` (new, 265 lines)
+- **Ports / adapters affected:** `ThermalPort` (ADR-081) — first non-fake adapter
+- **PORTING_LEDGER / ADR updated:** ADR-092 §2 (part 3 of 3); ledger flip deferred to Stage 3.8
+- **Stop-condition status:** met (`isinstance(adapter, ThermalPort)` passes; `_level_from_temp` matches ADR-081 bands across 8 parametrised cases)
+
+
+## 2026-09-10 01:15 EDT — Stage 3.6 · TektosTurnLoop (plugins/tektos/runtime)
+
+- **Stage / plugin / port:** Stage 3.13 · Tektos runtime · `plugins/tektos/runtime/`
+- **What changed:** Wrote `plugins/tektos/runtime/turn_loop.py` (323 lines) — `TektosTurnLoop.run_turn()` per ADR-092 §3. Five-step flow: (1) immune scan on prompt → early return if blocked; (2) thermal pre-flight → early return if red; (3) open loop-safety turn; (4) per-tool immune scan + `record_tool_call` (consumes ADR-088 read-only budget); (5) end turn with terminal reason. Publishes `tektos.agent.turn.{started,tool_call,blocked,completed}` envelopes on `EventBusPort` (never fatal — bus failures are logged, not raised). `TurnOutcome`, `ToolCallSpec`, `ToolCallOutcome` dataclasses. Zero LLM inference, no planner, no sandbox — the minimal Stage 3.13 vertical slice.
+- **Files touched:**
+  - `plugins/tektos/runtime/turn_loop.py` (new, 323 lines)
+  - `plugins/tektos/runtime/__init__.py` (new)
+- **Ports / adapters affected:** composes `LoopSafetyPort` + `ImmunePort` + `ThermalPort` + `EventBusPort`
+- **PORTING_LEDGER / ADR updated:** ADR-092 §3 satisfied; ledger flip deferred to Stage 3.8
+- **Stop-condition status:** met (imports clean; existing `plugins/tektos/` scaffold untouched — `runtime/` is a new sibling; `/tektos` route preserved for ADR-065)
+
+
+## 2026-09-10 01:20 EDT — Stage 3.7 · Contract tests (loop_safety + immune + thermal + turn_loop)
+
+- **Stage / plugin / port:** Stage 3.13 · contract tests
+- **What changed:** Wrote 4 contract test modules: `adapters/loop_safety/tektos/test_contract.py` (7 tests) proving Protocol conformance + ADR-088 read-only budget interlock + per-turn budget reset + `end_turn` idempotence + repetition termination + close idempotence; `adapters/immune/tektos/test_contract.py` (7 tests) proving Protocol conformance + 3 seed detectors registered + blank `source_plugin` guard + block path publishes envelope + writes MemoryPort + allow path + `register_detector` idempotence + close idempotence; `adapters/thermal/tektos/test_contract.py` (15 tests) proving Protocol conformance + parametric level classification across ADR-081 bands + `pressure()` default-before-sample + red-transition publishes + red writes memory + `apply_power_cap`/`release_power_cap` idempotence + close + `pressure()` non-throwing-when-closed; `plugins/tektos/runtime/test_turn_loop.py` (4 behavioural tests) wiring all three real adapters through an in-memory bus, covering prompt-blocked, thermal-red, happy path, and read-only budget exhaustion terminal reasons. Every MemoryPort write asserted to carry `confidence=1.0` and its stage's provenance token per §25.4.
+- **Files touched:**
+  - `adapters/loop_safety/tektos/test_contract.py` (new, 184 lines)
+  - `adapters/immune/tektos/test_contract.py` (new, 179 lines)
+  - `adapters/thermal/tektos/test_contract.py` (new, 212 lines)
+  - `plugins/tektos/runtime/test_turn_loop.py` (new, 187 lines)
+  - `pyproject.toml` (+`[tool.mypy]` scoping mypy to source paths, vendor snapshots exempt from stub enforcement)
+- **Ports / adapters affected:** `LoopSafetyPort`, `ImmunePort`, `ThermalPort` (all three now have contract tests)
+- **PORTING_LEDGER / ADR updated:** —
+- **Stop-condition status:** met — 33/33 new tests pass; 53/53 pre-existing port tests still pass (no regressions); plugin-isolation guard clean; mypy clean on all 4 new source modules; Stage 3.13 DoD "contract tests pass for all three ports" satisfied.
+
+
+## 2026-09-10 01:25 EDT — Stage 3.8 · PORTING_LEDGER flips + ADR-092 index + close-out
+
+- **Stage / plugin / port:** Stage 3.13 · logistics
+- **What changed:** Flipped 4 Tektos-Ultima absorption rows in `PORTING_LEDGER.md` from `PLANNED (Stage 3)` → `VENDORED (Stage 3.13)`: Tektos runtime seed (TurnLoop), Tektos immune system (3 seed detectors), Tektos loop safety, Tektos thermal metrics. Added 2 new `PLANNED (Stage 4+)` rows for the deferred surface per ADR-092 §4: Tektos immune system (9 remaining detectors), Tektos thermal PID regulator. Each vendored row cites the exact upstream commit + path, records SPDX MIT re-license under scaffold policy, and enumerates the specific adapter-layer modifications. Confirmed ADR-092 already indexed in `docs/adrs/README.md` (Stage 3.1); updated open-decisions paragraph to mention Stage 3 lands ADR-092.
+- **Files touched:**
+  - `PORTING_LEDGER.md`
+  - `docs/adrs/README.md` (Stage 3 sentence)
+- **Ports / adapters affected:** ledger reflects live state of `LoopSafetyPort` + `ImmunePort` + `ThermalPort` adapters
+- **PORTING_LEDGER / ADR updated:** 4 rows flipped, 2 new rows added, ADR-092 indexed
+- **Stop-condition status:** met — every VENDORED row carries upstream URL + commit SHA + SPDX license + Kosmos location + modification notes per kosmos-port-workflow §4; ledger + spec fan-out consistent per kosmos-spec-diff.

@@ -104,3 +104,19 @@ ignore = ["E501"]
 [tool.bandit]
 exclude_dirs = [".venv", "build", "dist", "__pycache__"]
 skips = ["B101"]
+
+# ── mypy ─────────────────────────────────────────────────────────────
+# Vendored donor code (adapters/*/tektos/vendor/) is scaffold-policy MIT re-license
+# of Tektos-Ultima and is exempted from stub enforcement; its dependencies
+# (pynvml, psutil) are optional/unavailable in the cloud sandbox CI runner
+# but present on the Colossus workstation.
+[tool.mypy]
+files = ["kernel", "ports", "adapters", "plugins", "ops"]
+
+[[tool.mypy.overrides]]
+module = "adapters.*.tektos.vendor.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = ["pynvml", "psutil"]
+ignore_missing_imports = true
