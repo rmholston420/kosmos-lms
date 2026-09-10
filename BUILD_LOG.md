@@ -3900,3 +3900,16 @@ Use the `kosmos-log-maintenance` Perplexity Computer skill.
 - **Ports / adapters affected:** none (documentation)
 - **PORTING_LEDGER / ADR updated:** ADR-101 indexed
 - **Stop-condition status:** met — kosmos-spec-diff §3 cross-check green: ADR-101 body ↔ ADRs README row ↔ Build-Sequence-v26 stanza all agree; no partial fan-out.
+
+## 2026-09-10 04:45 EDT — Tri-repo audit + Integration Plan v2 + ADR-102 authored
+
+- **Stage / plugin / port:** Plan v2 setup · documentation + Postgres 5th-layer decision
+- **What changed:** Three artifacts land in one atomic commit — (1) `audit/KOSMOS_LMS_AUDIT_AND_UPDATED_PLAN.md` (357-line tri-repo audit comparing kosmos-lms HEAD `e932a02` vs tektos-ultima HEAD `2b45cac` vs kosmos HEAD `c455165`; documents 60% completion, three axes of drift, off-plan v26 stages 3.13/4.7/4.8/5.6/6.5/7.4/+1/+2, and Stage 8 ADR-091 microfrontend supersession); (2) `docs/plans/KOSMOS_LMS_INTEGRATION_PLAN_v2.md` (7-stage sequence Stages 8–14 anchored to v26 numbering; user confirmations recorded: Tektos-Ultima runtime prioritized, fidelity port chosen, Postgres kept, agent-recommended endpoint family order, in-process websocket testing in Cloud CI, ADR-091 accepted permanently; sequence-of-execution appendix + v1→v2 reconciliation table); (3) ADR-102 (`RelationalMemoryPort` — 23rd formal port, Postgres 18 + pgvector 0.8.1 + pg_uuidv7 as 5th memory layer combining R1 audit ledger + R2 episodic narrative store; R3 deferred; two adapters `NoOpRelationalMemoryAdapter` aiosqlite + `PostgresRelationalMemoryAdapter` asyncpg; Alembic migrations; kernel wiring via `KOSMOS_RELATIONAL_MEMORY={off,noop,postgres}` env-gate with ADR-101 degrade pattern; zero-trust write contract parity with ADR-008). No code / no port / no adapter added in this commit — pure decision + planning slice. Kicks off Plan v2 Stage 8.0 execution in the next commit.
+- **Files touched:**
+  - `audit/KOSMOS_LMS_AUDIT_AND_UPDATED_PLAN.md` (new, 357 lines)
+  - `docs/plans/KOSMOS_LMS_INTEGRATION_PLAN_v2.md` (new, 257 lines)
+  - `docs/adrs/ADR-102-relational-memory-port-postgres-5th-layer.md` (new, 224 lines)
+  - `docs/adrs/README.md` — +1 ADR-102 row + amended Remaining-open-decisions paragraph
+- **Ports / adapters affected:** ADR-102 designates a new formal port `RelationalMemoryPort` to land in the next commit (Stage 8.0 slice); no code yet
+- **PORTING_LEDGER / ADR updated:** ADR-102 authored + indexed
+- **Stop-condition status:** met — audit complete, Plan v2 authored, ADR-102 ratified, spec fan-out (ADRs README) green. No cross-check violations: ADR-102 body ↔ ADRs README row ↔ Plan v2 §4 Stage 8.0 all agree. Baseline test suite `1462 passed / 0 failed / 15 skipped` still valid (no code changes).
