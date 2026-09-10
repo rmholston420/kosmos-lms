@@ -449,13 +449,24 @@ Source repo: `rmholston420/tektos-ultima` (public, no LICENSE file at source; so
 - **Modifications:** implement real `apply_power_cap(watts)` via `nvidia-smi -pl` subprocess + PID loop; wire throttle events into `ResourcePort`.
 - **ADR:** ADR-081, ADR-092
 
-#### Tektos sandbox — PLANNED (Stage 4)
-- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/sandbox
-- **License:** MIT (relicensed at port-in)
-- **Kosmos location:** `adapters/sandbox/tektos/`
+#### Tektos sandbox — VENDORED (Stage 4.7)
+- **Source:** https://github.com/rmholston420/tektos-ultima
+- **Commit / Version:** `2b45cac1f9ac214c85ff53571b949445b5415209` (2026-09-10)
+- **License:** MIT (re-licensed at port-in; rmholston420 sole copyright)
+- **Kosmos location:** `adapters/sandbox/tektos/vendor/sandbox_exec_donor.py` (donor snapshot), `adapters/sandbox/tektos/adapter.py` (`TektosSandboxAdapter`)
 - **Port(s):** `SandboxPort` (ADR-082)
-- **Modifications:** Linux namespaces + cgroups execution wrapped behind `SandboxPort.run(command, limits) -> SandboxResult`.
-- **ADR:** ADR-082
+- **Modifications:** donor `subprocess.run(..., shell=True, timeout=..., cwd=fs_root)` primitive trimmed to ~180 lines (kept `exec_argv`, output-cap, `_docker_exec` helper for future Terminal-Bench); dropped sudo auto-retry (leaks host state), PEP-668 hint injection, file / directory / search tools, MCP integration. Adapter layer adds: `argv`-first exec (never `shell=True`, closes upstream injection surface), `resource.setrlimit` via `preexec_fn` (RLIMIT_AS + RLIMIT_CPU + 128 MB RLIMIT_FSIZE), `SandboxLimits.network` enforcement (`"none"` / `"loopback"` wrap in `unshare --user --map-root-user --net`; fail-closed with `sandbox.isolation_unavailable` envelope + `exit_code=126` when `unshare` missing / kernel refuses), opportunistic cgroups v2 write at `/sys/fs/cgroup/kosmos-sandbox/<run_id>/memory.max` when mount is writable, wall-time via donor `subprocess.run(timeout=...)` in `asyncio.to_thread` with `killed_by="limit"` on TimeoutExpired, `kill()` records cancel intent (subprocess.run blocks a worker thread so mid-flight SIGTERM isn't injectable) and reclassifies terminal envelope as `killed_by="user"`, lifecycle envelopes on every run per ADR-082 rule 1, `MemoryPort.write_event(provenance="sandbox", confidence=1.0)` per rule 2.
+- **ADR:** ADR-082, ADR-093
+- **Logged:** 2026-09-10 01:15 EDT
+
+#### NoOp sandbox — VENDORED (Stage 4.7)
+- **Source:** none (Kosmos-native)
+- **License:** MIT
+- **Kosmos location:** `adapters/sandbox/noop/adapter.py`
+- **Port(s):** `SandboxPort` (ADR-082)
+- **Modifications:** synthesizes `SandboxResult(exit_code=0, stdout="", killed_by="exit", wall_seconds=0.0, peak_memory_mb=0)` without executing anything. Wired in CI on non-Linux hosts and used by contract tests that need Protocol conformance without side effects. Same lifecycle-envelope + `MemoryPort` write discipline as `TektosSandboxAdapter` (attributes include `"noop": true` so downstream consumers can filter). Required by ADR-082 §Enforcement rule 4.
+- **ADR:** ADR-082, ADR-093
+- **Logged:** 2026-09-10 01:15 EDT
 
 #### Tektos hindsight memory (bridge adapter) — PLANNED (Stage 3-5)
 - **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/hindsight
@@ -465,13 +476,22 @@ Source repo: `rmholston420/tektos-ultima` (public, no LICENSE file at source; so
 - **Modifications:** default hindsight port fixed from `:9177` → `:9000` (Tektos-Ultima source bug); adapter fronts hindsight for Tektos read/write path in Stages 3–5 while DozerDB remains the canonical Kosmos store; retired in Stage 8 per plan Decision H1 → H2 migration.
 - **ADR:** ADR-085
 
-#### Tektos planner — PLANNED (Stage 4)
-- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/planner
-- **License:** MIT (relicensed at port-in)
-- **Kosmos location:** `plugins/tektos/planner/`
-- **Port(s):** `LLMPort`, `EventBusPort`
-- **Modifications:** planner emits `tektos.plan.*` events on `EventBusPort`; LLM calls routed through `LLMPort` (Hermes adapter ADR-087 available for CPU-planner / GPU-coder split).
-- **ADR:** ADR-087
+#### Tektos planner (Kosmos-native seed) — VENDORED (Stage 4.7)
+- **Source:** none (Kosmos-native seed; full donor absorption deferred)
+- **License:** MIT
+- **Kosmos location:** `plugins/tektos/planner/turn_planner.py`
+- **Port(s):** `EventBusPort` (ADR-086)
+- **Modifications:** hand-authored `TektosTurnPlanner.plan(prompt: str) -> Plan` returning a scripted 3-node chain `(read → analyze → summarize)` with linear `depends_on`. Emits `tektos.plan.started` + one `tektos.plan.node` per node + `tektos.plan.completed` on `EventBusPort` per ADR-086 (payload carries `plan_id`, `node_id`, `correlation_id=plan_id`, `source="tektos_planner"`). No LLM call at Stage 4.7 — satisfies the Stage 4.7 DoD verb ("a scripted plan node round-trips through EventBusPort") without landing `LLMPort` role-routing on the critical path.
+- **ADR:** ADR-093
+- **Logged:** 2026-09-10 01:15 EDT
+
+#### Tektos planner (full donor absorption) — PLANNED (Stage 4.7+1)
+- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/src/tektos/agents/planner (8 modules: `orchestrator.py`, `translator.py`, `disambiguator.py`, `spec_generator.py`, `template_selector.py`, `repo_map.py`, `language_game.py`, `models.py`)
+- **License:** MIT (re-license at port-in)
+- **Kosmos location:** `plugins/tektos/planner/vendor/` + extend `TektosTurnPlanner` to invoke translator → disambiguator → spec_generator via `LLMPort`.
+- **Port(s):** `LLMPort` (Hermes topology ADR-087), `EventBusPort`, `RepoMapPort` (future)
+- **Modifications:** planner LLM calls routed through `LLMPort`; role-routing (CPU-planner / GPU-coder split per ADR-087) required before absorption; explicitly deferred at ADR-093 to keep Stage 4.7 critical path independent of ADR-087 benchmark.
+- **ADR:** ADR-087, ADR-093
 
 #### Tektos self-improvement + self-repair — PLANNED (Stage 5, gated)
 - **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/self_improve, .../self_repair
@@ -497,13 +517,31 @@ Source repo: `rmholston420/tektos-ultima` (public, no LICENSE file at source; so
 - **Modifications:** Tektos Next 15.4 app runs on upstream port `:5556` (spec §25.7); Kosmos kernel exposes it same-origin at `/tektos-ultima/frontend/*` via Starlette streaming proxy (env `KOSMOS_TEKTOS_ULTIMA_UPSTREAM`, default `http://127.0.0.1:5556`); Kosmos Next 16.2.11 shell mounts it as `PanelKind.IFRAME` under **`/tektos-ultima`** (not `/tektos`, which stays the ADR-065 approval list); postMessage bridge routes envelopes to `POST /api/tektos-ultima/bridge` which validates `tektos.*` namespace + publishes to `EventBusPort`. Stage 3.13+ ports upstream panels + wires them through `FrontendContractPort` descriptors.
 - **ADR:** ADR-089, ADR-091
 
-#### Tektos tool registry — PLANNED (Stage 4)
-- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/tools
-- **License:** MIT (relicensed at port-in)
-- **Kosmos location:** `plugins/tektos/tools/`
-- **Port(s):** internal to Tektos plugin; approval-tier writes gated by `ApprovalPort`
-- **Modifications:** every tool call emits `tektos.tool.*` on `EventBusPort`; approval-required tools go through `ApprovalPort`.
-- **ADR:** (Tektos-internal, no new formal port)
+#### Tektos tool registry — VENDORED (Stage 4.7)
+- **Source:** https://github.com/rmholston420/tektos-ultima
+- **Commit / Version:** `2b45cac1f9ac214c85ff53571b949445b5415209` (2026-09-10)
+- **License:** MIT (re-licensed at port-in; rmholston420 sole copyright)
+- **Kosmos location:** `adapters/sandbox/tektos/vendor/tool_registry_donor.py` (donor snapshot — trimmed `ToolDefinition` + JSON-schema validation), `plugins/tektos/tools/registry.py` (`TektosToolRegistry`, `ToolDescriptor`)
+- **Port(s):** `ApprovalGatewayPort` + `ApprovalResolverPort` (ADR-033, ADR-045), `SandboxPort` (ADR-082), `EventBusPort` (ADR-086)
+- **Modifications:** donor `ToolRegistry` trimmed from 553 lines to ~140 in vendor snapshot; kept `ToolDefinition` shape (`name`, `description`, `parameters` JSON schema, `handler`, `enabled`, `timeout`) + `jsonschema` validation with permissive fallback; dropped MCP client integration (Stage 4.8+), REST API surface, direct event emission (routed through `EventBusPort` instead), pre-baked bash/file/search handlers (Kosmos plugin layer registers explicitly with approval-tier metadata upstream lacked). `TektosToolRegistry` adds: `ToolDescriptor` extends the upstream shape with `approval_tier: ChangeApprovalTier` + `network: SandboxNetworkPolicy`; `invoke()` validates arguments then routes through `ApprovalGatewayPort.propose` (AUTONOMOUS returns synchronously; HUMAN_REVIEW / HUMAN_REQUIRED polls `ApprovalResolverPort.get_by_id` every 100 ms with jittered backoff and hard timeout, raises `ToolApprovalDenied` on REJECTED / REVIEW_MISSED); execution flows through `SandboxPort.run` (never direct handler invocation — no bypass of the isolation boundary); every `tektos.tool.{invoked,approved,denied,completed}` envelope carries `provenance="tektos_tool"` + `confidence=1.0` in payload per Stage 4.7 DoD.
+- **ADR:** ADR-093
+- **Logged:** 2026-09-10 01:15 EDT
+
+#### Tektos MCP integration — PLANNED (Stage 4.8+)
+- **Source:** https://github.com/rmholston420/tektos-ultima MCP client + upstream `ToolRegistry` MCP branch
+- **License:** MIT (re-license at port-in)
+- **Kosmos location:** future `plugins/tektos/tools/mcp_bridge.py`
+- **Port(s):** `ExternalToolPort` (future), `ApprovalGatewayPort`, `SandboxPort`
+- **Modifications:** discovers MCP tools at boot, registers each as a `ToolDescriptor` with `approval_tier=HUMAN_REVIEW` default (per ADR-093 §5 deferrals); wire under the same approval-gate + sandbox-exec discipline as native tools. Explicitly excluded from ADR-093 §5.
+- **ADR:** ADR-093 (deferred)
+
+#### Tektos filesystem tools (read/write/delete/list/create) — PLANNED (Stage 4.8+)
+- **Source:** https://github.com/rmholston420/tektos-ultima/blob/main/src/tektos/providers/sandbox_provider.py (`file_read`, `file_write`, `file_delete`, `directory_list`, `directory_create` handlers)
+- **License:** MIT (re-license at port-in)
+- **Kosmos location:** future `plugins/tektos/tools/filesystem.py`
+- **Port(s):** `SandboxPort`, `ApprovalGatewayPort`
+- **Modifications:** path-traversal detector + write-approval flow (HUMAN_REVIEW default) required before absorption. Explicitly excluded from ADR-093 §5.
+- **ADR:** ADR-093 (deferred)
 
 #### Tektos CI (`.github/workflows/ci.yml`) — PLANNED (Stage 0.5)
 - **Source:** https://github.com/rmholston420/tektos-ultima/blob/main/.github/workflows/ci.yml

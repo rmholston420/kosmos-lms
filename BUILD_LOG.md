@@ -3461,3 +3461,92 @@ Use the `kosmos-log-maintenance` Perplexity Computer skill.
 - **Ports / adapters affected:** ledger reflects live state of `LoopSafetyPort` + `ImmunePort` + `ThermalPort` adapters
 - **PORTING_LEDGER / ADR updated:** 4 rows flipped, 2 new rows added, ADR-092 indexed
 - **Stop-condition status:** met — every VENDORED row carries upstream URL + commit SHA + SPDX license + Kosmos location + modification notes per kosmos-port-workflow §4; ledger + spec fan-out consistent per kosmos-spec-diff.
+
+
+## 2026-09-10 01:15 EDT — Stage 4.7.1 · ADR-093 (Tektos sandbox + planner + tool-registry absorption scope)
+
+- **Stage / plugin / port:** Stage 4.7 · SandboxPort · Tektos planner + tool registry
+- **What changed:** Authored ADR-093 locking Stage 4.7 scope. Vendor-plus-adapter shape for sandbox (donor `providers/sandbox_provider.py` trimmed 763→180 lines under `adapters/sandbox/tektos/vendor/sandbox_exec_donor.py`) + tool registry (donor `tools/registry.py` trimmed 553→140 lines under same vendor tree). Two SandboxPort adapters (`TektosSandboxAdapter` and `NoOpSandboxAdapter`) — ADR-082 §Enforcement rule 4 mandates both. Kosmos-native planner seed (no LLM at 4.7) instead of donor port to keep ADR-087 role-routing off the critical path. Approval-tier lives on `ToolDescriptor`, not the call site. Explicit exclusions per §5: LLM-driven planner modules, filesystem tools, `search`, MCP discovery, Docker-exec branch, cgroups v1, Firecracker, real Praxis wiring — all captured as PLANNED rows.
+- **Files touched:**
+  - `docs/adrs/ADR-093-tektos-sandbox-planner-tools-absorption-scope.md` (new, 169 lines)
+- **Ports / adapters affected:** SandboxPort (first non-stub adapters imminent), ApprovalGatewayPort/ApprovalResolverPort (new tool-registry consumer), EventBusPort (`tektos.plan.*`, `tektos.tool.*`, `sandbox.*` envelopes per ADR-086)
+- **PORTING_LEDGER / ADR updated:** ADR-093 authored (index update queued for Stage 4.7.7)
+- **Stop-condition status:** met — decision reshapes port surface (SandboxPort first non-stub) + adds new formal-port consumer (tool registry uses ApprovalGatewayPort + SandboxPort + EventBusPort), so ADR required per kosmos-adr-authoring; two alternatives per option enumerated in §Rationale.
+
+
+## 2026-09-10 01:15 EDT — Stage 4.7.2 · Vendor donor snapshots (sandbox_exec + tool_registry)
+
+- **Stage / plugin / port:** Stage 4.7 · `adapters/sandbox/tektos/vendor/`
+- **What changed:** Vendored two donor snapshots with SPDX-MIT + provenance banners citing upstream commit `2b45cac1f9ac214c85ff53571b949445b5415209`. `sandbox_exec_donor.py` (198 lines) keeps the subprocess-based `exec_argv`/`run_shell` primitives + `MAX_OUTPUT_SIZE` cap + `_docker_exec` helper for future Terminal-Bench; dropped sudo auto-retry, PEP-668 hint injection, file/directory/search tool handlers, MCP integration. `tool_registry_donor.py` (137 lines) keeps `ToolDefinitionDonor` shape + `validate_arguments` (JSON-schema via `jsonschema` with permissive fallback for missing dep); dropped MCPClient integration, REST API surface, direct event emission, pre-baked handler factories, telemetry counters. Both files smoke-tested end-to-end.
+- **Files touched:**
+  - `adapters/sandbox/__init__.py` (new)
+  - `adapters/sandbox/tektos/__init__.py` (new)
+  - `adapters/sandbox/tektos/vendor/__init__.py` (new)
+  - `adapters/sandbox/tektos/vendor/sandbox_exec_donor.py` (new, 198 lines)
+  - `adapters/sandbox/tektos/vendor/tool_registry_donor.py` (new, 137 lines)
+  - `adapters/sandbox/noop/__init__.py` (new)
+- **Ports / adapters affected:** —
+- **PORTING_LEDGER / ADR updated:** rows for `Tektos sandbox` + `Tektos tool registry` will flip PLANNED→VENDORED in Stage 4.7.7
+- **Stop-condition status:** met — permissive MIT license, banner records upstream commit + modifications per kosmos-port-workflow §4.
+
+
+## 2026-09-10 01:15 EDT — Stage 4.7.3 · SandboxPort adapters (NoOp + Tektos)
+
+- **Stage / plugin / port:** Stage 4.7 · `SandboxPort` · `NoOpSandboxAdapter` + `TektosSandboxAdapter`
+- **What changed:** Landed the first two SandboxPort adapters. `NoOpSandboxAdapter` (205 lines) synthesizes `SandboxResult(exit_code=0, killed_by="exit")` without executing anything and publishes `sandbox.started`/`sandbox.completed` + writes `MemoryPort(provenance="sandbox", confidence=1.0, attributes.noop=True)`. `TektosSandboxAdapter` (394 lines) wraps donor `exec_argv` and adds: (a) argv-first exec (never `shell=True`) closing upstream injection surface; (b) `resource.setrlimit(RLIMIT_AS, RLIMIT_CPU, RLIMIT_FSIZE=128MB)` via `preexec_fn`; (c) `SandboxLimits.network` enforcement — `"none"`/`"loopback"` wraps in `unshare --user --map-root-user --net`, fail-closed with `sandbox.isolation_unavailable` envelope + `exit_code=126` when `unshare` missing or kernel refuses (preserves ADR-082 §Enforcement rule 3); (d) opportunistic cgroups v2 write at `/sys/fs/cgroup/kosmos-sandbox/<run_id>/memory.max` when mount writable, else logs once; (e) wall-time enforced via donor `subprocess.run(timeout=...)` in `asyncio.to_thread`; (f) `kill()` records cancel intent (donor `subprocess.run` blocks a worker thread so mid-flight SIGTERM isn't injectable) and reclassifies terminal envelope as `killed_by="user"`. Both adapters `isinstance(_, SandboxPort)` and pass runtime checks.
+- **Files touched:**
+  - `adapters/sandbox/noop/adapter.py` (new, 205 lines)
+  - `adapters/sandbox/tektos/adapter.py` (new, 394 lines)
+- **Ports / adapters affected:** SandboxPort (ADR-082) now has two concrete adapters. First non-stub SandboxPort adapters in the repo.
+- **PORTING_LEDGER / ADR updated:** —
+- **Stop-condition status:** met — both adapters satisfy Protocol; no cross-plugin imports (plugin-isolation guard clean); no shell=True in adapter layer; `network="none"` fail-closes per ADR-082 §rule 3.
+
+
+## 2026-09-10 01:15 EDT — Stage 4.7.4 · TektosTurnPlanner seed (plugins/tektos/planner/)
+
+- **Stage / plugin / port:** Stage 4.7 · `plugins/tektos/planner/turn_planner.py`
+- **What changed:** Landed Kosmos-native planner seed. `TektosTurnPlanner.plan(prompt) -> Plan` returns a scripted 3-node chain `(read → analyze → summarize)` with linear `depends_on`. Emits `tektos.plan.started` + one `tektos.plan.node` per node + `tektos.plan.completed` on `EventBusPort` per ADR-086 (envelope payload carries `plan_id`, `node_id`, `correlation_id=plan_id`, `source="tektos_planner"` — no top-level `correlation_id` field on `EventEnvelope`). Empty-prompt rejected with `ValueError`. No LLM call — satisfies Stage 4.7 DoD verb ("a scripted plan node round-trips through EventBusPort") without landing ADR-087 role-routing on the critical path. Full donor absorption of the 8-module planner deferred to Stage 4.7+1 (captured as PLANNED row in PORTING_LEDGER).
+- **Files touched:**
+  - `plugins/tektos/planner/__init__.py` (new)
+  - `plugins/tektos/planner/turn_planner.py` (new, 178 lines)
+- **Ports / adapters affected:** EventBusPort consumer added
+- **PORTING_LEDGER / ADR updated:** planner PLANNED row will split into VENDORED (Kosmos-native seed) + PLANNED (full donor absorption) in Stage 4.7.7
+- **Stop-condition status:** met — no cross-plugin imports; DoD verb exercised in Stage 4.7.6 contract tests.
+
+
+## 2026-09-10 01:15 EDT — Stage 4.7.5 · TektosToolRegistry (approval-gated)
+
+- **Stage / plugin / port:** Stage 4.7 · `plugins/tektos/tools/registry.py`
+- **What changed:** Landed approval-gated tool registry. `ToolDescriptor` extends the donor `ToolDefinition` shape with `approval_tier: ChangeApprovalTier` + `network: SandboxNetworkPolicy` + resource caps (`timeout_seconds`, `max_memory_mb`, `max_cpu_percent`). `TektosToolRegistry.invoke(name, arguments, *, intention_id, proposing_domain="tektos")` flow: (1) `validate_arguments` against `ToolDescriptor.parameters` JSON schema; (2) publish `tektos.tool.invoked`; (3) `ApprovalGatewayPort.propose(intention_id, delta, tier, proposing_domain, diff_preview)`; (4) AUTONOMOUS returns synchronously; HUMAN_REVIEW/HUMAN_REQUIRED polls `ApprovalResolverPort.get_by_id` every 100 ms with jittered backoff (max 1 s interval, hard `approval_timeout_seconds` cap default 300 s) — raises `ToolApprovalDenied` on REJECTED/REVIEW_MISSED, publishes `tektos.tool.approved` on APPROVED/MODIFIED; (5) build `SandboxRequest` (argv-first, env sanitized with default PATH, `SandboxLimits.network` from descriptor); (6) execute via `SandboxPort.run` — never direct handler invocation (no bypass of the isolation boundary); (7) publish `tektos.tool.completed` with `run_id`, `exit_code`, `killed_by`, `wall_seconds` — every envelope's payload carries `provenance="tektos_tool"` + `confidence=1.0` per Stage 4.7 DoD. Ports injected at construction so contract tests can stub them.
+- **Files touched:**
+  - `plugins/tektos/tools/__init__.py` (new)
+  - `plugins/tektos/tools/registry.py` (new, 369 lines)
+- **Ports / adapters affected:** ApprovalGatewayPort + ApprovalResolverPort + SandboxPort + EventBusPort all consumed through injection (no direct imports of Praxis / sandbox / valkey adapters — ADR-007 satisfied)
+- **PORTING_LEDGER / ADR updated:** tool-registry PLANNED row will flip VENDORED in Stage 4.7.7
+- **Stop-condition status:** met — plugin-isolation guard clean; all approval + sandbox routing behind formal ports.
+
+
+## 2026-09-10 01:20 EDT — Stage 4.7.6 · Contract tests (sandbox × 2 + planner + tool registry)
+
+- **Stage / plugin / port:** Stage 4.7 · contract tests
+- **What changed:** Wrote 4 contract test modules covering the Stage 4.7 DoD end-to-end. `adapters/sandbox/noop/test_contract.py` (147 lines, 8 tests): Protocol conformance + synthetic result shape + `sandbox.started`/`completed` publish + `provenance="sandbox"` + `confidence=1.0` memory write + `attributes.noop=True` + kill idempotence + close cascade + run-after-close raises. `adapters/sandbox/tektos/test_contract.py` (196 lines, 9 tests): Protocol conformance + real subprocess exec (`/bin/echo hi`) + **wall-time limit enforcement** (`sleep 5` with 1s cap → `killed_by="limit"`) satisfying ADR-082 §rule 3 DoD verb + terminal envelope publish + memory write + kill/close idempotence + empty-argv rejection + fail-closed `sandbox.isolation_unavailable` envelope when `unshare` missing (skipped on this host — unshare present). `plugins/tektos/planner/test_turn_planner.py` (66 lines, 4 tests): `Plan` frozen tuple shape + `read → analyze → summarize` kinds + linear depends_on chain + **`tektos.plan.*` round-trip through EventBusPort** satisfying Stage 4.7 DoD verb 2. `plugins/tektos/tools/test_registry.py` (292 lines, 7 tests): AUTONOMOUS synchronous path + `provenance="tektos_tool"` + `confidence=1.0` in `tektos.tool.completed` payload + **HUMAN_REQUIRED blocks until resolver returns APPROVED** satisfying DoD verb 3 + REJECTED raises `ToolApprovalDenied` + PENDING-forever times out with `REVIEW_MISSED` + `ToolNotFound` for unregistered tools + invalid arguments rejected before approval call. Total: 27 new tests, 26 pass on this host, 1 correctly skips (fail-closed unshare-missing path). Full-suite: 1320 passed / 7 failed (7 pre-existing MemoryPort protocol drift failures unchanged from Stage 3.13 baseline) / 15 skipped.
+- **Files touched:**
+  - `adapters/sandbox/noop/test_contract.py` (new, 147 lines)
+  - `adapters/sandbox/tektos/test_contract.py` (new, 196 lines)
+  - `plugins/tektos/planner/test_turn_planner.py` (new, 66 lines)
+  - `plugins/tektos/tools/test_registry.py` (new, 292 lines)
+- **Ports / adapters affected:** all Stage 4.7 adapters + registry contract-verified
+- **PORTING_LEDGER / ADR updated:** —
+- **Stop-condition status:** met — Stage 4.7 DoD (§Kosmos-Build-Sequence-v26 lines 496-500) satisfied on all four verbs: (1) SandboxPort contract test proves wall-time limit enforced via `sleep` timeout classifying as `killed_by="limit"`; (2) scripted plan node round-trips through EventBusPort via `test_plan_publishes_started_nodes_completed`; (3) approval-required tool call blocks until ApprovalPort decision returns via `test_human_required_blocks_until_resolver_approves`; (4) `tektos.tool.*` envelopes carry `provenance="tektos_tool"` and `confidence=1.0` via `test_completed_envelope_carries_provenance_and_confidence`. Plugin-isolation guard clean. No new regressions (1320 passed vs pre-4.7 baseline 1293 passed = +27 net-new).
+
+
+## 2026-09-10 01:25 EDT — Stage 4.7.7 · PORTING_LEDGER flips + ADR-093 index + close-out
+
+- **Stage / plugin / port:** Stage 4.7 · logistics
+- **What changed:** Flipped `PORTING_LEDGER.md` rows: `Tektos sandbox` PLANNED (Stage 4) → **VENDORED (Stage 4.7)** with donor commit + adapter-layer modifications enumerated; added new **VENDORED** rows for `NoOp sandbox`, `Tektos planner (Kosmos-native seed)`, and `Tektos tool registry`; split original `Tektos planner` PLANNED row so the deferred donor-absorption path stays visible as PLANNED (Stage 4.7+1) targeting `LLMPort` role-routing per ADR-087; added new PLANNED rows for `Tektos MCP integration` (Stage 4.8+) and `Tektos filesystem tools` (Stage 4.8+) reflecting ADR-093 §5 deferrals. Added ADR-093 index row to `docs/adrs/README.md` with full 4-verb DoD summary; updated open-decisions paragraph to note Stage 4.7 lands ADR-093.
+- **Files touched:**
+  - `PORTING_LEDGER.md` (3 rows flipped/expanded, 4 new rows added)
+  - `docs/adrs/README.md` (ADR-093 row + Stage 4.7 sentence)
+- **Ports / adapters affected:** ledger reflects live state of `SandboxPort` (2 adapters), `TektosTurnPlanner`, `TektosToolRegistry`
+- **PORTING_LEDGER / ADR updated:** 3 rows flipped VENDORED, 5 new rows added (1 VENDORED + 3 PLANNED-deferrals + 1 PLANNED-planner-full), ADR-093 indexed with 4-verb DoD summary
+- **Stop-condition status:** met — every VENDORED row cites upstream URL + commit SHA + SPDX MIT + Kosmos location + modification notes per kosmos-port-workflow §4; every PLANNED deferral cites ADR-093 §5 exclusion clause per kosmos-spec-diff.
