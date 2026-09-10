@@ -1,37 +1,37 @@
-# Kosmos Session Handoff — 2026-09-10 04:12 EDT
+# Kosmos Session Handoff — 2026-09-10 05:15 EDT
 
 ## Current build-sequencing position
-- **Stage / phase:** Stage 7.4+2 · **LANDED**
-- **Plugin / kernel component:** `kernel/app.py::_boot_memory` · MemoryPort lexical lane
-- **Port(s) in progress:** none — Stage 7.4+2 is fully closed; MemoryPort `search_hybrid` now works end-to-end in production against DozerDB (opt-in via `KOSMOS_MEMORY_LEXICAL=dozerdb`)
 
-## Completed this session (2026-09-10 03:41–04:15 EDT window)
+- **Stage / phase:** Stage 8.0 → Stage 8.1 (per Plan v2)
+- **Plugin / kernel component:** Kernel memory subsystem — `RelationalMemoryPort` (Stage 8.0) COMPLETE; next slice = Tektos Session FSM (Stage 8.1) as first Tektos-Ultima runtime fidelity port
+- **Port(s) in progress:** none in-flight; Stage 8.0 (23rd formal port `RelationalMemoryPort`) landed with two adapters (`NoOpRelationalMemoryAdapter`, `PostgresRelationalMemoryAdapter`) and env-gated kernel wiring
 
-- **03:52 EDT** — Authored `docs/adrs/ADR-101-stage-7-4-2-kernel-boot-lexical-wiring.md` (310 lines; 5 decisions D1–D5; 5 rejected alternatives; discharges ADR-100 D6 deferral)
-- **03:56 EDT** — Wired `DozerDbLexicalIndex` into `kernel/app.py::_boot_memory` behind opt-in `KOSMOS_MEMORY_LEXICAL={off,dozerdb}` env-gate; reject-shape guards; boot-time `is_healthy()` check; fail-closed fall-through with warning log citing ADR-101 D3
-- **04:00 EDT** — Wrote 6 fast-tier acceptance tests at `tests/kernel/test_stage_7_4_2_lexical_wiring.py`; all 6 green after fixing Python 3.14 `get_event_loop()` deprecation and a `close()`-is-async wiring bug found by test 5
-- **04:03 EDT** — Full regression: `1462 passed / 0 failed / 15 skipped` (Stage 7.4+1 baseline PRESERVED); acceptance suite `6 passed`
-- **04:07 EDT** — Spec fan-out: appended Stage 7.4+2 stanza to `docs/Kosmos-Build-Sequence-v26.md`; inserted ADR-101 row in `docs/adrs/README.md`; amended Remaining-open-decisions paragraph
-- **04:10 EDT** — DEBUG_LOG entry logging the pre-existing `tests/kernel/` testpaths-orphan discovery (deferred; 13 pre-existing failures need triage before `tests/` can be added to `testpaths`)
+## Completed this session
+
+- **Stage 8.0 planning** — Plan v2 for Stages 8–14 authored + ADR-102 authored + PORTING_LEDGER PLANNED entries seeded + pushed at `243ba93`
+- **Stage 8.0 code** — `ports/relational_memory.py` written (Protocol + 3 dataclasses + 2 zero-trust helpers); `NoOpRelationalMemoryAdapter` written + 23 fast contract tests green; `PostgresRelationalMemoryAdapter` written + 3 import-tier tests green + 5 live-tier tests correctly skipped; Alembic scaffold + `versions/001_initial.py` written; kernel `_boot_relational_memory` wired + 6 fast acceptance tests green
+- **Stage 8.0 regression** — `pytest ports adapters kernel plugins ops` = 1488 passed / 0 failed / 20 skipped (baseline 1462/0/15 → +26/+5, zero new failures)
+- **Stage 8.0 documentation fanout** — PORTING_LEDGER Stage 8.0 section appended (aiosqlite / asyncpg / pgvector-python / pg_uuidv7 / Alembic); `docs/Kosmos-Build-Spec-v26.md` §4.1 Ports table + §17 ADR table updated with `RelationalMemoryPort` + `ADR-102`; `docs/Kosmos-Build-Sequence-v26.md` Stage 8.0 stanza appended; `BUILD_LOG.md` entry for Stage 8.0 landing appended
 
 ## Remaining before current Definition of Done
 
-- **Definition of Done met.** All Stage 7.4+2 acceptance criteria discharged. Pending only:
-  1. git commit + push (next action below)
+- Commit + push the code + doc fanout for Stage 8.0 to `rmholston420/kosmos-lms` (Cloud auth: `api_credentials=["github"]`)
+- Tag `stage-8-0-complete` on the fanout commit
+- (Colossus, out-of-band per Plan v2) — user runs `alembic upgrade head` against real Postgres 18 + pgvector + pg_uuidv7 on Colossus and re-runs the postgres contract tests with `KOSMOS_STAGE_80_REAL_POSTGRES=1` + `KOSMOS_POSTGRES_URI=...` to green the 5 live-tier tests currently skipped in Cloud
 
 ## Open questions / awaiting user answer
 
-None.
+- none — Q1 (Postgres slot: agent-decided as 5th memory layer beside Neo4j / Qdrant / OpenSearch / Redis), Q2 (fidelity-vs-rewrite for Tektos-Ultima runtime: A = fidelity port), Q3 (family order + in-process httpx+websockets websocket testing in Cloud CI: ii) all answered
 
 ## Exact next action
 
-Commit the Stage 7.4+2 landing and push to `origin/main`:
+Run in `/home/user/workspace/audit/kosmos-lms`:
 
-```bash
-cd /home/user/workspace/audit/kosmos-lms && \
+```
 git add -A && \
-git commit -m "Stage 7.4+2: kernel-boot lexical wiring for ZetesisPlugin factory (ADR-101)" && \
-git push origin main
+git -c user.email="agent@kosmos-lms" -c user.name="Kosmos-LMS Agent" commit -m "Stage 8.0: RelationalMemoryPort (23rd port) — noop + postgres adapters + kernel wiring + doc fanout (ADR-102)" && \
+git tag stage-8-0-complete && \
+git push --tags origin main
 ```
 
-After push, the next session picks up Stage 7.5 or a candidate deferral (ADR-090 pre-condition work; TTS engine selection benchmark per ADR-097 D3 → Stage 6.5+1; Lucene reserved-character escaping in `search_lexical` → Stage 7.4+3; the `tests/` testpaths cleanup + 13-failure triage separate slice). Read this file first before choosing.
+with `api_credentials=["github"]`. Then start **Stage 8.1** — Session FSM + session endpoints as a fidelity port from the tektos-ultima donor `src/tektos/state_machine.py` + `src/tektos/runtime/session.py`, wrapped behind a new adapter under `adapters/session/tektos/vendor/` per the Plan v2 fidelity-port rule.

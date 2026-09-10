@@ -3913,3 +3913,29 @@ Use the `kosmos-log-maintenance` Perplexity Computer skill.
 - **Ports / adapters affected:** ADR-102 designates a new formal port `RelationalMemoryPort` to land in the next commit (Stage 8.0 slice); no code yet
 - **PORTING_LEDGER / ADR updated:** ADR-102 authored + indexed
 - **Stop-condition status:** met — audit complete, Plan v2 authored, ADR-102 ratified, spec fan-out (ADRs README) green. No cross-check violations: ADR-102 body ↔ ADRs README row ↔ Plan v2 §4 Stage 8.0 all agree. Baseline test suite `1462 passed / 0 failed / 15 skipped` still valid (no code changes).
+
+## 2026-09-10 05:15 EDT — Stage 8.0 RelationalMemoryPort landed (23rd formal port)
+
+- **Stage / plugin / port:** Stage 8.0 · Kernel memory subsystem · **new** `RelationalMemoryPort` (23rd formal port)
+- **What changed:** Landed the code half of Stage 8.0 (ADR-102). Wrote `ports/relational_memory.py` (Protocol + `LedgerRow` / `NarrativeHit` / `RelationalTx` frozen dataclasses + `validate_confidence` / `validate_provenance` zero-trust helpers). Wrote `NoOpRelationalMemoryAdapter` (aiosqlite 0.22, `:memory:` default, autocommit-mode + `_tx_depth` guard for real BEGIN/COMMIT/ROLLBACK semantics) with 23 fast contract tests. Wrote `PostgresRelationalMemoryAdapter` (asyncpg 0.31 + pgvector 0.5, lazy pool via `asyncpg.create_pool(init=register_vector, min_size=2, max_size=10)`, pure-tsvector branch + RRF-k=60 hybrid branch, sync non-throwing `is_healthy` per ADR-100 D1) with 3 import-tier + 5 live-tier contract tests (live gated `KOSMOS_STAGE_80_REAL_POSTGRES=1` + `KOSMOS_POSTGRES_URI`). Wrote Alembic scaffold (`alembic.ini`, `env.py` async + `postgres://` → `postgresql+asyncpg://` normalization, `script.py.mako`, `versions/001_initial.py`) — installs `pg_trgm`/`pgcrypto`/`vector` unconditionally + `pg_uuidv7` tolerantly via DO block; authors `kosmos_uuid7()` PL/pgSQL wrapper (uuid_generate_v7 else gen_random_uuid); creates `ledger_events` + `narratives` tables with tsvector generated column, GIN body/tsv + tags indexes, HNSW pgvector index on `vector(1536)`. Extended `kernel/app.py::_boot_relational_memory` (env-gate `KOSMOS_RELATIONAL_MEMORY={off,noop,postgres}` default `off`; postgres requires `KOSMOS_POSTGRES_URI`; unhealthy → `registry.relational_memory=None` per ADR-101 D3 pattern; unknown value → RuntimeError). Added `_BootRegistry.relational_memory: Any = None`. Wrote 6 fast kernel-wiring acceptance tests at `tests/kernel/test_stage_8_0_relational_memory_wiring.py`.
+- **Files touched:**
+  - `ports/relational_memory.py`
+  - `adapters/relational_memory/__init__.py`
+  - `adapters/relational_memory/noop/__init__.py`
+  - `adapters/relational_memory/noop/adapter.py`
+  - `adapters/relational_memory/noop/test_contract.py`
+  - `adapters/relational_memory/postgres/__init__.py`
+  - `adapters/relational_memory/postgres/adapter.py`
+  - `adapters/relational_memory/postgres/test_contract.py`
+  - `adapters/relational_memory/postgres/migrations/alembic.ini`
+  - `adapters/relational_memory/postgres/migrations/env.py`
+  - `adapters/relational_memory/postgres/migrations/script.py.mako`
+  - `adapters/relational_memory/postgres/migrations/versions/001_initial.py`
+  - `kernel/app.py`
+  - `tests/kernel/test_stage_8_0_relational_memory_wiring.py`
+  - `PORTING_LEDGER.md` (Stage 8.0 section appended — 5 entries: aiosqlite / asyncpg / pgvector-python / pg_uuidv7 / Alembic)
+  - `docs/Kosmos-Build-Spec-v26.md` (§4.1 Ports table: RelationalMemoryPort row added; §17 ADR table: ADR-102 row appended)
+  - `docs/Kosmos-Build-Sequence-v26.md` (Stage 8.0 stanza appended)
+- **Ports / adapters affected:** new `RelationalMemoryPort` at `ports/relational_memory.py`; new adapters `adapters/relational_memory/noop/` and `adapters/relational_memory/postgres/`; kernel `_boot_relational_memory` slot added in canonical boot order (immediately after `_boot_memory`, before `_boot_gnosis_seeder`)
+- **PORTING_LEDGER / ADR updated:** PORTING_LEDGER.md Stage 8.0 section (aiosqlite 0.22.1 MIT · asyncpg 0.31.0 Apache-2.0 · pgvector-python 0.5.0 MIT · pg_uuidv7 MPL-2.0 · Alembic 1.19.2 MIT); ADR-102 already committed at 243ba93 in the planning phase
+- **Stop-condition status:** met — full regression `pytest ports adapters kernel plugins ops` = **1488 passed / 0 failed / 20 skipped** in Cloud (baseline 1462/0/15 → +26/+5, zero new failures); ADR-007 respected (adapters are new subpackages, no cross-plugin imports); ADR-008 mirrored at port layer via `validate_confidence` + `validate_provenance` on every write path

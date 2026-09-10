@@ -99,6 +99,14 @@ class _BootRegistry:
         # Stage 6.5.6 additions (ADR-063).
         self.llm: Any = None
         self.memory: Any = None
+        # Stage 8.0 (ADR-102): kernel-owned RelationalMemoryPort — the 5th
+        # memory layer, combining the R1 audit ledger and the R2 episodic
+        # narrative store. Populated by ``_boot_relational_memory``. Boots
+        # into the ``off`` state by default (returns None with no warning);
+        # explicit opt-in via ``KOSMOS_RELATIONAL_MEMORY={noop,postgres}``.
+        # Downstream call sites MUST tolerate ``None`` (health-check pattern:
+        # ``if registry.relational_memory is None: ...``).
+        self.relational_memory: Any = None
         # Stage 1.6 Phase 0 (ADR-073): kernel-owned EmbeddingsPort. Separate
         # from ``self.llm`` so chat-only backends (e.g. llama-swap) don't
         # have to satisfy an embeddings surface. Populated by ``_boot_embeddings``.
@@ -564,6 +572,87 @@ async def lifespan(app: FastAPI):
         )
 
     registry.memory = _boot_memory
+
+    # --- Stage 8.0 RelationalMemoryPort (ADR-102) ---------------------------
+    # The 5th memory layer. Two adapters ship: NoOp (aiosqlite in-memory,
+    # zero external dep) and Postgres (asyncpg + pgvector, production).
+    #
+    # Env contract (ADR-102 D6):
+    #   KOSMOS_RELATIONAL_MEMORY = off | noop | postgres    (default: off)
+    #   KOSMOS_POSTGRES_URI      = postgres://...           (required if postgres)
+    #
+    # Health failure follows the ADR-101 degrade pattern: unhealthy adapter
+    # -> registry.relational_memory stays None with a warning log; the app
+    # boots and downstream call sites treat None as "5th layer offline".
+    @_try("relational_memory")
+    def _boot_relational_memory():
+        import logging as _kosmos_logging
+        import os
+
+        log = _kosmos_logging.getLogger(__name__)
+        mode = os.environ.get("KOSMOS_RELATIONAL_MEMORY", "off").lower().strip()
+
+        _ALLOWED = ("off", "noop", "postgres")
+        if mode not in _ALLOWED:
+            raise RuntimeError(
+                "KOSMOS_RELATIONAL_MEMORY=%r is not one of %s (ADR-102 D6)."
+                % (mode, _ALLOWED)
+            )
+
+        if mode == "off":
+            return None  # silent — this is the default
+
+        if mode == "noop":
+            from adapters.relational_memory import NoOpRelationalMemoryAdapter
+
+            adapter = NoOpRelationalMemoryAdapter()
+            if not adapter.is_healthy():
+                init_err = getattr(adapter, "_init_error", None)
+                log.warning(
+                    "kosmos.relational_memory: noop unhealthy at boot; "
+                    "5th layer offline (ADR-102 D6); init_error=%r",
+                    init_err,
+                )
+                return None
+            log.info(
+                "kosmos.relational_memory: wired (ADR-102); adapter=noop "
+                "backend=aiosqlite:memory"
+            )
+            return adapter
+
+        # mode == "postgres"
+        dsn = os.environ.get("KOSMOS_POSTGRES_URI")
+        if not dsn:
+            raise RuntimeError(
+                "KOSMOS_RELATIONAL_MEMORY=postgres requires KOSMOS_POSTGRES_URI "
+                "(ADR-102 D6)."
+            )
+
+        from adapters.relational_memory import PostgresRelationalMemoryAdapter
+
+        if PostgresRelationalMemoryAdapter is None:
+            log.warning(
+                "kosmos.relational_memory: postgres adapter unavailable "
+                "(asyncpg not installed); 5th layer offline (ADR-102 D6)"
+            )
+            return None
+
+        adapter = PostgresRelationalMemoryAdapter(dsn=dsn)
+        if not adapter.is_healthy():
+            init_err = getattr(adapter, "_init_error", None)
+            log.warning(
+                "kosmos.relational_memory: postgres unhealthy at boot; "
+                "5th layer offline (ADR-102 D6); init_error=%r",
+                init_err,
+            )
+            return None
+        log.info(
+            "kosmos.relational_memory: wired (ADR-102); adapter=postgres dsn=%s",
+            dsn,
+        )
+        return adapter
+
+    registry.relational_memory = _boot_relational_memory
 
     # --- Gnosis boot seeder (ADR-064) ----------------------------------------
     # Env-gated by ``KOSMOS_GNOSIS_SEED=1``. Iterates ``ALL_CORPORA`` and

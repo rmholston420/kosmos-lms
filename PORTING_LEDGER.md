@@ -700,3 +700,83 @@ Source repo: `rmholston420/tektos-ultima` (public, no LICENSE file at source; so
 - **Modifications:** N/A; four record methods (voice, vision-description, vision-OCR, vision-detections); every call fans out to exactly two `MemoryPort.write_event` calls per ADR-096 D1 (ingest triple `confidence=1.0` + result triple with passthrough confidence per ADR-083/084); detection aggregate confidence = mean of per-detection confidences (empty → 0.0); result summary strings capped at 4 KiB / 256-char detection summary; raw bytes NEVER enter MemoryPort (bytes → BlobStore, URI + hash → MemoryPort)
 - **ADR:** ADR-096 D1
 - **Logged:** 2026-09-10 02:48 EDT
+
+## Stage 8.0 — RelationalMemoryPort · Postgres 5th memory layer (ADR-102)
+
+The 5th memory layer combines the R1 audit ledger (sessions, approvals,
+tool-invocation, ADR-088 budget history, ADR-092 immune events) and the R2
+episodic-narrative store (tsvector + hnsw pgvector hybrid search). Ships two
+adapters: NoOp (aiosqlite in-memory, required for CI) and Postgres
+(asyncpg + pgvector, production). Kernel wiring gated by
+`KOSMOS_RELATIONAL_MEMORY={off,noop,postgres}` — see
+`kernel/app.py::_boot_relational_memory`. All entries below logged
+2026-09-10 05:00 EDT.
+
+#### aiosqlite 0.22.1 — VENDORED
+- **Source:** https://github.com/omnilib/aiosqlite
+- **Commit / Version:** 0.22.1
+- **License:** MIT
+- **Kosmos location:** transitively via `pip install aiosqlite`; imported at
+  `adapters/relational_memory/noop/adapter.py`
+- **Port(s):** RelationalMemoryPort (noop adapter only)
+- **Modifications:** none; async wrapper over stdlib sqlite3
+- **ADR:** ADR-102 D2
+- **Logged:** 2026-09-10 05:00 EDT
+
+#### asyncpg 0.31.0 — VENDORED
+- **Source:** https://github.com/MagicStack/asyncpg
+- **Commit / Version:** 0.31.0
+- **License:** Apache-2.0
+- **Kosmos location:** transitively via `pip install asyncpg`; imported at
+  `adapters/relational_memory/postgres/adapter.py`
+- **Port(s):** RelationalMemoryPort (postgres adapter only)
+- **Modifications:** none; connection pool `min_size=2 max_size=10`;
+  per-connection `init` callback registers pgvector types
+- **ADR:** ADR-102 D2
+- **Logged:** 2026-09-10 05:00 EDT
+
+#### pgvector-python 0.5.0 — VENDORED
+- **Source:** https://github.com/pgvector/pgvector-python
+- **Commit / Version:** 0.5.0
+- **License:** MIT
+- **Kosmos location:** transitively via `pip install pgvector`; imported at
+  `adapters/relational_memory/postgres/adapter.py` (register_vector for
+  asyncpg codec) and `migrations/versions/001_initial.py` (server-side
+  extension via `CREATE EXTENSION vector`)
+- **Port(s):** RelationalMemoryPort (postgres adapter only)
+- **Modifications:** none; embedding column typed `vector(1536)` matching
+  the current EmbeddingsPort default (OpenAI text-embedding-3 shape)
+- **ADR:** ADR-102 D3, D5
+- **Logged:** 2026-09-10 05:00 EDT
+
+#### pg_uuidv7 — VENDORED (server-side Postgres extension, optional)
+- **Source:** https://github.com/fboulnois/pg_uuidv7
+- **Commit / Version:** tracked at operator install time; migration is
+  tolerant of absence (falls back to `gen_random_uuid()`)
+- **License:** MPL-2.0
+- **Kosmos location:** `adapters/relational_memory/postgres/migrations/
+  versions/001_initial.py` — `CREATE EXTENSION IF NOT EXISTS pg_uuidv7`
+  guarded by a DO block that swallows errors and warns
+- **Port(s):** RelationalMemoryPort (postgres adapter only)
+- **Modifications:** none; the migration authors a `kosmos_uuid7()` PL/pgSQL
+  wrapper that dispatches to `uuid_generate_v7()` when available, else
+  `gen_random_uuid()` — preserves temporal ordering when the extension is
+  installed and stays functional when it is not
+- **ADR:** ADR-102 D3
+- **Logged:** 2026-09-10 05:00 EDT
+
+#### Alembic 1.19.2 — VENDORED (migrations-only)
+- **Source:** https://github.com/sqlalchemy/alembic
+- **Commit / Version:** 1.19.2
+- **License:** MIT
+- **Kosmos location:** `adapters/relational_memory/postgres/migrations/`
+  (env.py + alembic.ini + script.py.mako + versions/001_initial.py)
+- **Port(s):** operator-only tool for RelationalMemoryPort postgres schema
+  management; NOT imported at runtime by the kernel or by any plugin
+- **Modifications:** env.py reads DSN from `KOSMOS_POSTGRES_URI` at runtime
+  (normalises `postgres://` → `postgresql+asyncpg://`); migration is
+  offline-and-online-safe; no ORM models declared (schema is raw SQL to
+  keep Postgres-specific features — tsvector generated column, pgvector,
+  pg_uuidv7 — first-class rather than approximated through the ORM)
+- **ADR:** ADR-102 D3, D7 (no auto-migrate on boot)
+- **Logged:** 2026-09-10 05:00 EDT
