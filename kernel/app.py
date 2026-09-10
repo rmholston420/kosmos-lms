@@ -406,6 +406,20 @@ async def lifespan(app: FastAPI):
     #                              ``InMemoryTemporalIndex`` alongside DozerDB
     #                              graph writes until a replacement temporal
     #                              backend is proposed in a future ADR.
+    #
+    # ``KOSMOS_MEMORY_LEXICAL`` selects the lexical retrieval lane (ADR-101):
+    #   unset / ``off`` (default) — no lexical lane; ``search_hybrid`` raises
+    #                              ``NotImplementedError`` per ADR-085's
+    #                              honesty rule.
+    #   ``dozerdb``              — DozerDbLexicalIndex wrapping a Neo4j
+    #                              Lucene fulltext index; shares the same
+    #                              Bolt endpoint as the graph backend
+    #                              (ADR-008 single-canonical-store rule).
+    #                              REQUIRES ``KOSMOS_MEMORY_BACKEND=dozerdb``.
+    #                              Fails-closed on unhealthy driver (D3):
+    #                              falls through to ``lexical=None`` with a
+    #                              warning log; ``search_hybrid`` reverts
+    #                              to ``NotImplementedError``.
     @_try("memory")
     def _boot_memory():
         import os
@@ -418,6 +432,83 @@ async def lifespan(app: FastAPI):
         )
 
         backend = os.environ.get("KOSMOS_MEMORY_BACKEND", "in_memory").lower()
+        lexical_mode = os.environ.get("KOSMOS_MEMORY_LEXICAL", "off").lower()
+
+        # ADR-101 D2 reject-shape guard: lexical=dozerdb requires
+        # backend=dozerdb (shared Bolt endpoint per ADR-008).
+        _ALLOWED_LEXICAL = ("off", "dozerdb")
+        if lexical_mode not in _ALLOWED_LEXICAL:
+            raise RuntimeError(
+                "KOSMOS_MEMORY_LEXICAL=%r is not one of %s (ADR-101 D2)."
+                % (lexical_mode, _ALLOWED_LEXICAL)
+            )
+        if lexical_mode == "dozerdb" and backend != "dozerdb":
+            raise RuntimeError(
+                "KOSMOS_MEMORY_LEXICAL=dozerdb requires "
+                "KOSMOS_MEMORY_BACKEND=dozerdb (ADR-101 D2 shared-Bolt-endpoint rule); "
+                "got KOSMOS_MEMORY_BACKEND=%r." % backend
+            )
+
+        def _maybe_wire_dozerdb_lexical(
+            *, uri: str, user: str, password: str, database: str
+        ):
+            """Construct DozerDbLexicalIndex when opt-in env is set (ADR-101 D1/D3).
+
+            Returns a healthy ``DozerDbLexicalIndex`` or ``None``. Never
+            raises — fails closed with a warning log so the caller can
+            proceed with ``lexical=None`` (search_hybrid then raises
+            ``NotImplementedError`` per ADR-085, unchanged from the
+            no-opt-in default).
+            """
+            if lexical_mode != "dozerdb":
+                return None
+
+            import logging as _kosmos_logging
+
+            log = _kosmos_logging.getLogger(__name__)
+            try:
+                from adapters.memory.dozerdb.dozerdb_lexical_index import (
+                    DozerDbLexicalIndex,
+                )
+
+                lex = DozerDbLexicalIndex(
+                    uri=uri,
+                    user=user,
+                    password=password,
+                    database=database,
+                )
+            except Exception as _lex_ctor_exc:  # noqa: BLE001 — ADR-101 D3
+                log.warning(
+                    "kosmos.memory.lexical: construction failed; "
+                    "search_hybrid will raise NotImplementedError "
+                    "(ADR-101 D3): %s: %s",
+                    type(_lex_ctor_exc).__name__,
+                    _lex_ctor_exc,
+                )
+                return None
+
+            if not lex.is_healthy():
+                _init_err = getattr(lex, "_init_error", None)
+                # DozerDbLexicalIndex.close() is async; _boot_memory runs
+                # synchronously inside @_try("memory") so we cannot await
+                # here. When is_healthy() is False, _init_error is set
+                # BEFORE _driver is assigned (see adapter __init__), so
+                # there is no live driver to close — best-effort abandon.
+                del lex
+                log.warning(
+                    "kosmos.memory.lexical: unhealthy at boot; "
+                    "search_hybrid will raise NotImplementedError "
+                    "(ADR-101 D3); init_error=%r",
+                    _init_err,
+                )
+                return None
+
+            log.info(
+                "kosmos.memory.lexical: wired (ADR-101); backend=dozerdb uri=%s database=%s",
+                uri,
+                database,
+            )
+            return lex
 
         if backend == "dozerdb":
             uri = os.environ["KOSMOS_DOZERDB_URI"]
@@ -440,6 +531,10 @@ async def lifespan(app: FastAPI):
             # in-memory temporal index until a replacement backend lands.
             temporal = InMemoryTemporalIndex()
             amg = AmgGuardPolicy(policy_preset="tiered")
+            # ADR-101 D1: opt-in lexical lane sharing the same Bolt endpoint.
+            lexical = _maybe_wire_dozerdb_lexical(
+                uri=uri, user=user, password=password, database=database
+            )
             # ADR-074 D3: pass EmbeddingsPort + VectorPort so the
             # adapter can compose them into its semantic memory lane.
             # Both may be ``None`` — the adapter degrades gracefully.
@@ -449,12 +544,17 @@ async def lifespan(app: FastAPI):
                 temporal=temporal,
                 embeddings=registry.embeddings,
                 vector=registry.vector,
+                lexical=lexical,
             )
 
         # Default: in-memory (CI / test / cold-start safe).
         # ADR-074 D3: even the in-memory backend receives the semantic
         # lane deps when they've booted, so operators can exercise
         # ``search_semantic`` against Qdrant without spinning DozerDB.
+        # ADR-101: lexical stays None on the in-memory branch — we do NOT
+        # auto-wire InMemoryLexicalIndex here (would make it too easy to
+        # ship a test backend into production; search_hybrid raising
+        # NotImplementedError is the intended default-mode signal).
         return DozerDbMemoryAdapter(
             graph=InMemoryGraphBackend(),
             amg=NoOpAmgPolicy(),

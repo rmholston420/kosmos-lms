@@ -3850,3 +3850,53 @@ Use the `kosmos-log-maintenance` Perplexity Computer skill.
 - **Ports / adapters affected:** none (documentation reflects live state)
 - **PORTING_LEDGER / ADR updated:** DozerDbLexicalIndex row VENDORED; ADR-100 indexed
 - **Stop-condition status:** met — spec §17 ↔ ADR body ↔ Build-Sequence-v26 ↔ PORTING_LEDGER all agree
+
+## 2026-09-10 03:52 EDT — ADR-101 authored (Stage 7.4+2 kernel-boot lexical wiring)
+
+- **Stage / plugin / port:** Stage 7.4+2 · kernel/app.py::_boot_memory · MemoryPort lexical lane
+- **What changed:** Authored ADR-101 with five governing decisions (D1 wiring lives in `_boot_memory` not the factory; D2 opt-in `KOSMOS_MEMORY_LEXICAL={off,dozerdb}` with shared-Bolt requirement + reject-shape guards; D3 boot-time `is_healthy()` check with fail-closed fall-through; D4 no new `registry.errors` sub-key — outer `_try("memory")` handles all failure modes; D5 two-tier tests fast + reuse existing live). Five alternatives evaluated and rejected in the ADR body: adding `lexical=` to the factory signature, auto-wire when `KOSMOS_MEMORY_BACKEND=dozerdb`, split `KOSMOS_DOZERDB_LEXICAL_URI`, auto-wire `InMemoryLexicalIndex` on the in-memory branch, lazy lexical bootstrap.
+- **Files touched:**
+  - `docs/adrs/ADR-101-stage-7-4-2-kernel-boot-lexical-wiring.md` (NEW; 310 lines)
+- **Ports / adapters affected:** none (documentation)
+- **PORTING_LEDGER / ADR updated:** ADR-101 (see spec-fan-out entry below)
+- **Stop-condition status:** met — ADR body enumerates ≥2 alternatives with rationale; Lock-in phase = Stage 7.4+2; Consequences section enumerates files/tests/spec/log fan-out.
+
+## 2026-09-10 03:56 EDT — Kernel boot wiring: opt-in DozerDbLexicalIndex in _boot_memory
+
+- **Stage / plugin / port:** Stage 7.4+2 · kernel/app.py · MemoryPort lexical lane
+- **What changed:** Extended the `dozerdb` branch of `_boot_memory` (inside `@_try("memory")`) with an opt-in lexical-lane wiring block per ADR-101 D1–D4. Reads new `KOSMOS_MEMORY_LEXICAL` env var (`off` default; `dozerdb` opt-in); rejects unknown values with an enumerating `RuntimeError`; rejects `dozerdb` + non-`dozerdb` backend with a shared-Bolt-endpoint `RuntimeError`. Wiring helper `_maybe_wire_dozerdb_lexical(uri, user, password, database)` constructs `DozerDbLexicalIndex` (lazy driver — no boot-time network I/O), runs sync `is_healthy()`, and falls through to `lexical=None` with a warning log citing ADR-101 D3 when unhealthy or when construction itself raises. Successful wiring emits an INFO log `kosmos.memory.lexical: wired (ADR-101); backend=dozerdb uri=... database=...`. The in-memory branch intentionally does NOT auto-wire `InMemoryLexicalIndex` (ADR-101 rejected alternative — risks shipping test backend into production). Passes `lexical=lexical` through to `DozerDbMemoryAdapter(...)`. Note: `DozerDbLexicalIndex.close()` is async; `_boot_memory` is sync and cannot await, so unhealthy-path cleanup abandons the reference (safe because `_init_error` is set before `_driver` is assigned, so there is no live driver to close).
+- **Files touched:**
+  - `kernel/app.py` — `_boot_memory` grows ~80-line lexical-wiring block; no other lines modified.
+- **Ports / adapters affected:** MemoryPort (lexical lane now boot-wireable in production via `KOSMOS_MEMORY_LEXICAL=dozerdb`)
+- **PORTING_LEDGER / ADR updated:** ADR-101 (authored 03:52)
+- **Stop-condition status:** met — Zetesis factory signature unchanged; `search_hybrid` NotImplementedError contract preserved under all fall-through paths; single Bolt endpoint per ADR-008.
+
+## 2026-09-10 04:00 EDT — Six fast-tier acceptance tests for Stage 7.4+2 wiring
+
+- **Stage / plugin / port:** Stage 7.4+2 · tests/kernel/test_stage_7_4_2_lexical_wiring.py · MemoryPort lexical lane
+- **What changed:** Wrote 6 fast-tier tests per ADR-101 D5 covering: (1) unset env → lexical=None + `search_hybrid` raises `NotImplementedError`; (2) explicit `KOSMOS_MEMORY_LEXICAL=off` → same; (3) `dozerdb` + `KOSMOS_MEMORY_BACKEND=in_memory` → `registry.errors["memory"]` contains reject-shape message citing ADR-101 D2; (4) `dozerdb` + `dozerdb` backend + Bolt env → real `DozerDbLexicalIndex` wired (lazy driver; no live Bolt required) + `is_healthy()` True; (5) `dozerdb` + monkeypatched `neo4j.AsyncGraphDatabase.driver` that raises on second call → lexical falls through to `None`, ADR-101 D3 warning captured in caplog; (6) unknown value `mystery` → `registry.errors["memory"]` enumerates allowed values. Tests drive the real lifespan via `TestClient(app).__enter__()` and inspect the module-level `registry` singleton. Env preamble matches `test_stage_6_5_7_gnosis_retrieval.py` (pins backend + gnosis-seed before import so shell state doesn't leak into module-level `app` construction).
+- **Files touched:**
+  - `tests/kernel/test_stage_7_4_2_lexical_wiring.py` (NEW; 265 lines)
+- **Ports / adapters affected:** none new (test-only)
+- **PORTING_LEDGER / ADR updated:** ADR-101 D5 discharge
+- **Stop-condition status:** met — all 6 tests green on first full run (after fixing Python 3.14 `get_event_loop()` deprecation and the `close()`-is-async wiring bug found by test 5).
+
+## 2026-09-10 04:03 EDT — Full regression: baseline PRESERVED at 1462/0/15
+
+- **Stage / plugin / port:** Stage 7.4+2 · full regression harness
+- **What changed:** Ran the standard exclusions command (`PYTHONPATH=. python3 -m pytest --ignore=plugins/tektos/eval/test_deepswe_corpus.py --ignore=plugins/tektos/ingest/test_docling_ingest.py --ignore=plugins/tektos/repomap/test_repomap.py --ignore=plugins/tektos/eval/test_pier_eval.py --ignore=plugins/tektos/tests/test_stage_3_12_exit_gate.py`). Result: **1462 passed, 15 skipped, 6 warnings in 12.79s** — identical to the Stage 7.4+1 baseline (zero regression from the wiring or from adding the test file). Separately ran the new acceptance suite (`PYTHONPATH=. python3 -m pytest tests/kernel/test_stage_7_4_2_lexical_wiring.py`) → **6 passed, 7 warnings in 1.59s**. Zero-pre-existing-failures discipline preserved across Stages 7.4, 7.4+1, and 7.4+2.
+- **Files touched:** none (validation only)
+- **Ports / adapters affected:** none
+- **PORTING_LEDGER / ADR updated:** —
+- **Stop-condition status:** met — DoD `1462 passed / 0 failed / 15 skipped` PRESERVED; acceptance suite 6/6 green.
+
+## 2026-09-10 04:07 EDT — Spec fan-out: Build-Sequence-v26 Stage 7.4+2 stanza LANDED + ADRs README
+
+- **Stage / plugin / port:** Stage 7.4+2 · docs/Kosmos-Build-Sequence-v26.md + docs/adrs/README.md
+- **What changed:** (1) Appended the Stage 7.4+2 stanza to Build-Sequence-v26 (after line 544, immediately following the Stage 7.4+1 stanza) with the same structure as prior LANDED entries: Ports touched (none new), What lands (env schema + wiring behaviour + logging + test coverage), DoD (6 acceptance green + baseline 1462/0/15 preserved), Explicit exclusions (Lucene escaping deferred; `tests/` testpaths cleanup deferred; no duplicate live-tier), ADRs (ADR-100 discharge + **ADR-101** wiring). (2) Inserted an ADR-101 row in `docs/adrs/README.md` between ADR-100 (line 118) and ADR-090 (line 119), matching the surrounding row shape and summarizing all 5 decisions + 5 rejected alternatives + DoD. (3) Amended the "Remaining open decisions" paragraph so the Stage 7.4+1 sentence chains into "Stage 7.4+2 lands ADR-101 (…)" with the discharge note for ADR-100 D6. No `PORTING_LEDGER.md` change — Stage 7.4+2 is a wiring-only slice with no new vendored components.
+- **Files touched:**
+  - `docs/Kosmos-Build-Sequence-v26.md` — +7 lines (new Stage 7.4+2 stanza)
+  - `docs/adrs/README.md` — +1 ADR-101 row + amended Remaining-open-decisions paragraph
+- **Ports / adapters affected:** none (documentation)
+- **PORTING_LEDGER / ADR updated:** ADR-101 indexed
+- **Stop-condition status:** met — kosmos-spec-diff §3 cross-check green: ADR-101 body ↔ ADRs README row ↔ Build-Sequence-v26 stanza all agree; no partial fan-out.
