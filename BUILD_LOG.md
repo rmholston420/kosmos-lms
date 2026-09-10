@@ -3625,3 +3625,57 @@ Use the `kosmos-log-maintenance` Perplexity Computer skill.
 - **Ports / adapters affected:** none (bookkeeping)
 - **PORTING_LEDGER / ADR updated:** —
 - **Stop-condition status:** met — SESSION_HANDOFF overwritten per kosmos-log-maintenance discipline; single atomic commit per kosmos-spec-diff §5 fan-out rule; push confirms upstream sync.
+
+## 2026-09-10 02:26 EDT — Stage 5.6 · ADR-095 authored
+
+- **Stage / plugin / port:** Stage 5.6 · docs/adrs
+- **What changed:** Authored `docs/adrs/ADR-095-stage-5-6-self-improvement-self-repair-propose-only-scope.md` (221 lines, 5 decisions D1–D5, 8 alternatives considered). D1 vendors donor data-model primitives only (`RepairStatus`, `RepairStrategy`, `DegradationLevel`, `RepairRecord`, `ExperienceRecord`); D2 lands two Kosmos-native proposers at `plugins/tektos/self_improve/` + `plugins/tektos/self_repair/`; D3 locks tier `HUMAN_REQUIRED`; D4 requires second MemoryPort triple on deny with `predicate="tektos.self_modification.denied"`; D5 no `ports/self_modification.py` in Stage 5.6 (per ADR-090 §Consequences bullet 1). Status Ratified v26; supersedes nothing; lock-in phase Stage 5.6. Cites ADR-023, ADR-027, ADR-033, ADR-086, ADR-090.
+- **Files touched:** `docs/adrs/ADR-095-stage-5-6-self-improvement-self-repair-propose-only-scope.md` (new)
+- **Ports / adapters affected:** none directly — ADR governs scope of what may land under `ApprovalGatewayPort` + `MemoryPort` + `EventBusPort` during the ADR-090 DEFERRED window
+- **PORTING_LEDGER / ADR updated:** ADR-095 (new)
+- **Stop-condition status:** met — every alternative-not-chosen documented; no port surface added; conforms to kosmos-adr-authoring template.
+
+## 2026-09-10 02:28 EDT — Stage 5.6 · Donor data-model primitives vendored
+
+- **Stage / plugin / port:** Stage 5.6 · adapters/tektos/vendor
+- **What changed:** Vendored two donor snapshots per ADR-095 D1. `adapters/tektos/vendor/self_repair_models_donor.py` (193 lines) ports `RepairStatus`, `RepairStrategy`, `DegradationLevel` enums + `RepairRecord` dataclass (with `to_dict`/`from_dict` serializers) from upstream `src/tektos/self_repair/models.py`. `adapters/tektos/vendor/self_improve_models_donor.py` (78 lines) ports `ExperienceRecord` dataclass only from upstream `src/tektos/self_improvement/engine.py`. Both files carry the standard vendor provenance banner: SPDX MIT header + upstream URL + commit SHA `2b45cac1f9ac214c85ff53571b949445b5415209` + re-licensing note. Also seeded `adapters/tektos/__init__.py` + `adapters/tektos/vendor/__init__.py` as package markers.
+- **Files touched:** `adapters/tektos/__init__.py` (new), `adapters/tektos/vendor/__init__.py` (new), `adapters/tektos/vendor/self_repair_models_donor.py` (new, 193 lines), `adapters/tektos/vendor/self_improve_models_donor.py` (new, 78 lines)
+- **Ports / adapters affected:** none directly — pure data-model primitives consumed by the Stage 5.6 proposers below
+- **PORTING_LEDGER / ADR updated:** ADR-095 D1
+- **Stop-condition status:** met — donor engines (`self_repair/{engine,strategies,workflows,health_monitor,effectiveness}.py`, `self_improvement/engine.py`, `agents/self_improvement/loop_orchestrator.py`, `self_modification/self_{gui,test}_expander.py`) intentionally NOT ported per ADR-095 §Consequences.
+
+## 2026-09-10 02:30 EDT — Stage 5.6 · self_improve plugin landed
+
+- **Stage / plugin / port:** Stage 5.6 · plugins/tektos/self_improve
+- **What changed:** Landed `plugins/tektos/self_improve/proposer.py` (257 lines) with `SelfImprovementProposer` + `SelfImprovementProposal`. Per ADR-095 D2, `propose()` routes through `ApprovalGatewayPort.propose(intention_id, delta, tier=HUMAN_REQUIRED, proposing_domain="tektos", diff_preview=...)` (D3 tier lock), writes `MemoryPort.write_event(subject, predicate="tektos.self_modification.proposed", object, provenance="tektos_self_modification", confidence=0.85)` (satisfies ADR-090 interim rule 3 + spec §25.4 ≤ 0.9 ceiling), and publishes `EventEnvelope(event_type="tektos.self_modification.proposed", producer_plugin="tektos.self_improve", payload=...)` via `EventBusPort.publish` (namespace reserved by ADR-086). `apply()` raises `NotImplementedError("apply is not implemented in Stage 5.6 per ADR-090; SelfModificationPort remains DEFERRED")`. `record_denial()` writes the second MemoryPort triple with `predicate="tektos.self_modification.denied"` (D4). Constants: `SELF_MODIFICATION_PROVENANCE="tektos_self_modification"`, `SELF_MODIFICATION_CONFIDENCE_CEILING=0.9`, `DEFAULT_SELF_MODIFICATION_CONFIDENCE=0.85`, `SELF_IMPROVEMENT_PROPOSED_EVENT="tektos.self_modification.proposed"`, `PROPOSING_DOMAIN="tektos"`. `provenance` is class-level (not ctor kwarg) — cannot be overridden.
+- **Files touched:** `plugins/tektos/self_improve/__init__.py` (new), `plugins/tektos/self_improve/proposer.py` (new, 257 lines)
+- **Ports / adapters affected:** `ApprovalGatewayPort` (ADR-033), `MemoryPort` (ADR-027, §25.4), `EventBusPort` (ADR-023, ADR-086)
+- **PORTING_LEDGER / ADR updated:** ADR-095 D2/D3/D4
+- **Stop-condition status:** met — no filesystem mutation path exists; every entry point is either propose (proposal-only) or apply (NotImplementedError).
+
+## 2026-09-10 02:32 EDT — Stage 5.6 · self_repair plugin landed
+
+- **Stage / plugin / port:** Stage 5.6 · plugins/tektos/self_repair
+- **What changed:** Landed `plugins/tektos/self_repair/proposer.py` (275 lines) with `SelfRepairProposer` + `SelfRepairProposal`. Same shape as `SelfImprovementProposer` above (identical constant set, identical port routing, identical D3/D4 discipline). Proposal payload wraps the vendored `RepairStrategy` enum from `adapters/tektos/vendor/self_repair_models_donor.py` (ctor rejects non-`RepairStrategy` values with `TypeError`); confidence ceiling of 0.9 enforced at ctor (rejects `confidence > 0.9` with `ValueError` per D3 + spec §25.4); confidence floor of 0.0 enforced at ctor (rejects `confidence < 0.0` per ADR-027 `validate_zero_trust_write`); `producer_plugin="tektos.self_repair"`. `apply()` raises `NotImplementedError` referencing ADR-090.
+- **Files touched:** `plugins/tektos/self_repair/__init__.py` (new), `plugins/tektos/self_repair/proposer.py` (new, 275 lines)
+- **Ports / adapters affected:** `ApprovalGatewayPort`, `MemoryPort`, `EventBusPort` (same as self_improve)
+- **PORTING_LEDGER / ADR updated:** ADR-095 D2/D3/D4
+- **Stop-condition status:** met — plugin isolation guard (ADR-007) passes: no cross-plugin import; `RepairStrategy` sourced from `adapters/tektos/vendor/`, not from a sibling plugin.
+
+## 2026-09-10 02:34 EDT — Stage 5.6 · Contract tests × 13, all green
+
+- **Stage / plugin / port:** Stage 5.6 · plugins/tektos/self_improve + self_repair
+- **What changed:** Landed 13 contract tests using the stub-adapter pattern from `plugins/tektos/tools/test_filesystem.py`. `plugins/tektos/self_improve/test_proposer.py` (252 lines, 6 tests): happy-path routes all 3 ports with the right calls in the right order; `apply()` raises `NotImplementedError` with "ADR-090" in the message; `record_denial()` writes the denial triple; `confidence > 0.9` rejected at ctor; provenance is class-level (rejects the `provenance=` kwarg with `TypeError`); empty `target_path` rejected at ctor. `plugins/tektos/self_repair/test_proposer.py` (319 lines, 7 tests): the same 6 shape tests plus an end-to-end deny round-trip (`propose()` returns proposal → resolver returns `REJECTED` → `record_denial()`) that asserts exactly 2 MemoryPort writes (proposed + denied) and zero apply-side writes. Full-suite regression check confirms 6 pre-existing MemoryPort protocol-drift failures unchanged from baseline `eb1d0b4` (verified via `git stash` targeted rerun; failures touch pre-existing code paths only, zero coupling to Stage 5.6). **Zero new regressions.** Plugin isolation guard (ADR-007) passes.
+- **Files touched:** `plugins/tektos/self_improve/test_proposer.py` (new, 252 lines), `plugins/tektos/self_repair/test_proposer.py` (new, 319 lines)
+- **Ports / adapters affected:** tests exercise `ApprovalGatewayPort`, `ApprovalResolverPort`, `MemoryPort`, `EventBusPort` via stubs
+- **PORTING_LEDGER / ADR updated:** ADR-095 (Consequences §Testing block fulfilled)
+- **Stop-condition status:** met — 13/13 new tests pass; full suite reports 1356 passed / 6 failed (all pre-existing) / 14 skipped in ~13s with standard excludes.
+
+## 2026-09-10 02:35 EDT — Stage 5.6 · Spec fan-out (Build-Sequence-v26 + PORTING_LEDGER + ADRs README)
+
+- **Stage / plugin / port:** Stage 5.6 · docs
+- **What changed:** Expanded Stage 5.6 stanza in `docs/Kosmos-Build-Sequence-v26.md` with LANDED marker (2026-09-10 · ADR-095) and 3-bullet body (Ports touched, What lands, DoD). Flipped `PORTING_LEDGER.md` `Tektos self-improvement + self-repair — PLANNED` row into 4 successor rows: 2 new VENDORED rows for the donor data-model snapshots (`adapters/tektos/vendor/self_repair_models_donor.py` + `self_improve_models_donor.py`, both citing commit SHA `2b45cac1f9ac214c85ff53571b949445b5415209`), 1 new HAND-BUILT row for the Kosmos-native proposers (`plugins/tektos/self_improve/proposer.py` + `plugins/tektos/self_repair/proposer.py`), 1 new DEFERRED row logging the donor engines that are intentionally NOT ported (self_repair/{engine,strategies,workflows,health_monitor,effectiveness}.py, self_improvement/engine.py, agents/self_improvement/loop_orchestrator.py, self_modification/self_{gui,test}_expander.py — 4046+ lines). Added ADR-095 row to `docs/adrs/README.md` decision table (Ratified v26, Stage 5.6). Updated open-decisions sentence to cite ADR-095 as Stage 5.6 landing (was previously terminating at ADR-094 Stage 4.8). All four files updated atomically per kosmos-spec-diff §5 fan-out rule.
+- **Files touched:** `docs/Kosmos-Build-Sequence-v26.md`, `PORTING_LEDGER.md`, `docs/adrs/README.md`
+- **Ports / adapters affected:** spec reflects live state of `ApprovalGatewayPort` + `MemoryPort` + `EventBusPort` composition (no new port surface)
+- **PORTING_LEDGER / ADR updated:** 4 new rows added (2 VENDORED + 1 HAND-BUILT + 1 DEFERRED); ADR-095 indexed in README with full decision summary
+- **Stop-condition status:** met — spec §17 ADR summary agrees with ADR file; Build-Sequence-v26 Stage 5.6 stanza agrees with PORTING_LEDGER rows; no revival of archived spec positions.

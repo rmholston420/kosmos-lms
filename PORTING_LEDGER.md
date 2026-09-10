@@ -493,13 +493,43 @@ Source repo: `rmholston420/tektos-ultima` (public, no LICENSE file at source; so
 - **Modifications:** planner LLM calls routed through `LLMPort`; role-routing (CPU-planner / GPU-coder split per ADR-087) required before absorption; explicitly deferred at ADR-093 to keep Stage 4.7 critical path independent of ADR-087 benchmark.
 - **ADR:** ADR-087, ADR-093
 
-#### Tektos self-improvement + self-repair — PLANNED (Stage 5, gated)
-- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/self_improve, .../self_repair
-- **License:** MIT (relicensed at port-in)
-- **Kosmos location:** `plugins/tektos/self_improve/`, `plugins/tektos/self_repair/`
-- **Port(s):** `SelfModificationPort` (ADR-090 — PROPOSED / DEFERRED); until then, self-modification paths are gated behind an approval loop via `ApprovalPort`.
-- **Modifications:** all self-modifying paths write `provenance="tektos_self_modification"` + `confidence<1.0` on `MemoryPort` (zero-trust); no direct filesystem mutation until ADR-090 ratified.
-- **ADR:** ADR-090 (deferred)
+#### Tektos self-repair donor data model — VENDORED (Stage 5.6)
+- **Source:** https://github.com/rmholston420/tektos-ultima/blob/main/src/tektos/self_repair/models.py (`RepairStatus`, `RepairStrategy`, `DegradationLevel` enums + `RepairRecord` dataclass only)
+- **Commit / Version:** upstream commit `2b45cac1f9ac214c85ff53571b949445b5415209` (2026-09-10)
+- **License:** MIT (re-licensed at port-in — upstream repo has no LICENSE; sole copyright holder rmholston420)
+- **Kosmos location:** `adapters/tektos/vendor/self_repair_models_donor.py`
+- **Port(s):** none directly — consumed by `plugins/tektos/self_repair/proposer.py` which drives `ApprovalGatewayPort` + `MemoryPort` + `EventBusPort`
+- **Modifications:** vendored ONLY the pure-data primitives (ADR-095 D1). Dropped `RepairResult`, `HealthSnapshot`, `DegradationPlan` from `models.py` — all coupled to the `SelfRepairEngine` orchestrator which is intentionally NOT ported. Enum vocabulary retained unchanged so future post-ADR-090 engine port lands without naming discontinuity. Retained `to_dict`/`from_dict` serializers unchanged.
+- **ADR:** ADR-095 (Stage 5.6 propose-only scope)
+- **Logged:** 2026-09-10 02:20 EDT
+
+#### Tektos self-improvement donor data model — VENDORED (Stage 5.6)
+- **Source:** https://github.com/rmholston420/tektos-ultima/blob/main/src/tektos/self_improvement/engine.py (`ExperienceRecord` dataclass only)
+- **Commit / Version:** upstream commit `2b45cac1f9ac214c85ff53571b949445b5415209` (2026-09-10)
+- **License:** MIT (re-licensed at port-in — upstream repo has no LICENSE; sole copyright holder rmholston420)
+- **Kosmos location:** `adapters/tektos/vendor/self_improve_models_donor.py`
+- **Port(s):** none directly — consumed by `plugins/tektos/self_improve/proposer.py`
+- **Modifications:** vendored ONLY `ExperienceRecord` (ADR-095 D1). `SelfImprovementAdapter` (openhands-ext feedback loop wiring) and `LoopOrchestrator` (session-lifecycle hook path) are intentionally NOT ported — both auto-trigger self-modification on session completion and persist experience against live meta-learning databases (violates ADR-090 interim rule 4). Retained `to_dict`/`to_json`/`from_dict` serializers unchanged (feeds future Stage 7.4 Hindsight bridge without a separate vendoring step).
+- **ADR:** ADR-095 (Stage 5.6 propose-only scope)
+- **Logged:** 2026-09-10 02:20 EDT
+
+#### Tektos self-improve + self-repair proposers — HAND-BUILT (Stage 5.6)
+- **Source:** Kosmos-native (built on top of the vendored donor data model above); replaces the wholesale port of the donor engine/strategies/workflows/health_monitor/effectiveness modules that would ship apply paths during the ADR-090 DEFERRED window.
+- **Commit / Version:** N/A (Kosmos-native)
+- **License:** MIT (kosmos-lms LICENSE)
+- **Kosmos location:** `plugins/tektos/self_improve/proposer.py` (`SelfImprovementProposer`, `SelfImprovementProposal`), `plugins/tektos/self_repair/proposer.py` (`SelfRepairProposer`, `SelfRepairProposal`)
+- **Port(s):** `ApprovalGatewayPort` (ADR-033), `MemoryPort` (ADR-027, spec §25.4), `EventBusPort` (ADR-023, ADR-086)
+- **Modifications:** propose-only proposers per ADR-095 D2. Each `propose()` routes through `ApprovalGatewayPort.propose(tier=HUMAN_REQUIRED, proposing_domain="tektos")` (ADR-095 D3), writes `MemoryPort` with `provenance="tektos_self_modification"` + `confidence=0.85` (satisfies ADR-090 interim rule 3 + spec §25.4 ≤ 0.9 ceiling), publishes `tektos.self_modification.proposed` (namespace reserved by ADR-086). Each `apply()` raises `NotImplementedError` referencing ADR-090 — physically cannot mutate the filesystem (belt-and-suspenders on top of the approval-gate deny path). `record_denial()` writes the second `MemoryPort` triple with `predicate="tektos.self_modification.denied"` (ADR-095 D4) so denials are as observable as proposals. `provenance` is a class-level constant (not a ctor arg) — cannot be overridden per instance. Confidence ceiling of 0.9 enforced at ctor.
+- **ADR:** ADR-095 (Stage 5.6 propose-only scope)
+- **Logged:** 2026-09-10 02:20 EDT
+
+#### Tektos self-improvement + self-repair engines — DEFERRED (post-ADR-090)
+- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/src/tektos/self_repair (engine.py, strategies.py, workflows.py, health_monitor.py, effectiveness.py — 2465 lines) + .../self_improvement/engine.py (`SelfImprovementAdapter` 672 lines) + .../agents/self_improvement/loop_orchestrator.py (275 lines) + .../self_modification/{self_gui_expander.py, self_test_expander.py} (792 lines)
+- **License:** MIT (relicensed at port-in when landed)
+- **Kosmos location (planned):** `plugins/tektos/self_repair/engine.py`, `strategies.py`, `workflows.py`, `health_monitor.py`, `effectiveness.py`; `plugins/tektos/self_improve/engine.py`; `adapters/self_modification/tektos/` (adapter under future `SelfModificationPort`).
+- **Port(s):** `SelfModificationPort` (ADR-090 — PROPOSED / DEFERRED)
+- **Modifications:** intentionally NOT ported in Stage 5.6 per ADR-095 §Consequences. Donor engines carry real apply paths (`APPLY_PATCH`, `RESTART_SERVICE`, `CLEAR_CACHE`, `FREE_VRAM`, filesystem-mutating expanders, session-lifecycle auto-triggers, meta-learning persistence loops) that would ship apply code during the ADR-090 DEFERRED window (violates ADR-090 interim rule 4). Unlocked at ADR-090 ratification.
+- **ADR:** ADR-090 (deferred), ADR-095 (exclusion locked)
 
 #### Tektos gateway proxy — PLANNED (Stage 2)
 - **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/gateway
