@@ -386,3 +386,107 @@ vendored components (see linked ADRs for details):
 New adopts, evaluations, and rejections must be appended to
 this file **at the same time** as the ADR that ratifies them, per
 `kosmos-spec-diff` skill fan-out rules.
+
+---
+
+## Tektos-Ultima absorption (seeded 2026-09-10 by ADR-077)
+
+Source repo: `rmholston420/tektos-ultima` (public, no LICENSE file at source; sole copyright holder rmholston420 relicenses at port-in). Every entry below is `PLANNED` until landed in a numbered Stage step of `docs/plans/KOSMOS_LMS_INTEGRATION_PLAN.md`.
+
+#### Tektos runtime core — PLANNED (Stage 3)
+- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/orchestrator
+- **Commit / Version:** to pin at port-in
+- **License:** MIT (relicensed at port-in by sole copyright holder rmholston420)
+- **Kosmos location:** `plugins/tektos/runtime/`
+- **Port(s):** `LLMPort`, `EventBusPort`, `LoopSafetyPort` (ADR-080), `ImmunePort` (ADR-079), `MemoryPort`
+- **Modifications:** replace direct `httpx` calls to `llama-server` with `LLMPort`; replace direct WebSocket writes with `EventBusPort.publish()`; every `MemoryPort` write gains `provenance` + `confidence`; loop caps `max_turns=15`, `max_tokens_total=65536`, `max_wall_time_seconds=300` become `LoopSafetyPort` config.
+- **ADR:** ADR-077, ADR-079, ADR-080
+
+#### Tektos immune system — PLANNED (Stage 3)
+- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/immune
+- **Commit / Version:** to pin at port-in
+- **License:** MIT (relicensed at port-in)
+- **Kosmos location:** `adapters/immune/tektos/`
+- **Port(s):** `ImmunePort` (ADR-079)
+- **Modifications:** 12 detectors (including `SecretExposureDetector` with 12 regex patterns) exposed via `ImmunePort.scan(event) -> ImmuneVerdict`; verdicts published on `EventBusPort` under `immune.*` envelope.
+- **ADR:** ADR-079
+
+#### Tektos loop safety — PLANNED (Stage 3)
+- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/safety
+- **License:** MIT (relicensed at port-in)
+- **Kosmos location:** `adapters/loop_safety/tektos/`
+- **Port(s):** `LoopSafetyPort` (ADR-080)
+- **Modifications:** three tiers (turn cap · token cap · wall-time cap) + repetition detector (`repetition_window=3`) + read-only budget interlock (ADR-088) expressed as `LoopSafetyPort` state machine.
+- **ADR:** ADR-080, ADR-088
+
+#### Tektos thermal control — PLANNED (Stage 3)
+- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/thermal
+- **License:** MIT (relicensed at port-in)
+- **Kosmos location:** `adapters/thermal/tektos/`
+- **Port(s):** `ThermalPort` (ADR-081), `ResourcePort` (throttle back-pressure)
+- **Modifications:** yellow 51°C / cap 80°C / red 88°C / 400 W GPU cap PID loop expressed as `ThermalPort.pressure()` samples; throttle events routed to `ResourcePort`.
+- **ADR:** ADR-081
+
+#### Tektos sandbox — PLANNED (Stage 4)
+- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/sandbox
+- **License:** MIT (relicensed at port-in)
+- **Kosmos location:** `adapters/sandbox/tektos/`
+- **Port(s):** `SandboxPort` (ADR-082)
+- **Modifications:** Linux namespaces + cgroups execution wrapped behind `SandboxPort.run(command, limits) -> SandboxResult`.
+- **ADR:** ADR-082
+
+#### Tektos hindsight memory (bridge adapter) — PLANNED (Stage 3-5)
+- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/hindsight
+- **License:** MIT (relicensed at port-in)
+- **Kosmos location:** `adapters/memory/hindsight_bridge/`
+- **Port(s):** `MemoryPort` (bridge; ADR-085 extends `MemoryPort.search_hybrid`)
+- **Modifications:** default hindsight port fixed from `:9177` → `:9000` (Tektos-Ultima source bug); adapter fronts hindsight for Tektos read/write path in Stages 3–5 while DozerDB remains the canonical Kosmos store; retired in Stage 8 per plan Decision H1 → H2 migration.
+- **ADR:** ADR-085
+
+#### Tektos planner — PLANNED (Stage 4)
+- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/planner
+- **License:** MIT (relicensed at port-in)
+- **Kosmos location:** `plugins/tektos/planner/`
+- **Port(s):** `LLMPort`, `EventBusPort`
+- **Modifications:** planner emits `tektos.plan.*` events on `EventBusPort`; LLM calls routed through `LLMPort` (Hermes adapter ADR-087 available for CPU-planner / GPU-coder split).
+- **ADR:** ADR-087
+
+#### Tektos self-improvement + self-repair — PLANNED (Stage 5, gated)
+- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/self_improve, .../self_repair
+- **License:** MIT (relicensed at port-in)
+- **Kosmos location:** `plugins/tektos/self_improve/`, `plugins/tektos/self_repair/`
+- **Port(s):** `SelfModificationPort` (ADR-090 — PROPOSED / DEFERRED); until then, self-modification paths are gated behind an approval loop via `ApprovalPort`.
+- **Modifications:** all self-modifying paths write `provenance="tektos_self_modification"` + `confidence<1.0` on `MemoryPort` (zero-trust); no direct filesystem mutation until ADR-090 ratified.
+- **ADR:** ADR-090 (deferred)
+
+#### Tektos gateway proxy — PLANNED (Stage 2)
+- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/gateway
+- **License:** MIT (relicensed at port-in)
+- **Kosmos location:** `adapters/event_bus/tektos_gateway/`
+- **Port(s):** `EventBusPort` (ADR-086 formalises envelope taxonomy)
+- **Modifications:** WebSocket proxy at `:8765` becomes an `EventBusPort` transport adapter; envelopes tagged per ADR-086 taxonomy (`tektos.*`, `immune.*`, `thermal.*`, `loop_safety.*`, `sandbox.*`, `hindsight.*`).
+- **ADR:** ADR-086
+
+#### Tektos frontend (Next.js 15.4, 40 panels) — PLANNED (Stage 2)
+- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/frontend
+- **License:** MIT (relicensed at port-in)
+- **Kosmos location:** `plugins/tektos/frontend/`
+- **Port(s):** `FrontendContractPort` (ADR-089 adds `PanelKind.IFRAME`)
+- **Modifications:** Tektos Next 15.4 app served on internal port; Kosmos Next 16.2.11 shell mounts it as iframe under `/tektos/frontend` (same origin via reverse proxy); panels register through `FrontendContractPort` descriptors.
+- **ADR:** ADR-089
+
+#### Tektos tool registry — PLANNED (Stage 4)
+- **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/tools
+- **License:** MIT (relicensed at port-in)
+- **Kosmos location:** `plugins/tektos/tools/`
+- **Port(s):** internal to Tektos plugin; approval-tier writes gated by `ApprovalPort`
+- **Modifications:** every tool call emits `tektos.tool.*` on `EventBusPort`; approval-required tools go through `ApprovalPort`.
+- **ADR:** (Tektos-internal, no new formal port)
+
+#### Tektos CI (`.github/workflows/ci.yml`) — PLANNED (Stage 0.5)
+- **Source:** https://github.com/rmholston420/tektos-ultima/blob/main/.github/workflows/ci.yml
+- **License:** MIT (relicensed at port-in)
+- **Kosmos location:** `.github/workflows/ci.yml`
+- **Port(s):** N/A (build infrastructure)
+- **Modifications:** six-job base (ruff, mypy, pytest, next build, eslint, Playwright chromium) plus two new jobs — Kosmos port-contract tests (`pytest tests/ports/`) and AST plugin-isolation guard (`scripts/check_plugin_isolation.py` enforcing ADR-007).
+- **ADR:** ADR-077

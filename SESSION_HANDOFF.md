@@ -1,32 +1,29 @@
-# Kosmos Session Handoff — 2026-08-01 12:07 EDT
+# Kosmos-LMS Session Handoff — 2026-09-10 00:32 EDT
 
 ## Current build-sequencing position
-- **Stage / phase:** Stage 1.6 Phase 2 — **COMPLETE**. Next: Stage 1.6 Phase 3 (ADR-076, not yet authored) or Stage 1.7.
-- **Plugin / kernel component:** —
-- **Port(s) in progress:** —
+
+- **Stage / phase:** Stage 0 (repository genesis) — **COMPLETE**
+- **Plugin / kernel component:** repo-level bootstrap only (no code changes)
+- **Port(s) in progress:** none
 
 ## Completed this session
-- Ratified ADR-075 (Stage 1.6 Phase 2), merged PR #27 at `821c8f5`
-- Executed ADR-075 D1 (Graphiti hard-delete + `graphiti-core` dep removal + `InMemoryTemporalIndex` boot)
-- Executed ADR-075 D2 (`POST /api/memory/search-semantic` route + `/memory/search` UI + `kernelClient.memorySearchSemantic` + 200-degraded graceful path)
-- Executed ADR-075 D3 (`_drain_zetesis_reports` → `MemoryPort.write_event` fan-out with provenance/confidence, errors in `registry.errors["zetesis_fanout"]`)
-- Executed ADR-075 D4 (`/gnosis/graph` client-side `next_cursor` pagination, `MAX_PAGES=10`, `graph-truncated` testid, footer format `NNN nodes · MMM edges · pages X/10`)
-- Executed ADR-075 D5 (kernel version 6.11.0 → 6.12.0)
-- Fixed 2 stale Python version pins (6.8.0/6.10.0 → 6.12.0) + TS `Promise.all` inference regression on `nodePage`
-- Fixed pre-existing MemoryPort protocol conformance failures from ADR-074 D1 (added no-op `search_semantic` to 3 Tektos `_FakeMemoryPort` fakes + `ZetesisMemoryStub` adapter)
-- Verified on Colossus: pytest 1264 passed / 14 skipped; Playwright 10/10 passed after kernel restart
-- Merged PR #28 into main at `a105af5`; branch `stage-1-6-p2-code` deleted
+
+- 2026-09-10 00:15 EDT — Stage 0.1 · repository genesis (public `rmholston420/kosmos-lms` created; forked from `rmholston420/kosmos`)
+- 2026-09-10 00:17 EDT — Stage 0.2 · MIT `LICENSE` landed (author-as-relicensor per ADR-077)
+- 2026-09-10 00:19 EDT — Stage 0.3 · README rewritten to identify kosmos-lms
+- 2026-09-10 00:22 EDT — Stage 0.4 · `docs/plans/KOSMOS_LMS_INTEGRATION_PLAN.md` + `docs/plans/kosmos_tektos_audit_report.md` landed
+- 2026-09-10 00:27 EDT — Stage 0.5 · ADR-077 authored + index updated
+- 2026-09-10 00:30 EDT — Stage 0.6 · PORTING_LEDGER "Tektos-Ultima absorption" section seeded (11 PLANNED entries)
 
 ## Remaining before current Definition of Done
-- none — Stage 1.6 Phase 2 DoD met
+
+Stage 0 DoD is met. Next sequence step is **Stage 0.7 · CI baseline** (fold Tektos-Ultima 6-job CI into `.github/workflows/ci.yml` and add two Kosmos jobs: port-contract tests + AST plugin-isolation guard). Deferred to the next work session so Stage 0 lands as a self-consistent commit set first.
 
 ## Open questions / awaiting user answer
-- Author ADR-076 for Stage 1.6 Phase 3 next, or move to Stage 1.7? (Not blocking; ask before starting.)
-- Task-exception noise (`WebSocketDisconnect(1001)` in `events_ws._drain_client` during page-nav) is expected Playwright behavior — worth a DEBUG_LOG note next session for future search-first savings; not a bug.
+
+- **User pull request:** initial Stage 0 push to `origin/main` needs user pull; no upstream work has been started from `plugins/tektos/`.
+- **Stage 1 kickoff:** confirm whether to proceed immediately with ADR-078 (spec v26 cut) or hold for user review of the plan first.
 
 ## Exact next action
-Push BUILD_LOG + SESSION_HANDOFF updates directly to main:
-```
-cd ~/dev/kosmos && git pull --ff-only origin main
-```
-Then decide Stage 1.6 Phase 3 vs. Stage 1.7 scope.
+
+Read `docs/plans/KOSMOS_LMS_INTEGRATION_PLAN.md` §5 (Stage 1) and author `docs/adrs/ADR-078-kosmos-build-spec-v26-cut.md`. Then archive `docs/Kosmos-Build-Spec-v25.md` to `docs/archive/` and land a `docs/Kosmos-Build-Spec-v26.md` with new §22 "Tektos absorption".

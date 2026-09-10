@@ -1,7 +1,21 @@
-# Kosmos
+# Kosmos-LMS
 
-Single-user local-first Life Management System, targeted at **Colossus**
-(AMD Ryzen 9 7900X · 128 GB RAM · RTX 5090 32 GB VRAM · Kubuntu 26.04 LTS).
+Single-user local-first **Life Management System** with the **Tektos** autonomous-coding-agent integrated as its first-class plugin. Targeted at **Colossus** (AMD Ryzen 9 7900X · 128 GB RAM · RTX 5090 32 GB VRAM · Kubuntu 26.04 LTS).
+
+**License:** MIT (see `LICENSE`).
+
+**Origin:** kosmos-lms is the merged successor of two source repos:
+
+- [`rmholston420/kosmos`](https://github.com/rmholston420/kosmos) — kernel + ports/adapters + plugin scaffold (Praxis, Phrouros, Zetesis, Tektos-scaffold)
+- [`rmholston420/tektos-ultima`](https://github.com/rmholston420/tektos-ultima) — autonomous coding agent (runtime, immune system, loop safety, planner, hindsight memory, thermal control, 4-tier memory model, tool registry, gateway proxy)
+
+Tektos was always meant to be a plugin for Kosmos. kosmos-lms folds Tektos-Ultima into the Kosmos plugin scaffold under Kosmos discipline (ports/adapters, ADRs, PORTING_LEDGER, ADR-007 events-only cross-plugin coupling, MemoryPort zero-trust writes).
+
+**Integration plan:** [`docs/plans/KOSMOS_LMS_INTEGRATION_PLAN.md`](docs/plans/KOSMOS_LMS_INTEGRATION_PLAN.md) — 9 stages, ~62 numbered work steps, ~14 new ADRs.
+
+**Source audit:** [`docs/plans/kosmos_tektos_audit_report.md`](docs/plans/kosmos_tektos_audit_report.md) — deep audit of both source repos with overlap/gap matrix.
+
+Current status: **Stage 0 complete** (repo genesis + MIT + plan + logs). Stage 1 (port-skeleton ADRs) is next.
 
 ## Repo layout (Stage 0.1)
 

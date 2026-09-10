@@ -3192,3 +3192,57 @@ Use the `kosmos-log-maintenance` Perplexity Computer skill.
 - **Ports / adapters affected:** MemoryPort · DozerDbMemoryAdapter (DozerDbGraphBackend + AmgGuardPolicy tiered + InMemoryTemporalIndex)
 - **PORTING_LEDGER / ADR updated:** — (DozerDB 5.26.27 already VENDORED at line 378; no change needed)
 - **Stop-condition status:** met — Stage 1.8 MemoryPort DozerDB backend is production-shape on Colossus (systemd-supervised kernel + Docker-supervised DozerDB + Zetesis writing through the shared kernel-owned adapter + writes surviving kernel restart)
+
+## 2026-09-10 00:15 EDT — Stage 0.1 · repository genesis (kosmos-lms fork)
+
+- **Stage / plugin / port:** Stage 0.1 · repo genesis
+- **What changed:** Created public `rmholston420/kosmos-lms` on GitHub via `gh repo create --public`. Working tree seeded from a shallow clone of `rmholston420/kosmos` `main`. Preserves all 76 ratified ADRs, all 15 ports, all 4 plugin scaffolds (praxis, phrouros, zetesis, tektos), full Kosmos-Build-Spec-v25.md, full PORTING_LEDGER.md, and the four operational log files.
+- **Files touched:** (none in-tree yet; remote created)
+- **Ports / adapters affected:** none
+- **PORTING_LEDGER / ADR updated:** —
+- **Stop-condition status:** met (repo exists at https://github.com/rmholston420/kosmos-lms)
+
+## 2026-09-10 00:17 EDT — Stage 0.2 · MIT LICENSE landed
+
+- **Stage / plugin / port:** Stage 0.2 · licensing
+- **What changed:** Wrote MIT `LICENSE` at repo root. Copyright holder: rmholston420 (Lama Lawapa Naljor), 2026. Per ADR-077, kosmos-lms is MIT at root and every Tektos-derived module is relicensed at port-in by the sole copyright holder.
+- **Files touched:** `LICENSE`
+- **Ports / adapters affected:** none
+- **PORTING_LEDGER / ADR updated:** ADR-077 authored (see below)
+- **Stop-condition status:** met
+
+## 2026-09-10 00:19 EDT — Stage 0.3 · README identifies kosmos-lms
+
+- **Stage / plugin / port:** Stage 0.3 · repo identity
+- **What changed:** Edited `README.md` header block to identify kosmos-lms (was `# Kosmos`), name both source repos (kosmos + tektos-ultima), state MIT license, link to `docs/plans/KOSMOS_LMS_INTEGRATION_PLAN.md`, and note Stage 0 as current status.
+- **Files touched:** `README.md`
+- **Ports / adapters affected:** none
+- **PORTING_LEDGER / ADR updated:** —
+- **Stop-condition status:** met
+
+## 2026-09-10 00:22 EDT — Stage 0.4 · integration plan + audit report landed
+
+- **Stage / plugin / port:** Stage 0.4 · planning artifacts
+- **What changed:** Copied `KOSMOS_LMS_INTEGRATION_PLAN.md` (781 lines · ~64 KB · 10 sections + 4 appendices covering 9 stages and 14 planned ADRs) and `kosmos_tektos_audit_report.md` (664 lines · 5-section deep audit) into `docs/plans/`.
+- **Files touched:** `docs/plans/KOSMOS_LMS_INTEGRATION_PLAN.md`, `docs/plans/kosmos_tektos_audit_report.md`
+- **Ports / adapters affected:** none (planning only)
+- **PORTING_LEDGER / ADR updated:** —
+- **Stop-condition status:** met
+
+## 2026-09-10 00:27 EDT — Stage 0.5 · ADR-077 (kosmos-lms integration cut) ratified
+
+- **Stage / plugin / port:** Stage 0.5 · integration ADR
+- **What changed:** Authored `docs/adrs/ADR-077-kosmos-lms-integration-cut.md` (status Ratified). Ratifies full-fork + preserve-Kosmos-scaffold + layer-Tektos strategy. Amends ADR-041 (Tektos plugin bootstrap scope: Stage 3.7 scaffold → full runtime absorption). Enumerates the 14 planned downstream ADRs (ADR-078 spec v26 cut; ADR-079 ImmunePort; ADR-080 LoopSafetyPort; ADR-081 ThermalPort; ADR-082 SandboxPort; ADR-083 VoicePort; ADR-084 VisionPort; ADR-085 MemoryPort.search_hybrid; ADR-086 EventBusPort envelope taxonomy; ADR-087 Hermes LLM topology adapter; ADR-088 loop-safety read-only budget interlock; ADR-089 FrontendContractPort PanelKind.IFRAME; ADR-090 SelfModificationPort deferred).
+- **Files touched:** `docs/adrs/ADR-077-kosmos-lms-integration-cut.md`, `docs/adrs/README.md` (index row for ADR-077 and planned ADR-078 added)
+- **Ports / adapters affected:** none directly (Stage 0)
+- **PORTING_LEDGER / ADR updated:** ADR-077 authored (this entry)
+- **Stop-condition status:** met
+
+## 2026-09-10 00:30 EDT — Stage 0.6 · PORTING_LEDGER Tektos absorption section seeded
+
+- **Stage / plugin / port:** Stage 0.6 · absorption ledger
+- **What changed:** Appended "## Tektos-Ultima absorption (seeded 2026-09-10 by ADR-077)" section to `PORTING_LEDGER.md`. Added 11 `PLANNED` entries for Tektos-Ultima subsystems: runtime core, immune system, loop safety, thermal, sandbox, hindsight bridge (with `:9177` → `:9000` bug-fix note), planner, self-improvement + self-repair (gated behind ADR-090), gateway proxy, frontend (Next 15.4 · 40 panels), tool registry, and CI workflow.
+- **Files touched:** `PORTING_LEDGER.md`
+- **Ports / adapters affected:** planned entries reference `LLMPort`, `MemoryPort`, `EventBusPort`, `ImmunePort`, `LoopSafetyPort`, `ThermalPort`, `SandboxPort`, `FrontendContractPort`, `SelfModificationPort`
+- **PORTING_LEDGER / ADR updated:** PORTING_LEDGER extended per ADR-077
+- **Stop-condition status:** met
