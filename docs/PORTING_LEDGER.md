@@ -891,6 +891,36 @@
 - **ADR:** ADR-046
 - **Logged:** 2026-07-30 05:38 EDT
 
+#### Tektos reflection + synthesis + experience-replay engines — `VENDORED (Stage 8.3, ADR-105)`
+- **Source:** `rmholston420/tektos-ultima` (donor absorbed under FULL FORK + REWRITE license posture; re-licensed at port-in point per ADR-092)
+- **Donor modules:** `src/tektos/reflection.py` (ReflectionEngine); `src/tektos/synthesis.py` (SynthesisEngine); `src/tektos/experience.py` (ExperienceReplay)
+- **License:** MIT (kosmos-lms declares MIT; rmholston420 sole copyright holder)
+- **Kosmos location:** `plugins/tektos/reflection/{__init__.py,models.py,engine.py,api.py}`; `plugins/tektos/synthesis/{__init__.py,models.py,engine.py,api.py}`; `plugins/tektos/experience/{__init__.py,models.py,replay.py,api.py}`; kernel wiring at `kernel/app.py::_boot_stage_8_x_engine` (originally `_boot_stage_8_3_engine`; renamed at 8.4)
+- **Port(s):** `RelationalMemoryPort` (via `write_narrative`); `EventBusPort` (envelope-first per ADR-023); no new port surface (per ADR-105 D11/D12 REJECT of ReflectionPort/SynthesisPort/ExperiencePort at 8.3)
+- **Modifications:** Rewritten as frozen slotted dataclasses (donor used pydantic models); every port call fail-open behind `try/except Exception` with `log.exception` (ADR-105 D9); donor's in-memory dict persistence replaced with `RelationalMemoryPort.write_narrative` + ring-buffer fallback (`maxlen=100`); env-gated behind `KOSMOS_TEKTOS_{REFLECTION,SYNTHESIS,EXPERIENCE}={off,on}` with degrade-to-None when `registry.relational_memory` is None (ADR-101); FastAPI router factories with `503` guard closure at `/tektos/api/{reflection,synthesis,experience}` prefixes; six locked provenance/predicate constants per engine.
+- **ADR:** ADR-105
+- **Logged:** 2026-09-10 06:52 EDT
+
+#### Tektos spec-planner engine — `VENDORED (Stage 8.4, ADR-106)`
+- **Source:** `rmholston420/tektos-ultima` (donor absorbed under FULL FORK + REWRITE license posture; re-licensed at port-in point per ADR-092)
+- **Donor modules:** `src/tektos/spec_planner.py` (SpecPlanner); `src/tektos/language_game.py` (LanguageGameDetector); `src/tektos/disambiguator.py` (Disambiguator); `src/tektos/translator.py` (Translator); `src/tektos/template_selector.py` (TemplateSelector); `src/tektos/spec_generator.py` (SpecGenerator)
+- **License:** MIT (kosmos-lms declares MIT; rmholston420 sole copyright holder)
+- **Kosmos location:** `plugins/tektos/planner/{spec_models.py,language_game.py,disambiguator.py,translator.py,template_selector.py,spec_generator.py,spec_planner.py,api.py}`; `TektosSpecPlanner` engine exported from `plugins/tektos/planner/__init__.py`. Stage 4.7 `TektosTurnPlanner` seed (`turn_planner.py` + `test_turn_planner.py`) preserved unchanged per ADR-093/ADR-106 D1.
+- **Port(s):** `RelationalMemoryPort` (via `write_narrative`); `EventBusPort` (envelope-first per ADR-023); no `PlannerPort` (ADR-106 D11 REJECT — `TektosPlugin.spec_planner: object | None` field IS the coupling surface); no `LLMPort` (ADR-106 D12 REJECT — donor pipeline is 100% rule-based).
+- **Modifications:** Rewritten as frozen slotted dataclasses (donor used pydantic); donor's rule dictionaries (language-game classifier, disambiguator patterns, translator glossary, template rules, spec heuristics) preserved verbatim; every port call fail-open (`try/except Exception` with `log.exception`) per ADR-106 D9; ring-buffer fallback (`maxlen=100`); env-gated behind `KOSMOS_TEKTOS_SPEC_PLANNER={off,on}` with degrade-to-None when `registry.relational_memory` is None (ADR-101); FastAPI router factory with `503` guard closure at `/tektos/api/spec-planner/{plan,recent}`; locked constants `TEKTOS_SPEC_PLANNER_PROVENANCE="tektos.planner"` / `TEKTOS_SPEC_PLANNER_PREDICATE="tektos.planner.spec_generated"` / `TEKTOS_SPEC_PLANNER_DEFAULT_CONFIDENCE=0.75`. `LanguageGame` enum lands NOW (Stage 8.4) in `plugins/tektos/planner/spec_models.py`, discharging ADR-105 D9's forward deferral. Stage 8.4 lands rule-based rewrite only; LLMPort/RepoMapPort integration deferred to a later stage.
+- **ADR:** ADR-106
+- **Logged:** 2026-09-10 06:52 EDT
+
+#### Tektos task-decomposer engine — `VENDORED (Stage 8.4, ADR-106)`
+- **Source:** `rmholston420/tektos-ultima` (donor absorbed under FULL FORK + REWRITE license posture; re-licensed at port-in point per ADR-092)
+- **Donor modules:** `src/tektos/task_decomposer.py` (TaskDecomposer + `format_for_prompt`)
+- **License:** MIT (kosmos-lms declares MIT; rmholston420 sole copyright holder)
+- **Kosmos location:** `plugins/tektos/decomposer/{__init__.py,models.py,engine.py,api.py}`
+- **Port(s):** `RelationalMemoryPort` (via `write_narrative`); `EventBusPort` (envelope-first per ADR-023); no new port surface (ADR-106 D11 REJECT — `TektosPlugin.decomposer: object | None` field IS the coupling surface).
+- **Modifications:** Rewritten as frozen slotted `SubTask` + `DecompositionPlan` dataclasses (donor used pydantic); donor's five branch-predicate rule dictionaries (build / write / regex / download-build / generic) preserved verbatim; every port call fail-open per ADR-106 D9; ring-buffer fallback (`maxlen=100`); env-gated behind `KOSMOS_TEKTOS_DECOMPOSER={off,on}` with degrade-to-None when `registry.relational_memory` is None (ADR-101); FastAPI router factory with `503` guard closure at `/tektos/api/decomposer/{decompose,recent}`; locked constants `TEKTOS_DECOMPOSER_PROVENANCE="tektos.decomposer"` / `TEKTOS_DECOMPOSER_PREDICATE="tektos.decomposer.plan_generated"` / `TEKTOS_DECOMPOSER_DEFAULT_CONFIDENCE=0.75`. Static `format_for_prompt` classmethod returns TASK DECOMPOSITION prompt shape verbatim from donor.
+- **ADR:** ADR-106
+- **Logged:** 2026-09-10 06:52 EDT
+
 ---
 
 ## Gnosis (Knowledge)

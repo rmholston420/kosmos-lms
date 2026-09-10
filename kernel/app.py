@@ -133,6 +133,13 @@ class _BootRegistry:
         self.tektos_reflection: Any = None
         self.tektos_synthesis: Any = None
         self.tektos_experience: Any = None
+        # Stage 8.4 (ADR-106): kernel-owned Tektos spec-planner + task-decomposer
+        # engines. Env-gated via ``KOSMOS_TEKTOS_{SPEC_PLANNER,DECOMPOSER}={off,on}``
+        # (default ``off``). ``on`` requires ``registry.relational_memory``
+        # non-None; missing → ADR-101 degrade to ``None`` with a WARN log.
+        # Downstream call sites MUST tolerate ``None``.
+        self.tektos_spec_planner: Any = None
+        self.tektos_decomposer: Any = None
         # Stage 1.6 Phase 0 (ADR-073): kernel-owned EmbeddingsPort. Separate
         # from ``self.llm`` so chat-only backends (e.g. llama-swap) don't
         # have to satisfy an embeddings surface. Populated by ``_boot_embeddings``.
@@ -864,13 +871,16 @@ async def lifespan(app: FastAPI):
 
     registry.tektos_turn_loop = _boot_tektos_turn_loop
 
-    # --- Stage 8.3 (ADR-105) Tektos reflection / synthesis / experience ------
-    # Three env-gated engines that persist through
-    # ``RelationalMemoryPort.write_narrative`` and publish through
-    # ``EventBusPort``. Each boots ``off`` by default; ``on`` requires
-    # ``registry.relational_memory`` non-None. Missing collaborator →
-    # ADR-101 degrade to ``None`` with a WARN log citing ADR-105.
-    def _boot_stage_8_3_engine(
+    # --- Stage 8.3/8.4 (ADR-105/ADR-106) Tektos engines ---------------------
+    # Shared boot helper for the env-gated Stage 8.x Tektos engines:
+    #   • Stage 8.3 (ADR-105): reflection / synthesis / experience
+    #   • Stage 8.4 (ADR-106): spec_planner / decomposer
+    # Each engine persists through ``RelationalMemoryPort.write_narrative``
+    # and publishes through ``EventBusPort``. Each boots ``off`` by default;
+    # ``on`` requires ``registry.relational_memory`` non-None. Missing
+    # collaborator → ADR-101 degrade to ``None`` with a WARN log citing the
+    # engine's owning ADR (passed as ``adr_note``).
+    def _boot_stage_8_x_engine(
         *,
         env_var: str,
         adr_note: str,
@@ -885,7 +895,8 @@ async def lifespan(app: FastAPI):
         _ALLOWED = ("off", "on")
         if _mode not in _ALLOWED:
             raise RuntimeError(
-                "%s=%r is not one of %s (ADR-105 D6)." % (env_var, _mode, _ALLOWED)
+                "%s=%r is not one of %s (ADR-105 D6 / ADR-106 D6)."
+                % (env_var, _mode, _ALLOWED)
             )
         if _mode == "off":
             return None
@@ -927,7 +938,7 @@ async def lifespan(app: FastAPI):
     def _boot_tektos_reflection():
         from plugins.tektos.reflection import ReflectionEngine
 
-        return _boot_stage_8_3_engine(
+        return _boot_stage_8_x_engine(
             env_var="KOSMOS_TEKTOS_REFLECTION",
             adr_note="ADR-105",
             engine_factory=ReflectionEngine,
@@ -938,7 +949,7 @@ async def lifespan(app: FastAPI):
     def _boot_tektos_synthesis():
         from plugins.tektos.synthesis import SynthesisEngine
 
-        return _boot_stage_8_3_engine(
+        return _boot_stage_8_x_engine(
             env_var="KOSMOS_TEKTOS_SYNTHESIS",
             adr_note="ADR-105",
             engine_factory=SynthesisEngine,
@@ -949,16 +960,40 @@ async def lifespan(app: FastAPI):
     def _boot_tektos_experience():
         from plugins.tektos.experience import ExperienceReplay
 
-        return _boot_stage_8_3_engine(
+        return _boot_stage_8_x_engine(
             env_var="KOSMOS_TEKTOS_EXPERIENCE",
             adr_note="ADR-105",
             engine_factory=ExperienceReplay,
             plugin_field="experience",
         )
 
+    @_try("tektos_spec_planner")
+    def _boot_tektos_spec_planner():
+        from plugins.tektos.planner import TektosSpecPlanner
+
+        return _boot_stage_8_x_engine(
+            env_var="KOSMOS_TEKTOS_SPEC_PLANNER",
+            adr_note="ADR-106",
+            engine_factory=TektosSpecPlanner,
+            plugin_field="spec_planner",
+        )
+
+    @_try("tektos_decomposer")
+    def _boot_tektos_decomposer():
+        from plugins.tektos.decomposer import TaskDecomposer
+
+        return _boot_stage_8_x_engine(
+            env_var="KOSMOS_TEKTOS_DECOMPOSER",
+            adr_note="ADR-106",
+            engine_factory=TaskDecomposer,
+            plugin_field="decomposer",
+        )
+
     registry.tektos_reflection = _boot_tektos_reflection
     registry.tektos_synthesis = _boot_tektos_synthesis
     registry.tektos_experience = _boot_tektos_experience
+    registry.tektos_spec_planner = _boot_tektos_spec_planner
+    registry.tektos_decomposer = _boot_tektos_decomposer
 
     # --- Gnosis boot seeder (ADR-064) ----------------------------------------
     # Env-gated by ``KOSMOS_GNOSIS_SEED=1``. Iterates ``ALL_CORPORA`` and

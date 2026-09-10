@@ -170,6 +170,16 @@ class TektosPlugin:
     synthesis: object | None = field(default=None)
     experience: object | None = field(default=None)
 
+    # Stage 8.4 (ADR-106 D5): optional handles to the kernel-wired
+    # spec-planner and task-decomposer engines. Populated by
+    # ``kernel/app.py::_boot_tektos_{spec_planner,decomposer}`` when the
+    # ``KOSMOS_TEKTOS_{SPEC_PLANNER,DECOMPOSER}=on`` env-gate is set and
+    # ``registry.relational_memory`` is bound. Named ``spec_planner`` rather
+    # than ``planner`` to avoid colliding with the ``plugins.tektos.planner``
+    # package. ``object | None`` typing per same ADR-007 rationale above.
+    spec_planner: object | None = field(default=None)
+    decomposer: object | None = field(default=None)
+
     _started: bool = field(default=False, init=False, repr=False)
     _registration: PluginRegistration | None = field(
         default=None, init=False, repr=False
