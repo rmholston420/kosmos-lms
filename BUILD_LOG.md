@@ -3796,3 +3796,57 @@ Use the `kosmos-log-maintenance` Perplexity Computer skill.
 - **Ports / adapters affected:** none (documentation reflects live state)
 - **PORTING_LEDGER / ADR updated:** 3 ledger rows (1 status change + 2 new); ADR-099 indexed
 - **Stop-condition status:** met — spec §17/§25.3 agrees with ADR-099 body; Build-Sequence-v26 Stage 7.4 stanza agrees with PORTING_LEDGER; no revival of archived spec positions; no ADR conflicts
+
+## 2026-09-10 03:35 EDT — ADR-100 authored (`DozerDbLexicalIndex` — Neo4j Lucene fulltext)
+
+- **Stage / plugin / port:** Stage 7.4+1 · `LexicalIndex` (adapter-scoped Protocol from ADR-099 D3) · `adapters/memory/dozerdb/`
+- **What changed:** Authored `docs/adrs/ADR-100-dozerdb-lexical-index-neo4j-fulltext.md` (348 lines). Six governing decisions: **D1** adapter shape mirrors `DozerDbGraphBackend` (lazy `neo4j.AsyncGraphDatabase.driver`, per-call `AsyncSession`, `_init_error` capture, sync + non-throwing `is_healthy`, idempotent async `close` that swallows driver errors into a warning). **D2** lazy bootstrap on first `index_event`/`search_lexical` via `CREATE FULLTEXT INDEX $index_name IF NOT EXISTS FOR (n:MemoryEvent) ON EACH [n.text]`, gated by `self._index_ready`; because `CREATE FULLTEXT INDEX` does not accept `$name` parameter substitution, `label` and `index_name` are constructor-tunable and both go through the `DozerDbGraphBackend` identifier guard `^[A-Za-z_][A-Za-z0-9_]*$` before literal Cypher interpolation. **D3** single-property text index; `index_event` writes `MERGE (n:MemoryEvent {id: $id}) SET n.text = $text, n.as_of = datetime($as_of_iso), n.corpus_name = $corpus`, where `text` = `_lex_text_from_payload(payload)` (extracted from `adapter.py` so both backends tokenise identical text). **D4** `search_lexical` runs `CALL db.index.fulltext.queryNodes($index_name, $query) YIELD node, score` with post-YIELD corpus filter and returns `MemoryHit`s with minimal payload (`{"text": ..., "attributes": {"corpus_name": ...}}` — full triple via `MemoryPort.query_temporal`); Lucene procedure failures degrade to `[]` + warning log. **D5** two test tiers: fast (mocked driver, 25 tests) + env-gated live (`KOSMOS_STAGE_74_REAL_DOZERDB_LEXICAL=1` against `ops/compose/memory.yml`). **D6** ledger flip PLANNED→VENDORED; `LexicalIndex` Protocol shape unchanged; boot-time wiring into `ZetesisPlugin` factory deferred to Stage 7.4+2 (own ADR). Alternatives rejected: SQLite FTS5 (new dependency), Elasticsearch (JVM footprint), boot-wiring in this slice (factory-contract co-ownership), multi-corpus multi-index (does not scale), multi-property fulltext index (field-boost quirks would diverge from `InMemoryLexicalIndex`).
+- **Files touched:** `docs/adrs/ADR-100-dozerdb-lexical-index-neo4j-fulltext.md` (NEW)
+- **Ports / adapters affected:** none touched by ADR authoring itself (the ADR governs the code in the next entry)
+- **PORTING_LEDGER / ADR updated:** ADR-100 authored; ledger row + spec fan-out land in later entries
+- **Stop-condition status:** met — six decisions locked, five alternatives rejected with reasons, downstream file list enumerated
+
+## 2026-09-10 03:38 EDT — `_lex_text_from_payload` extracted from `adapter.py`
+
+- **Stage / plugin / port:** Stage 7.4+1 · `adapters/memory/dozerdb/adapter.py` · Refactor for parity
+- **What changed:** Extracted the subject-predicate-object text concatenation from `InMemoryLexicalIndex.index_event` into a module-level `_lex_text_from_payload(payload)` helper so both `InMemoryLexicalIndex` and the new `DozerDbLexicalIndex` use identical text at write time. This is the ADR-100 D3 parity guarantee: same tokens indexed → RRF fusion rank-orderings converge between the in-memory test backend and the DozerDB production backend on the same corpus + query. Verified no regression: `test_search_hybrid_contract.py` + `test_contract.py` still 53/53 green.
+- **Files touched:** `adapters/memory/dozerdb/adapter.py`
+- **Ports / adapters affected:** `LexicalIndex` Protocol implementations only (Protocol shape unchanged)
+- **PORTING_LEDGER / ADR updated:** ADR-100 (D3 rationale)
+- **Stop-condition status:** met — 53/53 pre-existing tests still green after refactor
+
+## 2026-09-10 03:41 EDT — `DozerDbLexicalIndex` implementation lands
+
+- **Stage / plugin / port:** Stage 7.4+1 · `adapters/memory/dozerdb/dozerdb_lexical_index.py` · new adapter
+- **What changed:** Created `adapters/memory/dozerdb/dozerdb_lexical_index.py` (323 lines) implementing `LexicalIndex` Protocol per ADR-100 D1–D6. Structure: `_IDENT_RE` + `_validate_identifier` mirror `DozerDbGraphBackend`'s Cypher-injection guard; `DozerDbLexicalIndex.__init__` validates `label` + `index_name`, lazily imports `neo4j.AsyncGraphDatabase`, captures driver-build exceptions into `_init_error` (visible via `is_healthy() -> False`); `_bootstrap_index` runs the idempotent `CREATE FULLTEXT INDEX ... IF NOT EXISTS` and flips `_index_ready`; `index_event` writes the `MERGE (n:MemoryEvent {id: $id}) SET n.text/as_of/corpus_name` with parameterised values; `search_lexical` early-returns `[]` on empty query, bootstraps on first call, runs the `CALL db.index.fulltext.queryNodes($index_name, $query) YIELD node, score WHERE $corpus IS NULL OR node.corpus_name = $corpus RETURN ... ORDER BY score DESC LIMIT $limit`, and rehydrates minimal `MemoryHit`s via `_coerce_as_of` (handles `neo4j.time.DateTime.to_native()` for real driver + plain `datetime` for mocked driver); `is_healthy` sync + non-throwing; `close` idempotent + swallows driver errors into `log.warning`; `_run` opens `AsyncSession(database=self._database)` per call. Exported from `adapters/memory/dozerdb/__init__.py`. Import sanity confirmed via `python3 -c "from adapters.memory.dozerdb import DozerDbLexicalIndex, LexicalIndex"`.
+- **Files touched:** `adapters/memory/dozerdb/dozerdb_lexical_index.py` (NEW), `adapters/memory/dozerdb/__init__.py`
+- **Ports / adapters affected:** `LexicalIndex` Protocol — first production implementation lands
+- **PORTING_LEDGER / ADR updated:** ADR-100
+- **Stop-condition status:** met — module imports cleanly, `DozerDbLexicalIndex` satisfies `isinstance(..., LexicalIndex)`
+
+## 2026-09-10 03:43 EDT — `DozerDbLexicalIndex` contract tests land
+
+- **Stage / plugin / port:** Stage 7.4+1 · `adapters/memory/dozerdb/test_dozerdb_lexical_index_contract.py` · Contract discipline
+- **What changed:** Created `adapters/memory/dozerdb/test_dozerdb_lexical_index_contract.py` (~450 lines) with 25 fast-tier tests + 1 env-gated live-tier test, using the same `_FakeAsyncResult`/`_FakeSession`/`_FakeDriver`/`_install_fake_neo4j` fixture pattern established by `test_dozerdb_graph_backend_contract.py`. Coverage: `LexicalIndex` Protocol conformance via `isinstance`; identifier guard rejects Cypher-injection shapes on both `label` and `index_name` (parametric); bootstrap-then-MERGE Cypher-shape assertions on first `index_event`; bootstrap idempotency across two `index_event` calls (1 CREATE FULLTEXT INDEX + 2 MERGEs); missing-corpus writes `n.corpus_name = null`; `search_lexical` returns ordered `MemoryHit`s with correct payload rehydration + score + id; `search_lexical` Cypher shape asserts `CALL db.index.fulltext.queryNodes($index_name, $query) YIELD node, score` + `WHERE $corpus IS NULL OR node.corpus_name = $corpus` + `ORDER BY score DESC` + `LIMIT $limit`; corpus=`None` propagates as `null` parameter; empty query short-circuits without touching the driver; hit without corpus gets minimal `{"text": ...}` payload (no attributes key); Lucene procedure failure degrades to `[]` + warning log; `is_healthy` true on construction, false after close, false on driver-init failure; `close` idempotent + driver-error swallowing + warning log; `index_event` after close raises `RuntimeError`; configured `database` name plumbed through `session()`. Live tier: `test_live_round_trip_against_dozerdb` gated on `KOSMOS_STAGE_74_REAL_DOZERDB_LEXICAL=1`, index-scoped to `kosmos_test_fulltext`, round-trips 2 events (2 corpora), verifies corpus-scoped filter, cleans up via `MATCH ... DETACH DELETE`.
+- **Files touched:** `adapters/memory/dozerdb/test_dozerdb_lexical_index_contract.py` (NEW)
+- **Ports / adapters affected:** contract discipline established for `DozerDbLexicalIndex`
+- **PORTING_LEDGER / ADR updated:** ADR-100
+- **Stop-condition status:** met — 25 passed / 1 live-tier skipped in isolation
+
+## 2026-09-10 03:44 EDT — Full regression clean at 1462/0/15
+
+- **Stage / plugin / port:** Stage 7.4+1 · Full-suite regression
+- **What changed:** Ran the full test suite with the standard 5 opt-in excludes: `PYTHONPATH=. python3 -m pytest --ignore=plugins/tektos/eval/test_deepswe_corpus.py --ignore=plugins/tektos/ingest/test_docling_ingest.py --ignore=plugins/tektos/repomap/test_repomap.py --ignore=plugins/tektos/eval/test_pier_eval.py --ignore=plugins/tektos/tests/test_stage_3_12_exit_gate.py`. Result: **1462 passed / 0 failed / 15 skipped in 12.99s**. Baseline pre-Stage-7.4+1 was 1437 passed / 0 failed / 14 skipped (Stage 7.4 landing at commit `48e14ed`); delta = +25 new fast-tier contract tests + 1 new live-tier skip = +25 net passing tests. Zero-pre-existing-failures discipline (established at Stage 7.4) is preserved.
+- **Files touched:** none
+- **Ports / adapters affected:** all — full-suite green
+- **PORTING_LEDGER / ADR updated:** ADR-100 (DoD numbers)
+- **Stop-condition status:** met — 1462/0/15 exactly as forecast (1437 + 25 pass; 14 + 1 skip; 0 + 0 fail)
+
+## 2026-09-10 03:46 EDT — Spec fan-out (PORTING_LEDGER · Build-Sequence-v26 · ADRs README)
+
+- **Stage / plugin / port:** Stage 7.4+1 · Governance · Documentation
+- **What changed:** Flipped `PORTING_LEDGER.md` `DozerDbLexicalIndex` row from `PLANNED (Stage 7.4+1)` to `VENDORED (Stage 7.4+1)` with expanded Modifications (adapter shape + Cypher + identifier guard + degradation + test tiers) and dual ADR reference `ADR-099, ADR-100`. Appended new **Stage 7.4+1 — real `DozerDbLexicalIndex` (Neo4j Lucene fulltext) — LANDED (2026-09-10 · ADR-100)** stanza to `docs/Kosmos-Build-Sequence-v26.md` with bullets for Ports touched (none new — implements the ADR-099 D3 Protocol), What lands (full adapter description including exports + tests), DoD (all 25 fast-tier tests green + 1462/0/15 regression), Explicit exclusions (Stage 7.4+2 boot-wiring + Lucene reserved-character escaping), and ADR references. Inserted ADR-100 row into `docs/adrs/README.md` decision table with full 6-decision + 5-rejected-alternatives summary and Ratified/Stage-7.4+1 columns. Updated the "Remaining open decisions" summary paragraph to note that Stage 7.4+1 lands ADR-100 (production DozerDbLexicalIndex). Spec §17 agrees with ADR file body; Build-Sequence-v26 Stage 7.4+1 agrees with PORTING_LEDGER; no revival of archived spec positions; no ADR conflicts. All three fan-out targets updated atomically per `kosmos-spec-diff` §5.
+- **Files touched:** `PORTING_LEDGER.md`, `docs/Kosmos-Build-Sequence-v26.md`, `docs/adrs/README.md`
+- **Ports / adapters affected:** none (documentation reflects live state)
+- **PORTING_LEDGER / ADR updated:** DozerDbLexicalIndex row VENDORED; ADR-100 indexed
+- **Stop-condition status:** met — spec §17 ↔ ADR body ↔ Build-Sequence-v26 ↔ PORTING_LEDGER all agree

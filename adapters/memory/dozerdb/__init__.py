@@ -17,6 +17,7 @@ from adapters.memory.dozerdb.adapter import (
 )
 from adapters.memory.dozerdb.amg_policy import AmgGuardPolicy, AmgV02Policy
 from adapters.memory.dozerdb.dozerdb_graph_backend import DozerDbGraphBackend
+from adapters.memory.dozerdb.dozerdb_lexical_index import DozerDbLexicalIndex
 
 # ADR-075 D1: GraphitiTemporalIndex + KosmosGraphitiEmbedder hard-deleted.
 # The `TemporalIndex` port survives; `InMemoryTemporalIndex` is the only
@@ -30,6 +31,7 @@ __all__ = [
     "AmgV02Policy",
     "AmgVerdict",
     "DozerDbGraphBackend",
+    "DozerDbLexicalIndex",
     "DozerDbMemoryAdapter",
     "GraphBackend",
     "InMemoryGraphBackend",

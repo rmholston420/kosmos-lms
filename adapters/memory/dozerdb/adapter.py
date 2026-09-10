@@ -305,6 +305,25 @@ class InMemoryTemporalIndex:
 _LEX_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 
 
+def _lex_text_from_payload(payload: dict[str, Any]) -> str:
+    """Concatenate the tokenised surface of a MemoryPort write payload.
+
+    Shared by ``InMemoryLexicalIndex`` and ``DozerDbLexicalIndex``
+    (ADR-100 D3) so tokenisation parity holds across the in-memory
+    test backend and the production Lucene-fulltext backend. The three
+    fields (subject / predicate / object) are the same triple
+    ``MemoryPort.write_event`` accepts; missing fields degrade to the
+    empty string.
+    """
+    return " ".join(
+        [
+            str(payload.get("subject", "")),
+            str(payload.get("predicate", "")),
+            str(payload.get("object", "")),
+        ]
+    )
+
+
 def _lex_tokenize(text: str) -> list[str]:
     """Tokenize free text for the in-memory BM25 index.
 
@@ -389,12 +408,7 @@ class InMemoryLexicalIndex:
     ) -> None:
         if self._closed:
             raise RuntimeError("InMemoryLexicalIndex is closed")
-        text_parts = [
-            str(payload.get("subject", "")),
-            str(payload.get("predicate", "")),
-            str(payload.get("object", "")),
-        ]
-        tokens = _lex_tokenize(" ".join(text_parts))
+        tokens = _lex_tokenize(_lex_text_from_payload(payload))
         corpus = (payload.get("attributes") or {}).get("corpus_name")
         self._docs[event_id] = _LexDoc(
             id=event_id,

@@ -486,13 +486,14 @@ Source repo: `rmholston420/tektos-ultima` (public, no LICENSE file at source; so
 - **ADR:** ADR-085, ADR-099
 - **Logged:** 2026-09-10 03:20 EDT
 
-#### DozerDB Lucene fulltext lexical adapter (`DozerDbLexicalIndex`) — PLANNED (Stage 7.4+1)
+#### DozerDB Lucene fulltext lexical adapter (`DozerDbLexicalIndex`) — VENDORED (Stage 7.4+1)
 - **Source:** https://neo4j.com/docs/cypher-manual/current/indexes/semantic-indexes/full-text-indexes/ (Neo4j Lucene fulltext index; Cypher `CALL db.index.fulltext.queryNodes(...)`)
-- **License:** GPL-3.0 (Neo4j Community) / DozerDB fork (permissive) — real integration point uses DozerDB's permissive fork already vendored in Stage 1.8
-- **Kosmos location:** `adapters/memory/dozerdb/dozerdb_lexical_index.py` (future)
+- **License:** GPL-3.0 (Neo4j Community) / DozerDB fork (permissive) — real integration point uses DozerDB's permissive fork already vendored in Stage 1.8; adapter code is MIT under kosmos-lms.
+- **Kosmos location:** `adapters/memory/dozerdb/dozerdb_lexical_index.py`
 - **Port(s):** `LexicalIndex` Protocol (adapter-scoped; defined in `adapters/memory/dozerdb/adapter.py`)
-- **Modifications:** production `LexicalIndex` implementation backed by DozerDB's Lucene fulltext index. `index_event` writes a `MemoryEvent` node with `text` property and a `corpus_name` label/property; `search_lexical` calls `CALL db.index.fulltext.queryNodes('memory_event_fulltext', $query) YIELD node, score` with an optional `corpus_name` filter and returns `MemoryHit`s. Bootstraps the fulltext index at first use (idempotent `CREATE FULLTEXT INDEX IF NOT EXISTS`). Deferred so Stage 7.4 could land the port contract + fused ranking math against a deterministic in-memory backend first (per ADR-099 D4).
-- **ADR:** ADR-099
+- **Modifications:** production `LexicalIndex` implementation backed by DozerDB's Lucene fulltext index (per ADR-100). Mirrors `DozerDbGraphBackend`'s async-driver + `_init_error` + sync-non-throwing `is_healthy` + idempotent `close` pattern. `index_event` writes `MERGE (n:MemoryEvent {id: $id}) SET n.text = $text, n.as_of = datetime($as_of_iso), n.corpus_name = $corpus`, where `text` is the shared subject-predicate-object concatenation from `_lex_text_from_payload` (parity with `InMemoryLexicalIndex`). `search_lexical` calls `CALL db.index.fulltext.queryNodes($index_name, $query) YIELD node, score` with a post-YIELD `WHERE $corpus IS NULL OR node.corpus_name = $corpus` filter, ordering + limit, and returns `MemoryHit`s carrying a minimal payload (`{"text": ..., "attributes": {"corpus_name": ...}}` — full-triple rehydration is `MemoryPort.query_temporal`'s job). Bootstraps the fulltext index lazily on first `index_event`/`search_lexical` via `CREATE FULLTEXT INDEX $index_name IF NOT EXISTS FOR (n:MemoryEvent) ON EACH [n.text]`. Both `label` and `index_name` are constructor-tunable and go through the `DozerDbGraphBackend` identifier guard (`^[A-Za-z_][A-Za-z0-9_]*$`) before literal Cypher interpolation (ADR-100 D2 — `CREATE FULLTEXT INDEX` does not accept `$name` substitution). Lucene procedure failures degrade to `[]` with a warning log, matching the log-only side-effect discipline of `DozerDbMemoryAdapter.write_event`'s lexical mirror. Fast tier: mocked `neo4j.AsyncGraphDatabase` (25 tests). Live tier: env-gated `KOSMOS_STAGE_74_REAL_DOZERDB_LEXICAL=1` against `ops/compose/memory.yml`. Boot-time wiring into `ZetesisPlugin`'s DozerDB factory deferred to Stage 7.4+2.
+- **ADR:** ADR-099, ADR-100
+- **Logged:** 2026-09-10 03:45 EDT
 
 #### Tektos planner (Kosmos-native seed) — VENDORED (Stage 4.7)
 - **Source:** none (Kosmos-native seed; full donor absorption deferred)
