@@ -1,28 +1,38 @@
-# Kosmos Session Handoff — 2026-09-10 06:52 EDT
+# Kosmos Session Handoff — 2026-09-10 07:45 EDT
 
 ## Current build-sequencing position
-- **Stage / phase:** Stage 8.4 LANDED (Ratified v25 · ADR-106)
-- **Plugin / kernel component:** Tektos spec-planner + task-decomposer engines
-- **Port(s) in progress:** none (Stage 8.4 is a port-consuming extension; no new formal port)
-- **Next stage per Plan v2:** Stage 8.5 — executor helpers (LLM output → sandbox execution routing)
+- **Stage / phase:** Stage 8.5 COMPLETE → Stage 8.6 next (Tektos agent manager)
+- **Plugin / kernel component:** `plugins/tektos/` — executor package landed; manager subpackage next
+- **Port(s) in progress:** none (Stage 8.5 was port-consuming; Stage 8.6 also expected to be port-consuming per Plan v2)
 
 ## Completed this session
-- Stage 8.4 · ADR-106 authored + filed + index row updated (docs/adrs/ADR-106-tektos-spec-planner-and-task-decomposer-engines.md, 281 lines, Ratified v25).
-- Stage 8.4 · `plugins/tektos/planner/` — 6 rewritten donor modules + `TektosSpecPlanner` engine + FastAPI router factory (2007 total new lines across 8 files). Stage 4.7 `TektosTurnPlanner` seed preserved unchanged per ADR-093.
-- Stage 8.4 · `plugins/tektos/decomposer/` — new sibling package with `TaskDecomposer` engine, frozen slotted `SubTask` + `DecompositionPlan` dataclasses, `format_for_prompt` static method, FastAPI router factory (512 total new lines across 4 files).
-- Stage 8.4 · Kernel wiring at `kernel/app.py` — two new `_BootRegistry` slots, shared boot helper renamed `_boot_stage_8_3_engine` → `_boot_stage_8_x_engine` (rename-only), two new `@_try(...)` boot functions, env-gates `KOSMOS_TEKTOS_{SPEC_PLANNER,DECOMPOSER}={off,on}` default `off` silent.
-- Stage 8.4 · `TektosPlugin` dataclass grew two new optional fields `spec_planner`, `decomposer: object | None = None` (D5).
-- Stage 8.4 · `LanguageGame` enum lands NOW at 8.4 (discharges ADR-105 D9 forward deferral).
-- Stage 8.4 · Test surface: 11 spec-planner engine + 8 decomposer engine + 8 routers + 11 kernel wiring = 29 new tests, all green.
-- Stage 8.4 · Full regression **1650 passed / 21 skipped / 1 deselected** (Stage 8.3 baseline 1621 + 29 delta exactly).
-- Stage 8.4 · Docs fanout: `docs/Kosmos-Build-Spec-v26.md` §17 ADR-106 row above ADR-105; `docs/Kosmos-Build-Sequence-v26.md` Stage 8.4 stanza appended after Stage 8.3; `docs/PORTING_LEDGER.md` three new entries (Stage 8.3 back-fill + Stage 8.4 spec-planner + Stage 8.4 task-decomposer).
-- BUILD_LOG.md entry appended.
+- ADR-107 filed at `docs/adrs/ADR-107-tektos-executor-and-tool-router.md` (D1–D12)
+- ADR-107 row added to `docs/adrs/README.md` between ADR-106 and ADR-090
+- ADR-107 row added to `docs/Kosmos-Build-Spec-v26.md` §17 above ADR-106
+- Stage 8.5 stanza appended to `docs/Kosmos-Build-Sequence-v26.md` after Stage 8.4
+- Two VENDORED entries appended to `docs/PORTING_LEDGER.md` (Tektos spec-executor + Tektos tool-router)
+- `plugins/tektos/executor/{__init__.py, models.py, engine.py, api.py}` landed (TektosSpecExecutor + TektosToolRouter + verbatim donor scaffold helpers + `build_spec_executor_router` + `build_tool_router_router`)
+- `plugins/tektos/plugin.py` grew `executor` + `tool_router` optional fields
+- `kernel/app.py` grew two `_BootRegistry` slots + `_boot_tektos_tool_router` (via shared `_boot_stage_8_x_engine`) + `_boot_tektos_executor` (bespoke, consumes optional `registry.sandbox`) + registry assignments
+- Four new test modules — 71 tests green (29 spec-executor engine + 20 tool-router engine + 9 routers + 13 kernel wiring)
+- Full regression on plugin/kernel testpaths: **1708 passed / 21 skipped / 1 deselected** (baseline 1650 + 58 delta)
+- BUILD_LOG entry appended (2026-09-10 07:45 EDT)
 
 ## Remaining before current Definition of Done
-- **`git add -A && git commit -m "Stage 8.4 · ADR-106 …" && git tag stage-8-4-complete && git push --tags origin HEAD`** with `api_credentials=["github"]`.
+- (none — Stage 8.5 DoD met; commit + tag + push next)
 
 ## Open questions / awaiting user answer
-- None. ADR-106 D1–D12 all resolved. Q1 (agent-decided) / Q2 (fidelity vs rewrite → rewrite, matches ADR-105 D2) / Q3 (families order + in-process httpx+websockets testing) applied per user instructions.
+- none
 
 ## Exact next action
-- Run the Stage 8.4 commit + tag + push command sequence above, then close the session.
+- Commit + tag `stage-8-5-complete` + push (single command in the plan; use `api_credentials=["github"]`):
+```bash
+cd /home/user/workspace/audit/kosmos-lms && \
+  git -c user.email="agent@kosmos-lms.local" -c user.name="Kosmos Agent" \
+    add -A && \
+  git -c user.email="agent@kosmos-lms.local" -c user.name="Kosmos Agent" \
+    commit -m "Stage 8.5 · ADR-107 Tektos executor + tool-router engines" && \
+  git tag stage-8-5-complete && \
+  git push --tags origin HEAD
+```
+- After push: begin Stage 8.6 Tektos agent manager (donor audit → ADR-108 → implementation → tests → docs fanout → commit).

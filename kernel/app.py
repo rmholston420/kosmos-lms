@@ -140,6 +140,8 @@ class _BootRegistry:
         # Downstream call sites MUST tolerate ``None``.
         self.tektos_spec_planner: Any = None
         self.tektos_decomposer: Any = None
+        self.tektos_executor: Any = None
+        self.tektos_tool_router: Any = None
         # Stage 1.6 Phase 0 (ADR-073): kernel-owned EmbeddingsPort. Separate
         # from ``self.llm`` so chat-only backends (e.g. llama-swap) don't
         # have to satisfy an embeddings surface. Populated by ``_boot_embeddings``.
@@ -989,11 +991,79 @@ async def lifespan(app: FastAPI):
             plugin_field="decomposer",
         )
 
+    # --- Stage 8.5 (ADR-107) Tektos executor + tool-router -----------------
+    # The tool_router fits the shared _boot_stage_8_x_engine helper directly
+    # (relational_memory + event_bus constructor args only). The executor
+    # additionally picks up ``registry.sandbox`` when wired, so it uses a
+    # bespoke boot function that reuses the same env-gate + degrade + plugin
+    # reflection semantics via a thin wrapper around the shared helper.
+    @_try("tektos_tool_router")
+    def _boot_tektos_tool_router():
+        from plugins.tektos.executor import TektosToolRouter
+
+        return _boot_stage_8_x_engine(
+            env_var="KOSMOS_TEKTOS_TOOL_ROUTER",
+            adr_note="ADR-107",
+            engine_factory=TektosToolRouter,
+            plugin_field="tool_router",
+        )
+
+    @_try("tektos_executor")
+    def _boot_tektos_executor():
+        import logging as _kl
+        import os as _os
+
+        from plugins.tektos.executor import TektosSpecExecutor
+
+        _log = _kl.getLogger(__name__)
+        _env = "KOSMOS_TEKTOS_EXECUTOR"
+        _mode = _os.environ.get(_env, "off").lower().strip()
+        _ALLOWED = ("off", "on")
+        if _mode not in _ALLOWED:
+            raise RuntimeError(
+                "%s=%r is not one of %s (ADR-107 D6)."
+                % (_env, _mode, _ALLOWED)
+            )
+        if _mode == "off":
+            return None
+
+        rmem = getattr(registry, "relational_memory", None)
+        ebus = getattr(registry, "event_bus", None)
+        sbox = getattr(registry, "sandbox", None)
+        if rmem is None:
+            _log.warning(
+                "kosmos.tektos_executor: RelationalMemoryPort unavailable; "
+                "engine offline (ADR-107; ADR-101 degrade pattern)"
+            )
+            return None
+
+        engine = TektosSpecExecutor(
+            relational_memory=rmem, event_bus=ebus, sandbox=sbox
+        )
+        _log.info(
+            "kosmos.tektos_executor: wired (ADR-107); event_bus=%s; sandbox=%s",
+            "on" if ebus is not None else "off",
+            "on" if sbox is not None else "off",
+        )
+
+        _tp = getattr(registry, "tektos", None)
+        if _tp is not None and hasattr(_tp, "executor"):
+            try:
+                setattr(_tp, "executor", engine)
+            except Exception:  # noqa: BLE001 — frozen dataclass tolerated
+                _log.debug(
+                    "kosmos.tektos_executor: TektosPlugin.executor assignment "
+                    "skipped (frozen?)"
+                )
+        return engine
+
     registry.tektos_reflection = _boot_tektos_reflection
     registry.tektos_synthesis = _boot_tektos_synthesis
     registry.tektos_experience = _boot_tektos_experience
     registry.tektos_spec_planner = _boot_tektos_spec_planner
     registry.tektos_decomposer = _boot_tektos_decomposer
+    registry.tektos_tool_router = _boot_tektos_tool_router
+    registry.tektos_executor = _boot_tektos_executor
 
     # --- Gnosis boot seeder (ADR-064) ----------------------------------------
     # Env-gated by ``KOSMOS_GNOSIS_SEED=1``. Iterates ``ALL_CORPORA`` and

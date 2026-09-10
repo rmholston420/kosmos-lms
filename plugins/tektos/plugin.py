@@ -180,6 +180,17 @@ class TektosPlugin:
     spec_planner: object | None = field(default=None)
     decomposer: object | None = field(default=None)
 
+    # Stage 8.5 (ADR-107 D5): optional handles to the kernel-wired
+    # spec-executor and tool-router engines. Populated by
+    # ``kernel/app.py::_boot_tektos_{executor,tool_router}`` when the
+    # ``KOSMOS_TEKTOS_{EXECUTOR,TOOL_ROUTER}=on`` env-gate is set and
+    # ``registry.relational_memory`` is bound. The executor also picks up
+    # ``registry.sandbox`` when wired (falls open to ``sandbox_unavailable``
+    # records when unwired per ADR-107 D9). ``object | None`` typing per
+    # same ADR-007 rationale above.
+    executor: object | None = field(default=None)
+    tool_router: object | None = field(default=None)
+
     _started: bool = field(default=False, init=False, repr=False)
     _registration: PluginRegistration | None = field(
         default=None, init=False, repr=False

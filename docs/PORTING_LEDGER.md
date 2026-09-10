@@ -921,6 +921,26 @@
 - **ADR:** ADR-106
 - **Logged:** 2026-09-10 06:52 EDT
 
+#### Tektos spec-executor engine — `VENDORED (Stage 8.5, ADR-107)`
+- **Source:** `rmholston420/tektos-ultima` (donor absorbed under FULL FORK + REWRITE license posture; re-licensed at port-in point per ADR-092)
+- **Donor modules:** `src/tektos/agents/coding_agent/executor.py` (SpecExecutor + scaffold helpers `_infer_extension`, `_sanitize_filename`, `_generate_scaffold`, `_generate_python_module`, `_generate_test_scaffold`, `_generate_config_scaffold`)
+- **License:** MIT (kosmos-lms declares MIT; rmholston420 sole copyright holder)
+- **Kosmos location:** `plugins/tektos/executor/{__init__.py,models.py,engine.py,api.py}`; `TektosSpecExecutor` exported from `plugins/tektos/executor/__init__.py`.
+- **Port(s):** `RelationalMemoryPort` (via `write_narrative`); `EventBusPort` (envelope-first per ADR-023); `SandboxPort` (via `run(SandboxRequest)` per ADR-082 — no raw `subprocess.run`); no new port surface (ADR-107 D11 REJECT — `TektosPlugin.executor: object | None` field IS the coupling surface).
+- **Modifications:** Rewritten as frozen slotted `ExecutionRecord` + `ExecutionStep` + `ExecutionArtifact` + `ExecutionTestReport` dataclasses (donor used pydantic); donor scaffold helpers preserved verbatim as module-level pure functions; `ExecutionStatus` `Literal` union extended with `"sandbox_unavailable"` (ADR-107 D9); `TestReportStatus` extended with `"skipped"`; every port call fail-open (`try/except Exception` with `log.exception`) per ADR-107 D9; ring-buffer fallback (`maxlen=100`); env-gated behind `KOSMOS_TEKTOS_EXECUTOR={off,on}` with degrade-to-None when `registry.relational_memory` is None (ADR-101); FastAPI router factory with `503` guard closure at `/tektos/api/executor/{execute,recent}` + `_StructuralSpec`/`_StructuralPhase` request shims to avoid a hard dependency on the Stage 8.4 planner package (ADR-007 hygiene); locked constants `TEKTOS_EXECUTOR_PROVENANCE="tektos.executor"` / `TEKTOS_EXECUTOR_PREDICATE="tektos.executor.spec_executed"` / `TEKTOS_EXECUTOR_DEFAULT_CONFIDENCE=0.75`.
+- **ADR:** ADR-107
+- **Logged:** 2026-09-10 07:45 EDT
+
+#### Tektos tool-router engine — `VENDORED (Stage 8.5, ADR-107)`
+- **Source:** `rmholston420/tektos-ultima` (donor absorbed under FULL FORK + REWRITE license posture; re-licensed at port-in point per ADR-092)
+- **Donor modules:** `src/tektos/runtime/tool_router.py` (ToolRouter routing surface + capability table)
+- **License:** MIT (kosmos-lms declares MIT; rmholston420 sole copyright holder)
+- **Kosmos location:** `plugins/tektos/executor/{__init__.py,engine.py,api.py}`; `TektosToolRouter` co-located with `TektosSpecExecutor` per ADR-107 D6.
+- **Port(s):** `RelationalMemoryPort` (via `write_narrative`); `EventBusPort` (envelope-first per ADR-023); no new port surface (ADR-107 D11 REJECT — `TektosPlugin.tool_router: object | None` field IS the coupling surface).
+- **Modifications:** Routing-only rewrite as a frozen slotted `ToolRoute` dataclass; donor `route_tool()` keyword branches + capability table preserved verbatim; donor `execute_with_recovery()` and `ToolPerformance` mutable-stats accumulator REJECTED at 8.5 per ADR-107 D12 (recovery + stats deferred to Stage 8.6 manager); MCP-based dynamic capability discovery deferred (capability table is static at 8.5); every port call fail-open per ADR-107 D9; ring-buffer fallback (`maxlen=100`); env-gated behind `KOSMOS_TEKTOS_TOOL_ROUTER={off,on}` with degrade-to-None when `registry.relational_memory` is None (ADR-101); FastAPI router factory with `503` guard closure at `/tektos/api/tool-router/{route,recent}`; locked constants `TEKTOS_TOOL_ROUTER_PROVENANCE="tektos.tool_router"` / `TEKTOS_TOOL_ROUTER_PREDICATE="tektos.tool_router.routed"` / `TEKTOS_TOOL_ROUTER_DEFAULT_CONFIDENCE=0.75`.
+- **ADR:** ADR-107
+- **Logged:** 2026-09-10 07:45 EDT
+
 ---
 
 ## Gnosis (Knowledge)
