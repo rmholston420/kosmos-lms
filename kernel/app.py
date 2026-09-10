@@ -115,6 +115,14 @@ class _BootRegistry:
         # ``KOSMOS_SESSION={inmemory,tektos}``. Downstream call sites MUST
         # tolerate ``None`` (ADR-101 degrade pattern).
         self.session: Any = None
+        # Stage 8.2 (ADR-104): kernel-owned TektosTurnLoop — the Stage 3.13
+        # turn-loop skeleton grown with optional SessionPort + LLMPort +
+        # SandboxPort + ResourcePort collaborators. Populated by
+        # ``_boot_tektos_turn_loop``. Boots into the ``off`` state by
+        # default (returns None with no warning); explicit opt-in via
+        # ``KOSMOS_TEKTOS_TURN_LOOP=on``. Downstream call sites MUST
+        # tolerate ``None`` (ADR-101 degrade pattern).
+        self.tektos_turn_loop: Any = None
         # Stage 1.6 Phase 0 (ADR-073): kernel-owned EmbeddingsPort. Separate
         # from ``self.llm`` so chat-only backends (e.g. llama-swap) don't
         # have to satisfy an embeddings surface. Populated by ``_boot_embeddings``.
@@ -745,6 +753,106 @@ async def lifespan(app: FastAPI):
         return adapter
 
     registry.session = _boot_session
+
+    # --- Stage 8.2 (ADR-104) TektosTurnLoop ----------------------------------
+    # Grows the Stage 3.13 pre-LLM skeleton with four optional port
+    # collaborators (SessionPort / LLMPort / SandboxPort / ResourcePort).
+    # Env-gated via ``KOSMOS_TEKTOS_TURN_LOOP={off,on}`` (default ``off``).
+    # Required Stage 3.13 collaborators are ``immune`` + ``loop_safety`` +
+    # ``thermal``; when any is missing at boot the loop stays ``None``
+    # with a warning (ADR-101 degrade pattern). The four Stage 8.2
+    # collaborators are wired opportunistically from the registry — each
+    # may be ``None`` and the loop tolerates that (ADR-104 D1).
+    @_try("tektos_turn_loop")
+    def _boot_tektos_turn_loop():
+        import logging as _kosmos_logging
+        import os
+
+        log = _kosmos_logging.getLogger(__name__)
+        mode = (
+            os.environ.get("KOSMOS_TEKTOS_TURN_LOOP", "off").lower().strip()
+        )
+
+        _ALLOWED = ("off", "on")
+        if mode not in _ALLOWED:
+            raise RuntimeError(
+                "KOSMOS_TEKTOS_TURN_LOOP=%r is not one of %s (ADR-104 D10)."
+                % (mode, _ALLOWED)
+            )
+
+        if mode == "off":
+            return None  # silent — the default
+
+        # ``on`` requires the three Stage 3.13 base collaborators. Pull
+        # them from the registry; when the plugin exposes them under a
+        # nested handle we fall through to ``None`` and log-degrade.
+        immune = getattr(registry, "immune", None)
+        loop_safety = getattr(registry, "loop_safety", None)
+        thermal = getattr(registry, "thermal", None)
+
+        # Fallback: the tektos plugin often carries these three on itself
+        # rather than on the registry root. Probe the plugin handle when
+        # the direct registry slots are unset.
+        tektos_plugin = getattr(registry, "tektos", None)
+        if tektos_plugin is not None:
+            immune = immune or getattr(tektos_plugin, "immune", None)
+            loop_safety = loop_safety or getattr(
+                tektos_plugin, "loop_safety", None
+            )
+            thermal = thermal or getattr(tektos_plugin, "thermal", None)
+
+        missing = [
+            name
+            for name, val in (
+                ("immune", immune),
+                ("loop_safety", loop_safety),
+                ("thermal", thermal),
+            )
+            if val is None
+        ]
+        if missing:
+            log.warning(
+                "kosmos.tektos_turn_loop: required collaborators missing %s; "
+                "loop offline (ADR-104 D10; ADR-101 degrade pattern)",
+                missing,
+            )
+            return None
+
+        from plugins.tektos.runtime.turn_loop import TektosTurnLoop
+
+        loop = TektosTurnLoop(
+            immune=immune,
+            loop_safety=loop_safety,
+            thermal=thermal,
+            event_bus=registry.event_bus,
+            session_port=registry.session,
+            llm=registry.llm,
+            sandbox=getattr(registry, "sandbox", None),
+            resource=registry.resource,
+        )
+        log.info(
+            "kosmos.tektos_turn_loop: wired (ADR-104); session=%s llm=%s "
+            "sandbox=%s resource=%s",
+            "on" if registry.session is not None else "off",
+            "on" if registry.llm is not None else "off",
+            "on" if getattr(registry, "sandbox", None) is not None else "off",
+            "on" if registry.resource is not None else "off",
+        )
+        # Reflect the wired loop onto the TektosPlugin dataclass slot too
+        # (ADR-104 D11) so plugin-side code paths can reach it.
+        if tektos_plugin is not None and hasattr(
+            tektos_plugin, "turn_loop"
+        ):
+            try:
+                tektos_plugin.turn_loop = loop
+            except Exception:  # noqa: BLE001 — frozen dataclass tolerated
+                log.debug(
+                    "kosmos.tektos_turn_loop: TektosPlugin.turn_loop "
+                    "assignment skipped (frozen?)"
+                )
+        return loop
+
+    registry.tektos_turn_loop = _boot_tektos_turn_loop
 
     # --- Gnosis boot seeder (ADR-064) ----------------------------------------
     # Env-gated by ``KOSMOS_GNOSIS_SEED=1``. Iterates ``ALL_CORPORA`` and

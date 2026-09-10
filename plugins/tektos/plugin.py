@@ -146,6 +146,17 @@ class TektosPlugin:
 
     frontend_contract_port: FrontendContractPort
 
+    # Stage 8.2 (ADR-104 D11): optional handle to the kernel-wired
+    # ``TektosTurnLoop``. Populated at kernel-boot time by
+    # ``kernel/app.py::_boot_tektos_turn_loop`` when
+    # ``KOSMOS_TEKTOS_TURN_LOOP=on``. Stays ``None`` when the loop is
+    # off, unwired, or degrade-suppressed. Kept as ``Any`` typing via
+    # forward-string annotation would violate ADR-007 (no cross-plugin
+    # type-import in this dataclass), so we intentionally type this as
+    # ``object | None`` — downstream call sites should isinstance-check
+    # or duck-type off it.
+    turn_loop: object | None = field(default=None)
+
     _started: bool = field(default=False, init=False, repr=False)
     _registration: PluginRegistration | None = field(
         default=None, init=False, repr=False
