@@ -468,13 +468,31 @@ Source repo: `rmholston420/tektos-ultima` (public, no LICENSE file at source; so
 - **ADR:** ADR-082, ADR-093
 - **Logged:** 2026-09-10 01:15 EDT
 
-#### Tektos hindsight memory (bridge adapter) — PLANNED (Stage 3-5)
+#### Tektos hindsight memory (bridge adapter) — EVALUATED-REJECTED (Stage 3-5, H1 skipped)
 - **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/hindsight
-- **License:** MIT (relicensed at port-in)
-- **Kosmos location:** `adapters/memory/hindsight_bridge/`
-- **Port(s):** `MemoryPort` (bridge; ADR-085 extends `MemoryPort.search_hybrid`)
-- **Modifications:** default hindsight port fixed from `:9177` → `:9000` (Tektos-Ultima source bug); adapter fronts hindsight for Tektos read/write path in Stages 3–5 while DozerDB remains the canonical Kosmos store; retired in Stage 8 per plan Decision H1 → H2 migration.
-- **ADR:** ADR-085
+- **License:** MIT (relicensed at port-in — never triggered)
+- **Kosmos location:** `adapters/memory/hindsight_bridge/` — **never created**
+- **Port(s):** `MemoryPort` (bridge — never implemented)
+- **Modifications:** N/A — no code ever landed. The H1 (bridge Tektos to legacy hindsight service) → H2 (Tektos on DozerDB) plan was collapsed to H2-only through Stages 3–5: `plugins/tektos/` consumes `MemoryPort` directly via the DozerDB adapter with no bridge in between. Directory never existed; no imports in the codebase; no `pyproject.toml` entry. Stage 7.4 was originally chartered to retire this bridge; ADR-099 records the contingency firing (H1 detour skipped, direct H2 kept) and re-scopes Stage 7.4 to landing `search_hybrid` on `DozerDbMemoryAdapter` instead. Retire on paper only — no repo state to change.
+- **ADR:** ADR-085, ADR-099
+- **Logged:** 2026-09-10 03:20 EDT
+
+#### DozerDB hybrid retrieval (`search_hybrid` + `InMemoryLexicalIndex`) — VENDORED (Stage 7.4)
+- **Source:** none (Kosmos-native; RRF fusion formula per ADR-085 verbatim; BM25-Okapi lexical scoring is a hand-authored test backend)
+- **License:** MIT
+- **Kosmos location:** `adapters/memory/dozerdb/adapter.py` (adds `LexicalIndex` Protocol, `InMemoryLexicalIndex` test backend, `RRF_K = 60`, `DozerDbMemoryAdapter.search_hybrid` method, and lexical-mirror side effect in `write_event`); `adapters/memory/dozerdb/test_search_hybrid_contract.py` (RRF math + weight-guard + honesty-rule + corpus + `min_score` + `limit` contract)
+- **Port(s):** `MemoryPort` (ADR-085 method); `LexicalIndex` is adapter-scoped, NOT a formal port under `ports/` (symmetric with `GraphBackend` and `TemporalIndex` — ADR-007 + ADR-027 forbid plugin bypass of `MemoryPort`)
+- **Modifications:** `search_hybrid` calls `validate_hybrid_weights` first (non-bypassable weight guard), raises `NotImplementedError` when no `LexicalIndex` is wired (ADR-085 honesty rule — no silent degrade to semantic-only), runs lexical + semantic legs in parallel semantically (both `await`ed sequentially per the port contract), fuses with `score = lw · 1/(RRF_K+rank_lex) + sw · 1/(RRF_K+rank_sem)`, merges by hit id (semantic payload wins on collision — semantic side carries the richer shape produced by `SemanticMemoryPath`), filters by `min_score` post-fusion, and truncates to `limit`. `write_event` mirrors accepted payloads into the wired lexical index; failures are logged, not raised, to preserve write durability. `InMemoryLexicalIndex` uses BM25-Okapi (k1=1.5, b=0.75) with tokenization matching the ports contract; corpus filtering reads `attributes.corpus_name`.
+- **ADR:** ADR-085, ADR-099
+- **Logged:** 2026-09-10 03:20 EDT
+
+#### DozerDB Lucene fulltext lexical adapter (`DozerDbLexicalIndex`) — PLANNED (Stage 7.4+1)
+- **Source:** https://neo4j.com/docs/cypher-manual/current/indexes/semantic-indexes/full-text-indexes/ (Neo4j Lucene fulltext index; Cypher `CALL db.index.fulltext.queryNodes(...)`)
+- **License:** GPL-3.0 (Neo4j Community) / DozerDB fork (permissive) — real integration point uses DozerDB's permissive fork already vendored in Stage 1.8
+- **Kosmos location:** `adapters/memory/dozerdb/dozerdb_lexical_index.py` (future)
+- **Port(s):** `LexicalIndex` Protocol (adapter-scoped; defined in `adapters/memory/dozerdb/adapter.py`)
+- **Modifications:** production `LexicalIndex` implementation backed by DozerDB's Lucene fulltext index. `index_event` writes a `MemoryEvent` node with `text` property and a `corpus_name` label/property; `search_lexical` calls `CALL db.index.fulltext.queryNodes('memory_event_fulltext', $query) YIELD node, score` with an optional `corpus_name` filter and returns `MemoryHit`s. Bootstraps the fulltext index at first use (idempotent `CREATE FULLTEXT INDEX IF NOT EXISTS`). Deferred so Stage 7.4 could land the port contract + fused ranking math against a deterministic in-memory backend first (per ADR-099 D4).
+- **ADR:** ADR-099
 
 #### Tektos planner (Kosmos-native seed) — VENDORED (Stage 4.7)
 - **Source:** none (Kosmos-native seed; full donor absorption deferred)

@@ -1,40 +1,34 @@
-# Kosmos Session Handoff — 2026-09-10 03:01 EDT
+# Kosmos Session Handoff — 2026-09-10 03:34 EDT
 
 ## Current build-sequencing position
 
-- **Stage / phase:** Stage 6.5 (Voice + Vision port-in) — **LANDED**; ready to hand off to next stage (Stage 7.4 per Build-Sequence-v26 ordering)
-- **Plugin / kernel component:** `adapters/voice/{noop,faster_whisper}` + `adapters/vision/{noop,ollama_qwen_vl,tesseract}` + `adapters/data/blobs/` + `adapters/tektos_frontend/`
-- **Port(s) in progress:** none — `VoicePort` + `VisionPort` first-batch adapters shipped
+- **Stage / phase:** Stage 7.4 — **LANDED** (2026-09-10 · ADR-099)
+- **Plugin / kernel component:** `adapters/memory/dozerdb/DozerDbMemoryAdapter`
+- **Port(s) in progress:** none; next slice targets `Stage 7.4+1` (real `DozerDbLexicalIndex`)
 
 ## Completed this session
 
-- ADR-096 (Voice + Vision scope + `tektos_frontend` two-write pattern) — Ratified 2026-09-10
-- ADR-097 (VoicePort adapter selection: faster-whisper STT + TTS deferred) — Ratified 2026-09-10
-- ADR-098 (VisionPort adapter selection: Qwen2.5-VL via Ollama + Tesseract) — Ratified 2026-09-10
-- `BlobStore` helper landed at `adapters/data/blobs/blob_store.py` (13/13 contract tests green)
-- `TektosFrontendMemoryWriter` (two-write pattern) landed at `adapters/tektos_frontend/frontend_memory_writer.py` (7/7 contract tests green)
-- `NoOpVoiceAdapter` + `FasterWhisperVoiceAdapter` landed under `adapters/voice/` (17/17 contract tests green)
-- `NoOpVisionAdapter` + `OllamaQwenVLVisionAdapter` + `TesseractVisionAdapter` landed under `adapters/vision/` (29/29 contract tests green)
-- Full-suite regression: **1420 passed / 6 pre-existing failed / 14 skipped in 12.81s** (baseline 1356/6/14 → +64 new pass, zero new failures)
-- Spec fan-out: Build-Sequence-v26 Stage 6.5 stanza → LANDED marker; `PORTING_LEDGER.md` +10 rows under new Stage 6.5 section (7 HAND-BUILT + 2 EVALUATED-REJECTED + 1 PLANNED); `docs/adrs/README.md` +3 rows (ADR-096/097/098); "Remaining open decisions" sentence updated to list ADR-090 + TTS engine selection
-- BUILD_LOG.md: 8 new entries (ADRs authored, BlobStore, MemoryWriter, Voice adapters, Vision adapters, regression check, spec fan-out)
-- This SESSION_HANDOFF.md overwritten to reflect current state
+- Discovered charter/reality mismatch: Stage 7.4 chartered "H1→H2 hindsight migration + retire `adapters/memory/hindsight_bridge/`" but H1 was never built (directory does not exist; PORTING_LEDGER row still `PLANNED`; zero imports).
+- Verified all 6 pre-existing failing tests were caused by missing `search_hybrid` method on `DozerDbMemoryAdapter` (added to `MemoryPort` by ADR-085 at Stage 1.3 without an adapter implementation).
+- Authored **ADR-099** (`docs/adrs/ADR-099-stage-7-4-rescope-h1-skipped-search-hybrid-lands.md`, 130 lines, 6 decisions + 4 rejected alternatives) re-scoping Stage 7.4.
+- Landed `LexicalIndex` adapter-scoped Protocol + `InMemoryLexicalIndex` BM25-Okapi test backend (k1=1.5, b=0.75) + `RRF_K = 60` in `adapters/memory/dozerdb/adapter.py`.
+- Landed `DozerDbMemoryAdapter.search_hybrid` per ADR-085 verbatim (RRF fusion, `validate_hybrid_weights` guard, `NotImplementedError` honesty rule, semantic-payload-wins on collision, `min_score` filter on fused score).
+- Wired `write_event` to mirror accepted payloads into the wired `LexicalIndex` (opt-in via `lexical=` kwarg; failures are `log.warning` only).
+- Updated 4 test fakes with `search_hybrid` methods (3 Tektos `_FakeMemoryPort` classes + `ZetesisMemoryStub`) so `isinstance(fake, MemoryPort)` succeeds.
+- Wrote 11 new contract tests at `adapters/memory/dozerdb/test_search_hybrid_contract.py` (Protocol conformance, weight-guard rejection + boundary, honesty rule, write_event mirror, lexical-only fusion, both-legs fusion math, payload preference, `min_score`, corpus, `limit`).
+- Full regression: **1437 passed / 0 failed / 14 skipped in 12.77s** — first Kosmos stage in project history with zero pre-existing failures.
+- Spec fan-out (atomic per `kosmos-spec-diff` §5): `docs/Kosmos-Build-Sequence-v26.md` Stage 7.4 stanza rewritten with LANDED marker; `docs/Kosmos-Build-Spec-v26.md` §25.3 amended with H1-skipped `STATUS AMENDMENT` block; `PORTING_LEDGER.md` `hindsight_bridge` row flipped to `EVALUATED-REJECTED` + 2 new rows added (VENDORED search_hybrid + PLANNED DozerDbLexicalIndex); `docs/adrs/README.md` decision-table row + summary paragraph updated for ADR-099.
+- BUILD_LOG.md entries appended (6 entries covering all Stage 7.4 milestones).
 
 ## Remaining before current Definition of Done
 
-- Stage 6.5 DoD is met. Remaining bookkeeping for this session: `git add` + `git commit` + `git push origin main` — see Exact next action below.
+- None. Stage 7.4 DoD (`search_hybrid` land + 11 new tests green + 6 pre-existing failures resolve + full regression clean) is fully satisfied.
 
 ## Open questions / awaiting user answer
 
-- None. TTS engine selection is intentionally deferred to a Stage 6.5+1 ADR per ADR-097 D3 (blocked on a Coqui MPL-fork benchmark — not on user input).
+- None.
 
 ## Exact next action
 
-```
-cd /home/user/workspace/audit/kosmos-lms && \
-  git add -A && \
-  git commit -m "Stage 6.5: Voice + Vision port-in — STT + Vision adapters, TTS deferred (ADR-096/097/098)" && \
-  git push origin main
-```
-
-After push lands, next work slice per Build-Sequence-v26 is **Stage 7.4** (per user's persistent build ordering); start the new session by reading this file first.
+- Commit + push to GitHub with message: `Stage 7.4: search_hybrid on DozerDbMemoryAdapter — H1 skipped, hybrid RRF fusion lands (ADR-099)`.
+- After push: pick next Stage 7.4+1 slice (real `DozerDbLexicalIndex` Neo4j Lucene fulltext adapter) per Build-Sequence-v26 ordering, OR advance to the next scheduled stage if the user prioritizes forward motion over closing the deferred slice.

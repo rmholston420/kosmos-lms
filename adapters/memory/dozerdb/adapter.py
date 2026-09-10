@@ -27,7 +27,10 @@ Read path:
 from __future__ import annotations
 
 import logging
+import math
+import re
 import uuid
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal, Protocol, runtime_checkable
@@ -38,6 +41,7 @@ from ports.memory import (
     MemoryHit,
     MemoryPort,
     MemoryWriteBlocked,
+    validate_hybrid_weights,
     validate_zero_trust_write,
 )
 from ports.vector import VectorPort
@@ -52,10 +56,17 @@ __all__ = [
     "DozerDbMemoryAdapter",
     "GraphBackend",
     "InMemoryGraphBackend",
+    "InMemoryLexicalIndex",
     "InMemoryTemporalIndex",
+    "LexicalIndex",
     "NoOpAmgPolicy",
     "TemporalIndex",
 ]
+
+# ADR-085 Reciprocal Rank Fusion constant — port-level default, adapters MAY
+# expose a tuned ``k`` via configuration but MUST NOT change the port default.
+RRF_K: int = 60
+
 
 
 log = logging.getLogger(__name__)
@@ -288,6 +299,169 @@ class InMemoryTemporalIndex:
         return None
 
 
+# ── LexicalIndex Protocol + in-memory BM25 test backend (ADR-085 / ADR-099) ──
+
+
+_LEX_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
+
+
+def _lex_tokenize(text: str) -> list[str]:
+    """Tokenize free text for the in-memory BM25 index.
+
+    Lowercased word tokens matching ``[A-Za-z0-9_]+``. Symmetric with the
+    tokenizer a Neo4j Lucene analyser applies to English text at index time,
+    so RRF rank-order agreement between this backend and the real
+    ``DozerDbLexicalIndex`` (Stage 7.4+1) is preserved on ASCII-only corpora.
+    """
+    return [t.lower() for t in _LEX_TOKEN_RE.findall(text or "")]
+
+
+@runtime_checkable
+class LexicalIndex(Protocol):
+    """BM25-shaped lexical retrieval index over the MemoryEvent corpus.
+
+    Real backend: ``DozerDbLexicalIndex`` (wraps a Neo4j Lucene fulltext index
+    over the ``:MemoryEvent`` label; Stage 7.4+1).
+    Test backend: ``InMemoryLexicalIndex`` (pure-Python BM25-Okapi).
+
+    Adapter-scoped Protocol (per ADR-099 D3): composed inside
+    ``DozerDbMemoryAdapter`` and never exposed to plugins directly. Plugins
+    use ``MemoryPort.search_hybrid``, not this Protocol, per ADR-007 +
+    ADR-027.
+    """
+
+    async def index_event(
+        self,
+        event_id: str,
+        payload: dict[str, Any],
+        *,
+        as_of: datetime,
+    ) -> None: ...
+
+    async def search_lexical(
+        self,
+        query: str,
+        *,
+        corpus: str | None,
+        limit: int,
+    ) -> list[MemoryHit]: ...
+
+    async def close(self) -> None: ...
+
+
+@dataclass
+class _LexDoc:
+    id: str
+    payload: dict[str, Any]
+    as_of: datetime
+    corpus: str | None
+    tokens: list[str]
+    length: int
+    tf: Counter[str]
+
+
+class InMemoryLexicalIndex:
+    """Pure-Python BM25-Okapi ``LexicalIndex`` for contract tests (ADR-099 D4).
+
+    Tokenises subject / predicate / object at index time. Scores at query
+    time using BM25-Okapi with ``k1 = 1.5`` and ``b = 0.75``. Returns
+    ``MemoryHit`` objects sorted by score descending, ``score`` populated
+    with the raw BM25 value.
+
+    Corpus filter: ``search_lexical(corpus=X)`` only considers events whose
+    payload ``attributes.corpus_name`` equals ``X`` (or all events when
+    ``corpus is None``).
+    """
+
+    K1: float = 1.5
+    B: float = 0.75
+
+    def __init__(self) -> None:
+        self._docs: dict[str, _LexDoc] = {}
+        self._closed = False
+
+    async def index_event(
+        self,
+        event_id: str,
+        payload: dict[str, Any],
+        *,
+        as_of: datetime,
+    ) -> None:
+        if self._closed:
+            raise RuntimeError("InMemoryLexicalIndex is closed")
+        text_parts = [
+            str(payload.get("subject", "")),
+            str(payload.get("predicate", "")),
+            str(payload.get("object", "")),
+        ]
+        tokens = _lex_tokenize(" ".join(text_parts))
+        corpus = (payload.get("attributes") or {}).get("corpus_name")
+        self._docs[event_id] = _LexDoc(
+            id=event_id,
+            payload=dict(payload),
+            as_of=as_of,
+            corpus=corpus,
+            tokens=tokens,
+            length=len(tokens),
+            tf=Counter(tokens),
+        )
+
+    async def search_lexical(
+        self,
+        query: str,
+        *,
+        corpus: str | None,
+        limit: int,
+    ) -> list[MemoryHit]:
+        if not query:
+            return []
+        q_tokens = _lex_tokenize(query)
+        if not q_tokens:
+            return []
+        pool = [
+            d
+            for d in self._docs.values()
+            if corpus is None or d.corpus == corpus
+        ]
+        if not pool:
+            return []
+        n = len(pool)
+        avgdl = sum(d.length for d in pool) / n if n else 0.0
+        # BM25-Okapi IDF: log((N - df + 0.5) / (df + 0.5) + 1). +1 keeps IDF
+        # non-negative for terms present in most docs.
+        df: Counter[str] = Counter()
+        for d in pool:
+            for term in set(q_tokens):
+                if d.tf.get(term, 0) > 0:
+                    df[term] += 1
+        idf = {
+            term: math.log(((n - df.get(term, 0) + 0.5) / (df.get(term, 0) + 0.5)) + 1.0)
+            for term in set(q_tokens)
+        }
+        scored: list[tuple[float, _LexDoc]] = []
+        for d in pool:
+            if d.length == 0:
+                continue
+            score = 0.0
+            for term in q_tokens:
+                tf = d.tf.get(term, 0)
+                if tf == 0:
+                    continue
+                numer = tf * (self.K1 + 1.0)
+                denom = tf + self.K1 * (1.0 - self.B + self.B * (d.length / avgdl))
+                score += idf[term] * (numer / denom)
+            if score > 0.0:
+                scored.append((score, d))
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        return [
+            MemoryHit(id=d.id, payload=dict(d.payload), score=score, as_of=d.as_of)
+            for score, d in scored[:limit]
+        ]
+
+    async def close(self) -> None:
+        self._closed = True
+
+
 # ── DozerDbMemoryAdapter ────────────────────────────────────────────────────
 
 
@@ -323,6 +497,7 @@ class DozerDbMemoryAdapter:
         temporal: TemporalIndex,
         embeddings: EmbeddingsPort | None = None,
         vector: VectorPort | None = None,
+        lexical: LexicalIndex | None = None,
         default_corpus: str | None = None,
     ) -> None:
         self._graph = graph
@@ -338,6 +513,11 @@ class DozerDbMemoryAdapter:
                 embeddings=embeddings,
                 vector=vector,
             )
+        # ADR-099 D3: optional lexical retrieval lane. When absent,
+        # ``search_hybrid`` MUST raise ``NotImplementedError`` per
+        # ADR-085 (no silent degrade to semantic-only). When present,
+        # ``write_event`` mirrors every accepted write into the index.
+        self._lexical: LexicalIndex | None = lexical
         self._default_corpus = default_corpus
         self._state = _AdapterOptions()
 
@@ -428,6 +608,22 @@ class DozerDbMemoryAdapter:
                 corpus=corpus,
                 as_of=written_at,
             )
+
+        # 6. Lexical index lane (ADR-099 D3). Optional side effect; failures
+        #    are logged but do not affect the primary write. Mirrors the
+        #    semantic lane's ADR-074 D3 opt-in shape.
+        if self._lexical is not None:
+            try:
+                await self._lexical.index_event(
+                    event_id,
+                    payload,
+                    as_of=written_at,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "DozerDbMemoryAdapter.write_event: lexical index failed: %s",
+                    exc,
+                )
 
         return MemoryEventId(id=event_id, written_at=written_at)
 
@@ -526,6 +722,103 @@ class DozerDbMemoryAdapter:
             limit=limit,
             min_score=min_score,
         )
+
+    async def search_hybrid(
+        self,
+        query: str,
+        *,
+        corpus: str | None = None,
+        limit: int = 20,
+        lexical_weight: float = 0.5,
+        semantic_weight: float = 0.5,
+        min_score: float = 0.0,
+    ) -> list[MemoryHit]:
+        """Hybrid lexical + semantic retrieval via RRF (ADR-085 / ADR-099 D2).
+
+        Fuses ``LexicalIndex.search_lexical`` with ``search_semantic`` via
+        Reciprocal Rank Fusion with constant ``k = RRF_K`` (60). Weights
+        MUST sum to 1.0 (enforced by ``ports.memory.validate_hybrid_weights``
+        — non-bypassable). ``min_score`` filters on the fused score.
+
+        Raises:
+            ValueError: port-level weight guard failed.
+            NotImplementedError: this adapter has no wired ``LexicalIndex``
+                (ADR-085 — no silent degrade to semantic-only).
+        """
+        # 1. Non-bypassable port-level guard.
+        validate_hybrid_weights(lexical_weight, semantic_weight)
+
+        # 2. Honesty rule (ADR-085): raise, do not silently degrade.
+        if self._lexical is None:
+            raise NotImplementedError(
+                "DozerDbMemoryAdapter.search_hybrid requires a LexicalIndex "
+                "(ADR-085; wire one via the `lexical=` kwarg)."
+            )
+
+        resolved_corpus = corpus or self._default_corpus
+
+        # 3. Run both retrieval legs. The semantic leg tolerates being
+        #    unwired — collapses to an empty list under ADR-074 D3.
+        lex_hits = await self._lexical.search_lexical(
+            query,
+            corpus=resolved_corpus,
+            limit=limit,
+        )
+        sem_hits = await self.search_semantic(
+            query,
+            corpus=resolved_corpus,
+            limit=limit,
+            min_score=0.0,  # filtering happens post-fusion on fused score.
+        )
+
+        # 4. Reciprocal Rank Fusion. rrf(r) = 1 / (RRF_K + r) with r 1-indexed.
+        lex_rank = {h.id: i + 1 for i, h in enumerate(lex_hits)}
+        sem_rank = {h.id: i + 1 for i, h in enumerate(sem_hits)}
+
+        # 5. Payload preference: semantic > lexical (semantic-side payload
+        #    carries the fuller shape that ``SemanticMemoryPath`` produces).
+        payload_by_id: dict[str, dict[str, Any]] = {
+            h.id: dict(h.payload) for h in lex_hits
+        }
+        for h in sem_hits:
+            payload_by_id[h.id] = dict(h.payload)
+
+        as_of_by_id: dict[str, datetime | None] = {
+            h.id: h.as_of for h in lex_hits
+        }
+        for h in sem_hits:
+            as_of_by_id[h.id] = h.as_of
+
+        fused: list[tuple[float, str]] = []
+        for event_id in payload_by_id:
+            lex_score = (
+                1.0 / (RRF_K + lex_rank[event_id])
+                if event_id in lex_rank
+                else 0.0
+            )
+            sem_score = (
+                1.0 / (RRF_K + sem_rank[event_id])
+                if event_id in sem_rank
+                else 0.0
+            )
+            score = (
+                float(lexical_weight) * lex_score
+                + float(semantic_weight) * sem_score
+            )
+            if score >= min_score:
+                fused.append((score, event_id))
+
+        fused.sort(key=lambda pair: pair[0], reverse=True)
+
+        return [
+            MemoryHit(
+                id=event_id,
+                payload=payload_by_id[event_id],
+                score=score,
+                as_of=as_of_by_id.get(event_id),
+            )
+            for score, event_id in fused[:limit]
+        ]
 
     # ── lifecycle ───────────────────────────────────────────────────────
 

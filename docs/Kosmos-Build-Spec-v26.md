@@ -705,9 +705,11 @@ The Kosmos Next.js shell (`ui/`, Next 16.2.11) hosts the Tektos Next.js UI (`plu
 
 ### 25.3 Hindsight decision (H1 → H2)
 
-**H1 (Stages 3–5):** Tektos-Ultima's hindsight service runs as-is (fixing the source `:9177` default to `:9000` at port-in), fronted by `adapters/memory/hindsight_bridge/` implementing `MemoryPort`. This preserves Tektos's read/write path without forcing a data migration on day one and keeps DozerDB as the canonical Kosmos store per ADR-008/027.
+> **STATUS AMENDMENT (2026-09-10, ADR-099):** H1 was never built. Through Stages 3–5, `plugins/tektos/` consumed `MemoryPort` directly via the DozerDB adapter with no bridge in between — `adapters/memory/hindsight_bridge/` was never created, no code ever imported it, and `pyproject.toml` never referenced it. The H1 detour is retired **on paper only** — there is no repo state to change. The `PORTING_LEDGER` `hindsight_bridge` row moves from `PLANNED (Stage 3-5)` to `EVALUATED-REJECTED (Stage 3-5, H1 skipped)`. Stage 7.4 (originally chartered to run the H1→H2 migration) is re-scoped by ADR-099 to land `MemoryPort.search_hybrid` on `DozerDbMemoryAdapter` — the substantive work H2 was meant to enable. Reserved-port row for `:9000` (below) is retained as a **reserved-not-used** allocation for historical reference; no service will ever be bound there.
 
-**H2 (Stage 7.4 migration):** Hindsight data migrated into DozerDB; `hindsight_bridge` adapter retired; all Tektos reads/writes go direct to `MemoryPort`'s DozerDB adapter. ADR-085 (`MemoryPort.search_hybrid`) provides the semantic+lexical retrieval surface Tektos needs post-migration.
+**H1 (originally: Stages 3–5) — SKIPPED:** Tektos-Ultima's hindsight service was to run as-is (fixing the source `:9177` default to `:9000` at port-in), fronted by `adapters/memory/hindsight_bridge/` implementing `MemoryPort`. This was intended to preserve Tektos's read/write path without forcing a data migration on day one and keep DozerDB as the canonical Kosmos store per ADR-008/027. In practice, the Stage 3–5 slices went direct-to-DozerDB and the bridge was never necessary.
+
+**H2 (originally: Stage 7.4 migration) — SUBSUMED into direct-H2 through Stages 3–5; hybrid retrieval lands at Stage 7.4 per ADR-099:** No hindsight-to-DozerDB migration was required (there was no hindsight data to migrate). ADR-085 (`MemoryPort.search_hybrid`) provides the semantic+lexical retrieval surface Tektos needs; ADR-099 lands that surface on `DozerDbMemoryAdapter` at Stage 7.4 alongside `LexicalIndex` (adapter-scoped Protocol) + `InMemoryLexicalIndex` BM25 test backend. The real `DozerDbLexicalIndex` (Neo4j Lucene fulltext) is deferred to Stage 7.4+1.
 
 ### 25.4 Provenance taxonomy
 
@@ -756,10 +758,10 @@ Tektos ports reserved on Colossus loopback:
 | 8020 | Tektos backend HTTP API | `plugins/tektos/runtime/` |
 | 8765 | Gateway WebSocket proxy | `adapters/event_bus/tektos_gateway/` |
 | 5556 | Tektos frontend dev server | `plugins/tektos/frontend/` |
-| 8095 | llama-server (hindsight embedder) | `adapters/memory/hindsight_bridge/` |
-| 9000 | Hindsight API (H1 only; retired at H2) | `adapters/memory/hindsight_bridge/` |
+| 8095 | llama-server (hindsight embedder; reserved-not-used per ADR-099) | (never wired) |
+| 9000 | Hindsight API (reserved-not-used; H1 skipped per ADR-099) | (never wired) |
 
-**Bug fix at port-in:** Tektos-Ultima's `HindsightConfig` default port was `:9177`. The correct hindsight-API port is `:9000`. Fix lands as part of the `hindsight_bridge` adapter; a `DEBUG_LOG.md` entry records the diagnosis.
+**Bug fix at port-in — obsolete per ADR-099:** Tektos-Ultima's `HindsightConfig` default port was `:9177`. The correct hindsight-API port would have been `:9000`. Because H1 was skipped and the `hindsight_bridge` adapter was never built, this fix was never triggered; the source-side bug is out of Kosmos's scope. Retained here for historical traceability only.
 
 Thermal thresholds (Colossus RTX 5090 liquid-cooled) enforced by `ThermalPort`:
 

@@ -89,6 +89,23 @@ class ZetesisMemoryStub:
         # the DozerDB adapter; this stub exists only for wiring tests).
         return []
 
+    async def search_hybrid(
+        self,
+        query: str,
+        *,
+        corpus: str | None = None,
+        limit: int = 20,
+        lexical_weight: float = 0.5,
+        semantic_weight: float = 0.5,
+        min_score: float = 0.0,
+    ) -> list:
+        # ADR-085 / ADR-099 added search_hybrid to MemoryPort. Per the
+        # ADR-085 rule, adapters without a lexical index MUST raise
+        # NotImplementedError — no silent degrade to semantic-only.
+        # Zetesis's real hybrid lane will land when a DozerDB LexicalIndex
+        # is wired at kernel boot (Stage 7.4+1).
+        raise NotImplementedError(self._MSG)
+
     def is_healthy(self) -> bool:
         return False
 

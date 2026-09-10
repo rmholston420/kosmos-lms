@@ -168,6 +168,13 @@ class _FakeMemoryPort:
         # ADR-074 D1 added search_semantic to MemoryPort; fake degrades to [].
         return []
 
+    async def search_hybrid(self, *args: Any, **kwargs: Any) -> list:
+        # ADR-085 / ADR-099 added search_hybrid to MemoryPort. Stage 3.1 must
+        # not call it — raise so silent misuse surfaces immediately.
+        raise NotImplementedError(
+            "Stage 3.1 must not call MemoryPort.search_hybrid"
+        )
+
     def is_healthy(self) -> bool:
         return True
 

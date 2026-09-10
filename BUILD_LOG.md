@@ -3742,3 +3742,57 @@ Use the `kosmos-log-maintenance` Perplexity Computer skill.
 - **Ports / adapters affected:** none (documentation reflects live state)
 - **PORTING_LEDGER / ADR updated:** 10 new rows appended; ADR-096/097/098 indexed
 - **Stop-condition status:** met — spec §17 ADR summary agrees with each ADR file; Build-Sequence-v26 Stage 6.5 stanza agrees with PORTING_LEDGER rows; no revival of archived spec positions; no ADR conflicts introduced
+
+## 2026-09-10 03:22 EDT — Stage 7.4 charter/reality mismatch discovered → ADR-099 authored
+
+- **Stage / plugin / port:** Stage 7.4 · `MemoryPort` · `DozerDbMemoryAdapter` · Governance
+- **What changed:** Read `docs/Kosmos-Build-Sequence-v26.md` Stage 7.4 stanza (lines 527-531) which chartered "hindsight migration H1→H2 + retire `adapters/memory/hindsight_bridge/` + release port :9000". Verified with grep + fs inspection that **H1 was never built**: `adapters/memory/hindsight_bridge/` directory does not exist; `PORTING_LEDGER.md` line 471 still says `PLANNED (Stage 3-5)`; no imports of hindsight anywhere in the codebase; no `pyproject.toml` entry. Ran the failing `test_adapter_isinstance_memoryport` in `adapters/memory/dozerdb/test_contract.py` to confirm the actual root cause of the 6 pre-existing failures: `DozerDbMemoryAdapter` does not implement `MemoryPort.search_hybrid` (added by ADR-085 at Stage 1.3). Made informed call per user preference ("informed optimal choices and forward progress without repeated decision prompts") to re-scope Stage 7.4: retire H1 detour on paper only, land `search_hybrid` on `DozerDbMemoryAdapter` per ADR-085 verbatim. Authored `docs/adrs/ADR-099-stage-7-4-rescope-h1-skipped-search-hybrid-lands.md` (130 lines) locking 6 decisions + 4 rejected alternatives.
+- **Files touched:** `docs/adrs/ADR-099-stage-7-4-rescope-h1-skipped-search-hybrid-lands.md` (NEW)
+- **Ports / adapters affected:** none yet (planning entry)
+- **PORTING_LEDGER / ADR updated:** ADR-099 authored; ledger update in a later entry
+- **Stop-condition status:** met — ADR filed before implementation began
+
+## 2026-09-10 03:24 EDT — `LexicalIndex` Protocol + `InMemoryLexicalIndex` BM25 backend + `RRF_K` land in dozerdb adapter
+
+- **Stage / plugin / port:** Stage 7.4 · `MemoryPort` · `LexicalIndex` (adapter-scoped Protocol)
+- **What changed:** Added `math`/`re`/`Counter` imports to `adapters/memory/dozerdb/adapter.py`; imported `validate_hybrid_weights` from `ports.memory`; expanded `__all__` to expose `LexicalIndex`/`InMemoryLexicalIndex`/`RRF_K`; added module-level `RRF_K = 60` constant matching ADR-085 formula; added `_LEX_TOKEN_RE` + `_lex_tokenize` helper (case-fold, `[a-z0-9]+` matcher); added `LexicalIndex` Protocol with `@runtime_checkable` (methods: `index_event(event_id, payload, *, as_of)`, `search_lexical(query, *, corpus, limit)`, `close()`, `is_healthy()`); added `_LexDoc` dataclass + `InMemoryLexicalIndex` class implementing BM25-Okapi (k1=1.5, b=0.75) — mean length recomputed lazily on writes, `attributes.corpus_name` filter honoured, deterministic tie-break on doc-id lexicographic order. `LexicalIndex` is NOT a formal port under `ports/` — it sits inside the DozerDB adapter package symmetric with `GraphBackend` + `TemporalIndex` (ADR-099 D3; ADR-007 + ADR-027 forbid plugin bypass of `MemoryPort`).
+- **Files touched:** `adapters/memory/dozerdb/adapter.py`, `adapters/memory/dozerdb/__init__.py`
+- **Ports / adapters affected:** `LexicalIndex` Protocol (adapter-scoped) added; DozerDB adapter package surface expanded
+- **PORTING_LEDGER / ADR updated:** ADR-099 (referenced); ledger row lands in a later entry
+- **Stop-condition status:** met — Protocol added with `@runtime_checkable`, contract test asserts `isinstance(InMemoryLexicalIndex(), LexicalIndex)`
+
+## 2026-09-10 03:26 EDT — `DozerDbMemoryAdapter.search_hybrid` lands + `write_event` mirrors into `LexicalIndex`
+
+- **Stage / plugin / port:** Stage 7.4 · `MemoryPort.search_hybrid` · `DozerDbMemoryAdapter`
+- **What changed:** Added `lexical: LexicalIndex | None = None` kwarg to `DozerDbMemoryAdapter.__init__` (mirrors the ADR-074 optional-dependency pattern for embeddings/vector); stored `self._lexical`; added `search_hybrid(query, *, corpus, limit, lexical_weight, semantic_weight, min_score) -> list[MemoryHit]` method implementing ADR-085 verbatim — `validate_hybrid_weights` called first (non-bypassable port-level guard), raises `NotImplementedError` when `self._lexical is None` (ADR-085 honesty rule — no silent degrade), runs lexical + semantic legs, fuses with RRF (`score = lw * 1/(RRF_K + rank_lex) + sw * 1/(RRF_K + rank_sem)`, missing legs contribute 0), merges by hit.id (semantic payload wins on collision — semantic side carries the richer `SemanticMemoryPath` shape), filters by `min_score` on the fused score, truncates to `limit`. Wired lexical mirror side-effect into `write_event` after the semantic upsert (opt-in per ADR-099 D3; failures are `log.warning` only, never propagate — preserves write durability). Updated `adapters/memory/dozerdb/__init__.py` to export `LexicalIndex`, `InMemoryLexicalIndex`, `RRF_K`.
+- **Files touched:** `adapters/memory/dozerdb/adapter.py`, `adapters/memory/dozerdb/__init__.py`
+- **Ports / adapters affected:** `DozerDbMemoryAdapter` now conforms to full `MemoryPort` Protocol (including `search_hybrid`)
+- **PORTING_LEDGER / ADR updated:** ADR-099 (referenced); ledger row lands in a later entry
+- **Stop-condition status:** met — `test_adapter_isinstance_memoryport` passes; existing 42 DozerDB contract tests still green
+
+## 2026-09-10 03:28 EDT — Plugin `FakeMemoryPort` stubs + `ZetesisMemoryStub` updated for `search_hybrid` conformance
+
+- **Stage / plugin / port:** Stage 7.4 · `MemoryPort` conformance · Tektos + Zetesis test fakes
+- **What changed:** Added `search_hybrid` method to three Tektos test fakes (`plugins/tektos/tests/test_openspec.py::_FakeMemoryPort`, `plugins/tektos/tests/test_repomap.py::_FakeMemoryPort`, `plugins/tektos/tests/test_tektos_agent.py::_FakeMemoryPort`) — all raise `NotImplementedError` on the "Stage 3.1/repomap/openspec tests must not call MemoryPort.search_hybrid" contract, matching each fake's existing raising-stub convention for out-of-scope methods. Added `search_hybrid` method to `plugins/zetesis/adapters/memory_stub.py::ZetesisMemoryStub` raising `NotImplementedError(self._MSG)` per ADR-085 honesty rule (no silent degrade to semantic-only). Confirmed the four fakes in excluded test suites (`test_deepswe_corpus`, `test_pier_eval`, `test_stage_3_12_exit_gate`, `test_plan_renderer`) do NOT isinstance-check `MemoryPort` — left alone for a future default-suite re-inclusion pass.
+- **Files touched:** `plugins/tektos/tests/test_openspec.py`, `plugins/tektos/tests/test_repomap.py`, `plugins/tektos/tests/test_tektos_agent.py`, `plugins/zetesis/adapters/memory_stub.py`
+- **Ports / adapters affected:** none directly; test-fake conformance restored
+- **PORTING_LEDGER / ADR updated:** ADR-099 (referenced)
+- **Stop-condition status:** met — all 5 previously-failing `is_runtime_memoryport`/`protocol_conformant` tests now green
+
+## 2026-09-10 03:30 EDT — `search_hybrid` contract tests + full regression clean
+
+- **Stage / plugin / port:** Stage 7.4 · `DozerDbMemoryAdapter.search_hybrid` · Contract
+- **What changed:** Created `adapters/memory/dozerdb/test_search_hybrid_contract.py` (11 tests, ~380 lines): `LexicalIndex` Protocol conformance for `InMemoryLexicalIndex`; weight-guard rejection of `0.7 + 0.7`; weight-guard boundary acceptance of `(1.0, 0.0)` and `(0.0, 1.0)`; `NotImplementedError` raised when `lexical=None`; `write_event` mirrors accepted payload into wired `InMemoryLexicalIndex`; lexical-only path returns hits ordered by `rrf(rank)`; both-legs fusion math with a `_StubSemanticPath` producing a DIFFERENT ranking than the lexical leg — asserts the ADR-085 formula verbatim per hit `{id-A, id-B, id-C}`; payload preference on id collision (semantic wins); `min_score` filters on fused score (not per-leg); `corpus` propagates to the lexical leg; `limit` truncates the fused output. Full regression suite executed with the standard 5 opt-in excludes: **1437 passed / 0 failed / 14 skipped in 12.77s**. Baseline pre-Stage-7.4 was 1420 passed / 6 failed / 14 skipped; delta = +11 new contract tests + 6 pre-existing failures resolved = +17 net passing tests. **This is the first Kosmos stage in the project's history to reach zero pre-existing failures.**
+- **Files touched:** `adapters/memory/dozerdb/test_search_hybrid_contract.py` (NEW)
+- **Ports / adapters affected:** contract discipline restored for `MemoryPort.search_hybrid`
+- **PORTING_LEDGER / ADR updated:** ADR-099 (referenced); ledger row lands in the next entry
+- **Stop-condition status:** met — 11 new tests green, full regression green
+
+## 2026-09-10 03:32 EDT — Spec fan-out (Build-Sequence-v26 · Build-Spec-v26 · PORTING_LEDGER · ADRs README)
+
+- **Stage / plugin / port:** Stage 7.4 · Governance · Documentation
+- **What changed:** Rewrote `docs/Kosmos-Build-Sequence-v26.md` Stage 7.4 stanza with LANDED marker (2026-09-10 · ADR-099), `STATUS AMENDMENT` block explaining the H1-skipped / re-scope reasoning, new bullets for Ports touched / What lands (detailed) / DoD (with 1437-passed numbers) / Explicit exclusions (real `DozerDbLexicalIndex` at Stage 7.4+1) / ADRs referenced. Amended `docs/Kosmos-Build-Spec-v26.md` §25.3 with a `STATUS AMENDMENT (2026-09-10, ADR-099)` block explaining H1 was never built + Stage 7.4 lands `search_hybrid` in its place; annotated H1 as SKIPPED and H2 as SUBSUMED into direct-H2 through Stages 3–5; retained port :9000 + :8095 rows but flagged both as `reserved-not-used` per ADR-099; annotated the port-in bug-fix note as obsolete. Flipped `PORTING_LEDGER.md` `hindsight_bridge` row from `PLANNED (Stage 3-5)` to `EVALUATED-REJECTED (Stage 3-5, H1 skipped)` with ADR-099 reference and expanded modifications rationale; added new `VENDORED (Stage 7.4)` row for `DozerDB hybrid retrieval (search_hybrid + InMemoryLexicalIndex)` detailing the RRF formula + optional-dep pattern + `LexicalIndex` adapter-scoped Protocol positioning; added new `PLANNED (Stage 7.4+1)` row for `DozerDbLexicalIndex` (real Neo4j Lucene fulltext adapter). Inserted ADR-099 row into `docs/adrs/README.md` decision table (Ratified 2026-09-10, Stage 7.4) with full 6-decision + rejected-alternatives summary. Updated the "Remaining open decisions" summary paragraph to note that Stage 7.4 lands ADR-099. All four fan-out targets updated atomically per `kosmos-spec-diff` §5.
+- **Files touched:** `docs/Kosmos-Build-Sequence-v26.md`, `docs/Kosmos-Build-Spec-v26.md`, `PORTING_LEDGER.md`, `docs/adrs/README.md`
+- **Ports / adapters affected:** none (documentation reflects live state)
+- **PORTING_LEDGER / ADR updated:** 3 ledger rows (1 status change + 2 new); ADR-099 indexed
+- **Stop-condition status:** met — spec §17/§25.3 agrees with ADR-099 body; Build-Sequence-v26 Stage 7.4 stanza agrees with PORTING_LEDGER; no revival of archived spec positions; no ADR conflicts

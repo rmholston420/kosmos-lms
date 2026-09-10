@@ -8,8 +8,11 @@ from adapters.memory.dozerdb.adapter import (
     DozerDbMemoryAdapter,
     GraphBackend,
     InMemoryGraphBackend,
+    InMemoryLexicalIndex,
     InMemoryTemporalIndex,
+    LexicalIndex,
     NoOpAmgPolicy,
+    RRF_K,
     TemporalIndex,
 )
 from adapters.memory.dozerdb.amg_policy import AmgGuardPolicy, AmgV02Policy
@@ -30,7 +33,10 @@ __all__ = [
     "DozerDbMemoryAdapter",
     "GraphBackend",
     "InMemoryGraphBackend",
+    "InMemoryLexicalIndex",
     "InMemoryTemporalIndex",
+    "LexicalIndex",
     "NoOpAmgPolicy",
+    "RRF_K",
     "TemporalIndex",
 ]

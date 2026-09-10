@@ -143,6 +143,11 @@ class _FakeMemoryPort:
         # ADR-074 D1 added search_semantic to MemoryPort; fake degrades to [].
         return []
 
+    async def search_hybrid(self, *args: Any, **kwargs: Any) -> list:
+        # ADR-085 / ADR-099 added search_hybrid to MemoryPort. Repomap tests
+        # must not depend on hybrid retrieval — raise on any misuse.
+        raise NotImplementedError
+
     def is_healthy(self) -> bool:
         return True
 
