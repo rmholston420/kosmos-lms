@@ -50,6 +50,10 @@ from plugins.tektos.models import (
     TektosMessageRole,
     TektosStep,
 )
+from plugins.tektos.tools.registry import (
+    TektosToolRegistry,
+    ToolApprovalDenied,
+)
 
 __all__ = ["TektosAgent", "TEKTOS_MEMORY_PREDICATE"]
 
@@ -93,6 +97,12 @@ class TektosAgent:
     mcp: MCPPort | None = None
     apex: ApprovalGatewayPort | None = None
     trace_feed: TraceFeedPort | None = None
+    # Stage 4.8 · ADR-094 §D1 — optional delegation onto the unified
+    # Stage-4.7 tool substrate. When set, ``call_tool`` delegates to
+    # ``tool_registry.invoke`` (which routes through SandboxPort +
+    # runs pre-approval detectors). When ``None`` (the Stage-3.2
+    # construction path), the legacy inline flow is preserved unchanged.
+    tool_registry: TektosToolRegistry | None = None
 
     _pending: TektosMessage | None = field(default=None, init=False, repr=False)
     _turn_id: str | None = field(default=None, init=False, repr=False)
@@ -265,6 +275,13 @@ class TektosAgent:
             RuntimeError: if ``mcp`` or ``apex`` was not injected.
             TektosToolCallPending: if the mapped tier requires human review.
         """
+        # Stage 4.8 · ADR-094 §D1 — delegation path.
+        if self.tool_registry is not None:
+            return await self._call_tool_via_registry(
+                name=name,
+                arguments=arguments,
+                turn_id=turn_id,
+            )
         if self.mcp is None:
             raise RuntimeError(
                 "TektosAgent.call_tool requires an MCPPort; "
@@ -353,3 +370,96 @@ class TektosAgent:
             tool_result=result,
             approval_id=approval_id,
         )
+
+    # ── Stage 4.8 · ADR-094 §D1 delegation helper ────────────────────
+
+    async def _call_tool_via_registry(
+        self,
+        *,
+        name: str,
+        arguments: dict[str, Any],
+        turn_id: str | None,
+    ) -> TektosStep:
+        """Delegate ``call_tool`` to the Stage-4.7 TektosToolRegistry.
+
+        Preserves the ``TektosStep`` return shape so downstream callers
+        (and Stage 3.2 tests) see the same envelope. The registry emits
+        its own ``tektos.tool.invoked`` / ``tektos.tool.completed``
+        envelopes; this method still writes a MemoryPort event with the
+        Stage-3.2 ``TEKTOS_TOOL_PREDICATE`` so continuity with the
+        legacy inline flow is intact.
+        """
+        assert self.tool_registry is not None  # gated by caller
+        effective_turn_id = turn_id or f"tektos-turn-{uuid4()}"
+        try:
+            sandbox_result = await self.tool_registry.invoke(
+                name,
+                arguments,
+                intention_id=effective_turn_id,
+                proposing_domain="tektos",
+            )
+        except ToolApprovalDenied as exc:
+            # Preserve the Stage-3.2 semantic surface: surface denials
+            # from the registry (approval-gate REJECTED / REVIEW_MISSED,
+            # or a pre-approval detector block) as the same class
+            # legacy callers already handle.
+            raise TektosToolCallPending(
+                (
+                    f"tool {name!r} denied by tool_registry "
+                    f"(status={exc.status.value}, reason={exc.reason or 'n/a'})"
+                ),
+                approval_id=exc.approval_id or "",
+                tool_name=name,
+            ) from exc
+
+        # Wrap the SandboxResult into an MCPToolResult-shaped payload so
+        # TektosStep.tool_result stays a stable duck-typed object.
+        tool_result = _sandbox_result_to_tool_result(
+            tool_name=name, result=sandbox_result
+        )
+
+        event_id = await self.memory.write_event(
+            subject=self.subject,
+            predicate=TEKTOS_TOOL_PREDICATE,
+            object=name,
+            provenance=TEKTOS_AGENT_PROVENANCE,
+            confidence=self.confidence,
+            attributes={
+                "turn_id": effective_turn_id,
+                "tool_name": name,
+                "tool_arguments": dict(arguments),
+                "is_error": bool(sandbox_result.exit_code),
+                "exit_code": sandbox_result.exit_code,
+                "delegated_to": "tektos_tool_registry",
+            },
+        )
+
+        return TektosStep(
+            turn_id=effective_turn_id,
+            prompt="",
+            response="",
+            memory_event_id=event_id.id,
+            confidence=self.confidence,
+            llm_model=None,
+            llm_raw=None,
+            tool_name=name,
+            tool_arguments=dict(arguments),
+            tool_result=tool_result,
+            approval_id="",  # registry-owned; envelope carries invocation_id
+        )
+
+
+def _sandbox_result_to_tool_result(
+    *, tool_name: str, result: Any
+) -> MCPToolResult:
+    """Adapt SandboxResult → MCPToolResult for TektosStep continuity."""
+    return MCPToolResult(
+        tool_name=tool_name,
+        content=(
+            {
+                "type": "text",
+                "text": (getattr(result, "stdout", "") or ""),
+            },
+        ),
+        is_error=bool(getattr(result, "exit_code", 0)),
+    )

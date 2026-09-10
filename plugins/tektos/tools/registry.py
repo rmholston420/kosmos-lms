@@ -40,6 +40,8 @@ from ports.approval import (
     ChangeApprovalTier,
 )
 from ports.event_envelope import EventEnvelope
+from ports.immune import Detector, ImmuneScanRequest
+from ports.memory import MemoryPort
 from ports.sandbox import (
     SandboxLimits,
     SandboxNetworkPolicy,
@@ -99,6 +101,13 @@ class ToolDescriptor:
     max_memory_mb: int = 256
     max_cpu_percent: int = 100
     enabled: bool = True
+    # Stage 4.8 · ADR-094 §D3: optional immune-scan kind. When set, the
+    # ``TektosToolRegistry.invoke`` pre-approval detector loop passes
+    # ``ImmuneScanRequest.kind = scan_kind`` so detectors can filter by
+    # tool category (e.g. ``"tektos.tool.filesystem"``). None disables
+    # detector routing for that descriptor (detectors still run but only
+    # respond to their default kind).
+    scan_kind: str | None = None
 
 
 class _EventBusLike(Protocol):
@@ -122,6 +131,9 @@ class TektosToolRegistry:
         sandbox: SandboxPort,
         event_bus: _EventBusLike | None = None,
         approval_timeout_seconds: int | None = None,
+        pre_approval_detectors: tuple[Detector, ...] = (),
+        memory: MemoryPort | None = None,
+        detector_scan_source: str = "tektos",
     ) -> None:
         self._approval_gateway = approval_gateway
         self._approval_resolver = approval_resolver
@@ -133,6 +145,23 @@ class TektosToolRegistry:
             if approval_timeout_seconds is not None
             else self._DEFAULT_APPROVAL_TIMEOUT_SECONDS
         )
+        # Stage 4.8 · ADR-094 §D3: pre-approval detectors run before
+        # ApprovalGatewayPort.propose. Any severity="block" hit publishes
+        # immune.verdict.block + writes MemoryPort + publishes
+        # tektos.tool.denied, then raises. ``memory`` is required only
+        # when detectors are registered (immune-verdict writes need it
+        # per ADR-079 rule 2).
+        self._pre_approval_detectors: tuple[Detector, ...] = tuple(
+            pre_approval_detectors
+        )
+        self._memory = memory
+        self._detector_scan_source = detector_scan_source
+        if self._pre_approval_detectors and self._memory is None:
+            raise ValueError(
+                "TektosToolRegistry: pre_approval_detectors require a "
+                "MemoryPort (ADR-079 rule 2 — block verdicts MUST write "
+                "MemoryPort with provenance='immune_verdict' + confidence=1.0)."
+            )
 
     # ── Registration ──────────────────────────────────────────────────
 
@@ -175,8 +204,25 @@ class TektosToolRegistry:
         except JsonSchemaValidationError as exc:
             raise ValueError(f"invalid arguments for tool {tool_name!r}: {exc}") from exc
 
-        # 2. Publish `tektos.tool.invoked` before the approval gate.
         invocation_id = f"toolcall-{uuid.uuid4().hex[:12]}"
+
+        # 1.5. Stage 4.8 · ADR-094 §D3 — pre-approval detectors.
+        #      Runs BEFORE the ApprovalGatewayPort.propose so a malicious
+        #      input never reaches the approval queue. Detector kind is
+        #      the descriptor's declared ``scan_kind`` when set, else the
+        #      generic ``"tektos.tool.invocation"`` (backwards-compatible
+        #      with any Stage 4.7 tests that constructed the registry
+        #      without detectors).
+        if self._pre_approval_detectors:
+            await self._run_pre_approval_detectors(
+                descriptor=descriptor,
+                arguments=arguments,
+                invocation_id=invocation_id,
+                intention_id=intention_id,
+                proposing_domain=proposing_domain,
+            )
+
+        # 2. Publish `tektos.tool.invoked` before the approval gate.
         await self._publish(
             "tektos.tool.invoked",
             correlation_id=invocation_id,
@@ -339,6 +385,114 @@ class TektosToolRegistry:
             sleep_for = max(0.0, sleep_for + random.uniform(0, self._POLL_JITTER_SECONDS))
             await asyncio.sleep(sleep_for)
             interval = min(interval * 1.5, self._POLL_MAX_INTERVAL_SECONDS)
+
+    async def _run_pre_approval_detectors(
+        self,
+        *,
+        descriptor: ToolDescriptor,
+        arguments: Mapping[str, Any],
+        invocation_id: str,
+        intention_id: str,
+        proposing_domain: str,
+    ) -> None:
+        """Scan the invocation via every registered detector.
+
+        On any ``severity="block"`` hit:
+        - Publishes ``immune.verdict.block`` envelope (ADR-079 rule 1).
+        - Writes ``MemoryPort`` with ``provenance='immune_verdict'`` +
+          ``confidence=1.0`` (ADR-079 rule 2).
+        - Publishes ``tektos.tool.denied`` with ``denial_reason``.
+        - Raises ``ToolApprovalDenied`` (or the detector-specific
+          subclass callers may register in the future).
+        """
+        scan_kind = descriptor.scan_kind or "tektos.tool.invocation"
+        scan_payload: dict[str, Any] = {
+            "tool_name": descriptor.name,
+            "arguments": dict(arguments),
+            "intention_id": intention_id,
+            "proposing_domain": proposing_domain,
+        }
+        request = ImmuneScanRequest(
+            payload=scan_payload,
+            kind=scan_kind,
+            source_plugin=self._detector_scan_source,
+        )
+
+        for detector in self._pre_approval_detectors:
+            hits = await detector.evaluate(request)
+            for hit in hits:
+                if hit.severity != "block":
+                    continue
+                # ADR-079 rule 1: publish immune.verdict.block.
+                await self._publish(
+                    "immune.verdict.block",
+                    correlation_id=invocation_id,
+                    payload={
+                        "detector": hit.detector_name,
+                        "evidence": hit.evidence,
+                        "tool_name": descriptor.name,
+                        "scan_kind": scan_kind,
+                        "source_plugin": self._detector_scan_source,
+                    },
+                )
+                # ADR-079 rule 2: write MemoryPort with immune provenance.
+                assert self._memory is not None  # guarded in __init__
+                await self._memory.write_event(
+                    subject=f"tektos.tool:{descriptor.name}",
+                    predicate="immune.verdict.block",
+                    object=hit.detector_name,
+                    provenance="immune_verdict",
+                    confidence=1.0,
+                    attributes={
+                        "evidence": hit.evidence,
+                        "scan_kind": scan_kind,
+                        "invocation_id": invocation_id,
+                        "intention_id": intention_id,
+                    },
+                )
+                # Publish tektos.tool.denied too so the tool-call log
+                # stays consistent with approval-gate denials.
+                await self._publish(
+                    "tektos.tool.denied",
+                    correlation_id=invocation_id,
+                    payload={
+                        "tool_name": descriptor.name,
+                        "approval_id": "",
+                        "status": ApprovalStatus.REJECTED.value,
+                        "reason": f"detector_block:{hit.detector_name}",
+                        "denial_reason": hit.detector_name,
+                        "evidence": hit.evidence,
+                    },
+                )
+                # Late-import to keep the registry loadable when the
+                # detectors package is not present (Stage 4.7 tests).
+                try:
+                    from plugins.tektos.tools.detectors.path_traversal import (
+                        PathTraversalDetected,
+                    )
+                except ImportError:  # pragma: no cover
+                    PathTraversalDetected = None  # type: ignore[assignment]
+                if (
+                    PathTraversalDetected is not None
+                    and hit.detector_name == "path_traversal"
+                ):
+                    offending_path = str(scan_payload["arguments"].get("path", ""))
+                    # Parse the reason tag out of the evidence string
+                    # ('reason=<tag> path=... namespace_root=... tool=...').
+                    reason_tag = "unknown"
+                    for token in hit.evidence.split():
+                        if token.startswith("reason="):
+                            reason_tag = token.split("=", 1)[1]
+                            break
+                    raise PathTraversalDetected(
+                        offending_path=offending_path,
+                        reason=reason_tag,
+                    )
+                raise ToolApprovalDenied(
+                    approval_id="",
+                    status=ApprovalStatus.REJECTED,
+                    reason=f"detector_block:{hit.detector_name}:{hit.evidence}",
+                )
 
     async def _publish(
         self,

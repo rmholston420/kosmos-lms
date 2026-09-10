@@ -527,21 +527,35 @@ Source repo: `rmholston420/tektos-ultima` (public, no LICENSE file at source; so
 - **ADR:** ADR-093
 - **Logged:** 2026-09-10 01:15 EDT
 
-#### Tektos MCP integration — PLANNED (Stage 4.8+)
-- **Source:** https://github.com/rmholston420/tektos-ultima MCP client + upstream `ToolRegistry` MCP branch
-- **License:** MIT (re-license at port-in)
-- **Kosmos location:** future `plugins/tektos/tools/mcp_bridge.py`
-- **Port(s):** `ExternalToolPort` (future), `ApprovalGatewayPort`, `SandboxPort`
-- **Modifications:** discovers MCP tools at boot, registers each as a `ToolDescriptor` with `approval_tier=HUMAN_REVIEW` default (per ADR-093 §5 deferrals); wire under the same approval-gate + sandbox-exec discipline as native tools. Explicitly excluded from ADR-093 §5.
-- **ADR:** ADR-093 (deferred)
+#### Tektos MCP integration — VENDORED (Stage 4.8)
+- **Source:** https://github.com/rmholston420/tektos-ultima MCP client + upstream `ToolRegistry` MCP branch (pattern-vendored: `MCPPort` + adapters already landed at Stage 3.2; Stage 4.8 adds bridge onto the Stage-4.7 registry)
+- **Commit / Version:** upstream commit `2b45cac1f9ac214c85ff53571b949445b5415209` (2026-09-10)
+- **License:** MIT (re-licensed at port-in — upstream repo has no LICENSE; sole copyright holder rmholston420)
+- **Kosmos location:** `plugins/tektos/mcp/tool_bridge.py` (Stage 4.8), `plugins/tektos/mcp/tool_policy.py` (Stage 3.2 — locked `TEKTOS_TOOL_TIER_MAP`)
+- **Port(s):** `MCPPort` (read), `ApprovalGatewayPort`, `SandboxPort` — no new port surface (composition-only bridge)
+- **Modifications:** `MCPToolBridge.discover_and_register` translates `MCPPort.list_tools()` → `ToolDescriptor` registrations on the Stage-4.7 `TektosToolRegistry`; tier resolution honors the locked `TEKTOS_TOOL_TIER_MAP` (ADR-037) with `DEFAULT_TIER=HUMAN_REQUIRED` fail-closed; per-tier default `SandboxNetworkPolicy` (AUTONOMOUS/HUMAN_REVIEW=`loopback`, HUMAN_REQUIRED=`none`); `network_override` kwarg lets tests pin `network="none"` globally; every registered MCP tool flows through the registry — no direct `mcp.call_tool` path bypasses the approval gate or the pre-approval detector chain.
+- **ADR:** ADR-094 (Stage 4.8 tool-surface reconciliation)
+- **Logged:** 2026-09-10 02:05 EDT
 
-#### Tektos filesystem tools (read/write/delete/list/create) — PLANNED (Stage 4.8+)
-- **Source:** https://github.com/rmholston420/tektos-ultima/blob/main/src/tektos/providers/sandbox_provider.py (`file_read`, `file_write`, `file_delete`, `directory_list`, `directory_create` handlers)
-- **License:** MIT (re-license at port-in)
-- **Kosmos location:** future `plugins/tektos/tools/filesystem.py`
-- **Port(s):** `SandboxPort`, `ApprovalGatewayPort`
-- **Modifications:** path-traversal detector + write-approval flow (HUMAN_REVIEW default) required before absorption. Explicitly excluded from ADR-093 §5.
-- **ADR:** ADR-093 (deferred)
+#### Tektos filesystem tools (read/list/write/delete) — VENDORED (Stage 4.8)
+- **Source:** https://github.com/rmholston420/tektos-ultima/blob/main/src/tektos/providers/sandbox_provider.py (`_file_read`, `_file_write`, `_file_delete` handlers + `_safe_path` traversal guard)
+- **Commit / Version:** upstream commit `2b45cac1f9ac214c85ff53571b949445b5415209` (2026-09-10)
+- **License:** MIT (re-licensed at port-in — upstream repo has no LICENSE; sole copyright holder rmholston420)
+- **Kosmos location:** `plugins/tektos/tools/filesystem.py` (descriptors + invocation helpers), `adapters/sandbox/tektos/vendor/fs_ops_donor.py` (vendored `resolve_within_root` + `format_file_read_page` primitives)
+- **Port(s):** `SandboxPort` (execution), `ApprovalGatewayPort` (tier gating), `MemoryPort` (write-through), `EventBusPort` (envelopes)
+- **Modifications:** four `ToolDescriptor` registrations — `file_read`/`file_list`=AUTONOMOUS, `file_write`=HUMAN_REVIEW, `file_delete`=HUMAN_REQUIRED, all `network="none"` (per ADR-094 §Rationale). Execution model differs from donor: argv-first through `SandboxPort.run` using coreutils (`cat`/`ls`/`tee`/`rm`) instead of in-process handlers; write content passed via stdin, never on command line (closes shell-injection surface). Path-traversal detector runs pre-approval (see below); malicious paths never reach `ApprovalPort.propose`. `format_file_read_page` primitive preserved verbatim from donor.
+- **ADR:** ADR-094 (Stage 4.8 tool-surface reconciliation)
+- **Logged:** 2026-09-10 02:05 EDT
+
+#### Tektos path-traversal detector — VENDORED (Stage 4.8)
+- **Source:** derived from `_safe_path` in https://github.com/rmholston420/tektos-ultima/blob/main/src/tektos/providers/sandbox_provider.py — restructured as `Detector` protocol implementation, not a direct port of the upstream call
+- **Commit / Version:** upstream commit `2b45cac1f9ac214c85ff53571b949445b5415209` (2026-09-10)
+- **License:** MIT (re-licensed at port-in — upstream repo has no LICENSE; sole copyright holder rmholston420)
+- **Kosmos location:** `plugins/tektos/tools/detectors/path_traversal.py` (detector), `adapters/sandbox/tektos/vendor/fs_ops_donor.py::resolve_within_root` (traversal primitive)
+- **Port(s):** `ImmunePort` (implements `Detector` Protocol from `ports/immune.py`)
+- **Modifications:** upstream `_safe_path` returned `Path|None` with side-effect logging — vendored `resolve_within_root` returns `ResolveOutcome(resolved, reason)` so the detector emits a structured `DetectorHit.evidence` (`reason=<tag> path=... namespace_root=... tool=...`) with tag one of `empty_path` / `dotdot_component` / `absolute_escape` / `symlink_escape` / `resolve_error:*`; symlink check strengthened via `Path.is_relative_to` on the resolved real path. Detector self-filters on `kind=="tektos.tool.filesystem"` and `tool_name in FILESYSTEM_TOOL_NAMES` so it can be registered without polluting non-filesystem tool invocations. `severity_ceiling="block"`, `name="path_traversal"`.
+- **ADR:** ADR-094 (Stage 4.8 tool-surface reconciliation)
+- **Logged:** 2026-09-10 02:05 EDT
 
 #### Tektos CI (`.github/workflows/ci.yml`) — PLANNED (Stage 0.5)
 - **Source:** https://github.com/rmholston420/tektos-ultima/blob/main/.github/workflows/ci.yml

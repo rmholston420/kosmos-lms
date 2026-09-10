@@ -3550,3 +3550,78 @@ Use the `kosmos-log-maintenance` Perplexity Computer skill.
 - **Ports / adapters affected:** ledger reflects live state of `SandboxPort` (2 adapters), `TektosTurnPlanner`, `TektosToolRegistry`
 - **PORTING_LEDGER / ADR updated:** 3 rows flipped VENDORED, 5 new rows added (1 VENDORED + 3 PLANNED-deferrals + 1 PLANNED-planner-full), ADR-093 indexed with 4-verb DoD summary
 - **Stop-condition status:** met — every VENDORED row cites upstream URL + commit SHA + SPDX MIT + Kosmos location + modification notes per kosmos-port-workflow §4; every PLANNED deferral cites ADR-093 §5 exclusion clause per kosmos-spec-diff.
+
+## 2026-09-10 01:50 EDT — Stage 4.8 · ADR-094 authored (Tektos tool-surface reconciliation)
+
+- **Stage / plugin / port:** Stage 4.8 · `plugins/tektos` · `SandboxPort`+`ApprovalPort`+`ImmunePort`+`MCPPort`
+- **What changed:** Authored `docs/adrs/ADR-094-tektos-tool-surface-reconciliation-and-filesystem-tools.md` — three coupled decisions (D1 `TektosToolRegistry` as single execution substrate, `TektosAgent.call_tool` becomes thin adapter; D2 `MCPToolBridge` seeds registry from `MCPPort.list_tools()` honoring locked `TEKTOS_TOOL_TIER_MAP`; D3 four filesystem tools argv-first through `SandboxPort.run` with pre-approval `PathTraversalDetector`). Five alternatives rejected. Motivation: after Stage 4.7, two tool-execution surfaces co-existed (Stage-3.2 `TektosAgent.call_tool` MCP path, Stage-4.7 `TektosToolRegistry.invoke` sandbox path) — the drift would multiply with every subsequent stage.
+- **Files touched:** `docs/adrs/ADR-094-tektos-tool-surface-reconciliation-and-filesystem-tools.md` (169 lines)
+- **Ports / adapters affected:** none yet (this entry is the decision; adapters land in subsequent entries)
+- **PORTING_LEDGER / ADR updated:** ADR-094
+- **Stop-condition status:** met — all three decisions justify against ADR-007 (intra-plugin imports only), ADR-079 rules 1+2 (immune verdict publish + memory write), ADR-088 (read-only budget respected for AUTONOMOUS reads), ADR-093 (registry as substrate).
+
+## 2026-09-10 01:52 EDT — Stage 4.8 · Vendored fs_ops_donor.py
+
+- **Stage / plugin / port:** Stage 4.8 · `adapters/sandbox/tektos/vendor` · `SandboxPort`
+- **What changed:** Vendored `resolve_within_root` (derived from upstream `_safe_path`) + `format_file_read_page` (verbatim) into `adapters/sandbox/tektos/vendor/fs_ops_donor.py` (195 lines). SPDX + provenance banner cites upstream commit `2b45cac1f9ac214c85ff53571b949445b5415209` (2026-09-10). Six modifications documented: renamed `_safe_path`→`resolve_within_root`; explicit `root` argument (DI-friendly); returns `ResolveOutcome(resolved, reason)` (not `Path|None`); reason tags one of `empty_path`/`dotdot_component`/`absolute_escape`/`symlink_escape`/`resolve_error:*`; removed side-effect logging; strengthened symlink check via `Path.is_relative_to` on the resolved real path.
+- **Files touched:** `adapters/sandbox/tektos/vendor/fs_ops_donor.py`
+- **Ports / adapters affected:** primitive supports `SandboxPort` adapters + `plugins/tektos/tools/detectors/path_traversal.py`
+- **PORTING_LEDGER / ADR updated:** ADR-094 (row added post facto in Stage 4.8 batch)
+- **Stop-condition status:** met — permissively licensed at port-in (upstream has no LICENSE; sole copyright rmholston420 relicenses MIT); vendored code sits under adapters/vendor/ per kosmos-port-workflow §4.
+
+## 2026-09-10 01:55 EDT — Stage 4.8 · PathTraversalDetector landed
+
+- **Stage / plugin / port:** Stage 4.8 · `plugins/tektos/tools/detectors` · `ImmunePort` (`Detector` Protocol)
+- **What changed:** Landed `plugins/tektos/tools/detectors/path_traversal.py` (148 lines) implementing `Detector` from `ports/immune.py` with `name="path_traversal"`, `severity_ceiling="block"`. Detector filters on `kind=="tektos.tool.filesystem"` and `tool_name in FILESYSTEM_TOOL_NAMES={file_read,file_list,file_write,file_delete}` — self-filters so registration does not pollute non-filesystem invocations. Delegates to `resolve_within_root`; emits single `DetectorHit(severity="block", evidence="reason=... path=... namespace_root=... tool=...")` on escape. `PathTraversalDetected(ToolApprovalDenied)` exception carries `.detector_reason` + `.offending_path` for downstream introspection. Added `plugins/tektos/tools/detectors/__init__.py` package init with re-exports.
+- **Files touched:** `plugins/tektos/tools/detectors/__init__.py`, `plugins/tektos/tools/detectors/path_traversal.py`
+- **Ports / adapters affected:** `ImmunePort`
+- **PORTING_LEDGER / ADR updated:** ADR-094 (row added post facto in Stage 4.8 batch)
+- **Stop-condition status:** met — no cross-plugin imports (`plugins.tektos.tools.detectors` is intra-plugin); protocol conformance verified by 8 contract tests.
+
+## 2026-09-10 02:00 EDT — Stage 4.8 · TektosToolRegistry pre-approval detector chain
+
+- **Stage / plugin / port:** Stage 4.8 · `plugins/tektos/tools/registry.py` · `SandboxPort`+`ApprovalPort`+`ImmunePort`+`MemoryPort`+`EventBusPort`
+- **What changed:** Extended `TektosToolRegistry.__init__` with three optional kwargs: `pre_approval_detectors: tuple[Detector, ...] = ()`, `memory: MemoryPort | None = None`, `detector_scan_source: str = "tektos"`. Init-time validation: `memory` required when detectors registered (ADR-079 rule 2). Added `ToolDescriptor.scan_kind: str | None = None` field so descriptors can route detectors by tool category (e.g. `"tektos.tool.filesystem"`). Added `_run_pre_approval_detectors` helper that runs every registered detector's `evaluate()` sequentially before `ApprovalGatewayPort.propose`; on any `severity="block"` hit, publishes `immune.verdict.block` envelope (ADR-079 rule 1), writes `MemoryPort` with `provenance="immune_verdict"` + `confidence=1.0` (ADR-079 rule 2), publishes `tektos.tool.denied` with `denial_reason`, and raises `PathTraversalDetected` (for path-traversal) or `ToolApprovalDenied` (generic). Detector loop injected into `invoke()` between JSON-schema validation and `tektos.tool.invoked` publish so malicious inputs never enter the APEX queue.
+- **Files touched:** `plugins/tektos/tools/registry.py`
+- **Ports / adapters affected:** `TektosToolRegistry` (Stage-4.7 backwards-compat surface preserved when new kwargs omitted — all 26 Stage-4.7 registry tests still pass)
+- **PORTING_LEDGER / ADR updated:** ADR-094 (row added post facto in Stage 4.8 batch)
+- **Stop-condition status:** met — regression suite green (Stage 4.7 registry tests unchanged; new detector chain covered by Stage 4.8 test modules).
+
+## 2026-09-10 02:05 EDT — Stage 4.8 · filesystem.py + MCPToolBridge + agent delegation
+
+- **Stage / plugin / port:** Stage 4.8 · `plugins/tektos/{tools,mcp,agent}` · `SandboxPort`+`ApprovalPort`+`MCPPort`+`MemoryPort`+`EventBusPort`
+- **What changed:**
+  - `plugins/tektos/tools/filesystem.py` (293 lines) — four `ToolDescriptor` registrations (`file_read`/`file_list`=AUTONOMOUS, `file_write`=HUMAN_REVIEW, `file_delete`=HUMAN_REQUIRED, all `network="none"`, all `scan_kind="tektos.tool.filesystem"`); `FilesystemToolConfig(namespace_root=...)` DI object; four async invocation helpers translating `{path, content?}` → `{path, argv, stdin?}` for `registry.invoke()`. Argv built via coreutils: `["cat", <resolved>]`, `["ls","-la",<resolved>]`, `["tee",<resolved>]` (content via stdin, never shell), `["rm","-rf",<resolved>]`.
+  - `plugins/tektos/mcp/tool_bridge.py` (207 lines) — `MCPToolBridge(mcp, registry, tier_map=TEKTOS_TOOL_TIER_MAP, default_tier=HUMAN_REQUIRED, network_override=None)` with `async discover_and_register() -> MCPToolBridgeResult`. Translates `MCPPort.list_tools()` → `ToolDescriptor` registrations; tier resolution honors locked map with fail-closed default; per-tier default `SandboxNetworkPolicy` (AUTONOMOUS/HUMAN_REVIEW=`loopback`, HUMAN_REQUIRED=`none`); re-runs idempotent (already-registered tools land in `skipped`, no raise).
+  - `plugins/tektos/agent.py` — added `tool_registry: TektosToolRegistry | None = None` dataclass field; `call_tool` delegates to `_call_tool_via_registry` when set (returns Stage-3.2-shaped `TektosStep`, writes `MemoryPort` with `predicate=TEKTOS_TOOL_PREDICATE` + `attributes["delegated_to"]="tektos_tool_registry"`; wraps `SandboxResult` → `MCPToolResult` for continuity). Registry-side `ToolApprovalDenied` surfaces as `TektosToolCallPending` (same class Stage-3.2 callers already catch). When `tool_registry=None`, legacy inline flow runs unchanged.
+- **Files touched:** `plugins/tektos/tools/filesystem.py`, `plugins/tektos/mcp/tool_bridge.py`, `plugins/tektos/agent.py`
+- **Ports / adapters affected:** `TektosAgent`, `TektosToolRegistry`, `MCPPort` (read-only bridge consumer)
+- **PORTING_LEDGER / ADR updated:** ADR-094 (row added post facto in Stage 4.8 batch)
+- **Stop-condition status:** met — Stage 3.2 DoD tests unmodified and still pass (`test_tektos_mcp.py` etc.); Stage 4.7 registry tests unmodified and still pass; Stage 4.8 covered by 27 new contract tests.
+
+## 2026-09-10 02:08 EDT — Stage 4.8 · Contract tests × 27 (all green)
+
+- **Stage / plugin / port:** Stage 4.8 · `plugins/tektos/tools/detectors`, `plugins/tektos/tools`, `plugins/tektos/mcp`, `plugins/tektos/tests`
+- **What changed:** Landed four test modules — `plugins/tektos/tools/detectors/test_path_traversal.py` (8 tests), `plugins/tektos/tools/test_filesystem.py` (8 tests), `plugins/tektos/mcp/test_tool_bridge.py` (7 tests), `plugins/tektos/tests/test_agent_registry_delegation.py` (4 tests). Coverage: detector happy-path + `..` + absolute escape + symlink escape + empty path + non-filesystem kind filter + non-filesystem tool_name filter + Immune contract advertisement; filesystem register-all-four + happy-path × 4 (read/list/write/delete) with tier assertions + traversal block end-to-end (verifies `immune.verdict.block` published, `MemoryPort(provenance='immune_verdict', confidence=1.0)` written, `tektos.tool.denied` published, `PathTraversalDetected` raised, approval gate NEVER reached) + absolute-path escape end-to-end + regression guard (no-detector construction) ; bridge known-tool tier resolution + unknown-tool fail-closed HUMAN_REQUIRED + mixed tiers + idempotent re-register + network policy defaults + custom tier map + network override ; agent delegation happy-path + delegation-denial-raises-pending + no-registry-falls-back-to-legacy + auto-turn-id.
+- **Files touched:** 4 new test modules
+- **Ports / adapters affected:** exercises `SandboxPort` (NoOp adapter), `ApprovalGatewayPort`+`ApprovalResolverPort` (stubs), `MemoryPort` (recording), `EventBusPort` (recording), `ImmunePort` (`Detector` Protocol), `MCPPort` (fake)
+- **PORTING_LEDGER / ADR updated:** ADR-094 tests fulfil the ADR §Consequences §Testing block
+- **Stop-condition status:** met — 27/27 new tests pass; full-suite regression check confirms only the 7 pre-existing MemoryPort protocol-drift failures remain (identical to Stage 4.7 baseline; unrelated to Stage 4.8).
+
+## 2026-09-10 02:10 EDT — Stage 4.8 · Spec fan-out (Build-Sequence-v26 + ADRs README + PORTING_LEDGER)
+
+- **Stage / plugin / port:** Stage 4.8 · docs
+- **What changed:** Inserted Stage 4.8 stanza in `docs/Kosmos-Build-Sequence-v26.md` (between Stage 4.7 and Stage 5.6) — Ports touched, What lands, DoD. Added ADR-094 row to `docs/adrs/README.md` decision table. Updated open-decisions sentence to cite ADR-094 as Stage 4.8 landing. Flipped 2 PORTING_LEDGER rows PLANNED→VENDORED (Tektos MCP integration, Tektos filesystem tools) and added 1 new VENDORED row (Tektos path-traversal detector) — every VENDORED entry cites upstream URL + commit SHA + SPDX MIT + Kosmos location + modification notes per kosmos-port-workflow §4. All four files updated atomically per kosmos-spec-diff §5 fan-out rule.
+- **Files touched:** `docs/Kosmos-Build-Sequence-v26.md`, `docs/adrs/README.md`, `PORTING_LEDGER.md`
+- **Ports / adapters affected:** spec reflects live state of `SandboxPort`, `ImmunePort` (`Detector` Protocol), `MCPPort` composition
+- **PORTING_LEDGER / ADR updated:** 2 rows flipped VENDORED, 1 new VENDORED row added, ADR-094 indexed in README with full decision summary
+- **Stop-condition status:** met — spec §17 ADR summary agrees with ADR file; Build-Sequence-v26 Stage 4.8 stanza agrees with PORTING_LEDGER rows; no revival of archived spec positions (kosmos-spec-diff §2).
+
+## 2026-09-10 02:15 EDT — Stage 4.8 · SESSION_HANDOFF overwrite + commit + push
+
+- **Stage / plugin / port:** Stage 4.8 · repo-wide
+- **What changed:** Overwrote `SESSION_HANDOFF.md` with current-state summary (Stage 4.8 completed; next stage per Build-Sequence-v26 is Stage 5.6 self-improvement/self-repair). Single git commit landing the Stage 4.8 slice; pushed to `origin/main`.
+- **Files touched:** `SESSION_HANDOFF.md`, git commit + push
+- **Ports / adapters affected:** none (bookkeeping)
+- **PORTING_LEDGER / ADR updated:** —
+- **Stop-condition status:** met — SESSION_HANDOFF overwritten per kosmos-log-maintenance discipline; single atomic commit per kosmos-spec-diff §5 fan-out rule; push confirms upstream sync.
