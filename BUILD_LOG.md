@@ -3291,3 +3291,75 @@ Use the `kosmos-log-maintenance` Perplexity Computer skill.
 - **Ports / adapters affected:** none (CI + tooling)
 - **PORTING_LEDGER / ADR updated:** — (implements ADR-007 enforcement + honours ADR-077 CI baseline commitment)
 - **Stop-condition status:** met
+
+## 2026-09-10 00:52 EDT — Stage 2.1 · ADR-091 microfrontend shell integration ratified
+
+- **Stage / plugin / port:** Stage 2.1 · microfrontend integration ADR
+- **What changed:** Ratified ADR-091 (microfrontend-shell-integration) operationalising ADR-089's `PanelKind.IFRAME` for the first absorbed microfrontend. Locks three shape decisions the ADR-089 skeleton left open: (a) route naming — Tektos-Ultima UI lands at **`/tektos-ultima`** in the Kosmos shell (preserves existing `/tektos` = ADR-065 approval list per Option-B triage rule); (b) reverse-proxy topology — kernel Starlette streaming proxy at `/tektos-ultima/frontend/{path:path}` targeting `KOSMOS_TEKTOS_ULTIMA_UPSTREAM` (default `http://127.0.0.1:5556` per spec §25.7) because the Kosmos UI is `output: "export"` and cannot host runtime Next rewrites; (c) bridge topology — `POST /api/tektos-ultima/bridge` enforces `source="tektos-ultima"` server-side + validates ADR-086 `tektos.*` namespace + publishes to `EventBusPort`; client-side handler validates `event.source === iframe.contentWindow` AND `event.origin === window.location.origin`; CSP `frame-ancestors 'self'` enforced by ASGI middleware. Enumerated 5 rejected alternatives: displace `/tektos`, subdomain-origin iframe, direct `http://127.0.0.1:5556` iframe, component-library merge, raw WebSocket bridge.
+- **Files touched:** `docs/adrs/ADR-091-microfrontend-shell-integration.md`, `docs/adrs/README.md` (ADR-091 index row + "one open decision" note updated), `PORTING_LEDGER.md` (Tektos frontend row flipped PLANNED → SCAFFOLDED with kernel proxy + shell panel details + ADR-091 cross-ref)
+- **Ports / adapters affected:** `FrontendContractPort` (concrete ADR-089 iframe wiring); `EventBusPort` (bridge publish path per ADR-086)
+- **PORTING_LEDGER / ADR updated:** ADR-091 authored; Tektos frontend ledger row updated
+- **Stop-condition status:** met
+
+## 2026-09-10 00:58 EDT — Stage 2.2 · kernel Starlette reverse proxy for /tektos-ultima/frontend
+
+- **Stage / plugin / port:** Stage 2.2 · kernel proxy
+- **What changed:** Authored `kernel/tektos_ultima_bridge.py` — Starlette streaming reverse proxy at `/tektos-ultima/frontend/{path:path}` (all methods incl. HEAD/OPTIONS). Uses `httpx.AsyncClient` with `Timeout(connect=2.0, read=30.0, write=10.0, pool=5.0)`; strips RFC 7230 §6.1 hop-by-hop headers (Connection, Keep-Alive, Proxy-Authenticate/Authorization, TE, Trailers, Transfer-Encoding, Upgrade, Host) in both directions; injects `X-Forwarded-Host` + `X-Forwarded-Proto`; streams `aiter_raw()` chunks back so no buffering. On `httpx.ConnectError` (upstream absent) returns `502` with `{error: "tektos_ultima_upstream_unreachable", upstream, hint}` so CI + user gets a machine-parseable diagnostic instead of a raw browser network error. Upstream base URL resolved via `KOSMOS_TEKTOS_ULTIMA_UPSTREAM` env (default `http://127.0.0.1:5556` per spec §25.7).
+- **Files touched:** `kernel/tektos_ultima_bridge.py` (new; contains proxy + bridge + CSP middleware in one module)
+- **Ports / adapters affected:** none formally (Stage 3.13 will introduce `ReverseProxyPort` per ADR-091 consequences; Stage 2 uses in-repo httpx client)
+- **PORTING_LEDGER / ADR updated:** honours ADR-091
+- **Stop-condition status:** met
+
+## 2026-09-10 01:04 EDT — Stage 2.3 · /tektos-ultima shell page renders ADR-089 iframe panel
+
+- **Stage / plugin / port:** Stage 2.3 · shell page
+- **What changed:** Authored `ui/app/tektos-ultima/page.tsx` — client component rendering a single `PanelKind.IFRAME` panel per ADR-089: `src="/tektos-ultima/frontend/"` (same-origin via kernel proxy), `sandbox="allow-same-origin allow-scripts allow-forms"` (mirrors `ports/frontend_contract.py::DEFAULT_IFRAME_SANDBOX`), `title="Tektos-Ultima autonomous coding agent"`, `loading="lazy"`. Page uses `useRef<HTMLIFrameElement>` to hold the iframe handle and passes it to `<TektosUltimaBridge iframeRef={iframeRef} />` so message-source validation can compare `event.source === iframe.contentWindow`. Kept distinct from `/tektos` (ADR-065 approval list) — both routes coexist per ADR-091.
+- **Files touched:** `ui/app/tektos-ultima/page.tsx` (new)
+- **Ports / adapters affected:** `FrontendContractPort` (concrete iframe descriptor)
+- **PORTING_LEDGER / ADR updated:** honours ADR-089, ADR-091
+- **Stop-condition status:** met (Next.js static export build recognises `/tektos-ultima` in the prerendered route table)
+
+## 2026-09-10 01:10 EDT — Stage 2.4 · postMessage bridge client with 3-check origin policy
+
+- **Stage / plugin / port:** Stage 2.4 · client bridge
+- **What changed:** Authored `ui/components/TektosUltimaBridge.tsx` — client component installing `window.addEventListener("message", ...)` with three sequential rejection gates: (1) `event.source === iframeRef.current?.contentWindow` (message must originate from the specific iframe we mounted, not another window in the tab); (2) `event.origin === window.location.origin` (same-origin, mirrors reverse-proxy invariant); (3) `event.data.kind` matches `/^tektos\./` (ADR-086 namespace ceiling). On pass, fire-and-forget `fetch("/api/tektos-ultima/bridge", {method:"POST", credentials:"omit"})`. All rejections silent in production; dev builds (`NODE_ENV !== "production"`) log `console.warn` diagnostics. Component returns `null` — pure side-effect mount. Handler is cleaned up on unmount via effect return.
+- **Files touched:** `ui/components/TektosUltimaBridge.tsx` (new)
+- **Ports / adapters affected:** none directly (client-side bridge; server-side bridge lands in Stage 2.5)
+- **PORTING_LEDGER / ADR updated:** honours ADR-091
+- **Stop-condition status:** met
+
+## 2026-09-10 01:15 EDT — Stage 2.5 · server-side bridge API route publishes to EventBusPort
+
+- **Stage / plugin / port:** Stage 2.5 · server bridge
+- **What changed:** Extended `kernel/tektos_ultima_bridge.py` with `POST /api/tektos-ultima/bridge` route. `_validate_bridge_envelope(body)` returns `(event_type, payload)` or raises `HTTPException(400)` on: non-dict body, missing/empty `kind`, non-`tektos.*` namespace (rejects `thermal.*`, `immune.*`, etc. so those cannot be forged from the iframe per ADR-086), non-dict `payload`. On accept, forces `payload["source"] = "tektos-ultima"` server-side, constructs `EventEnvelope(event_type, producer_plugin="tektos_ultima_bridge", payload)` (ADR-023 rule 2 satisfied), publishes via `registry.event_bus.publish(envelope)`, returns `202 Accepted` with `{status: "accepted", event_id, event_type}`. `event_bus is None` → `503`; `EventEnvelope` ValueError → `400`; other publish errors → `502`. Router wired into `kernel/app.py` via `include_router(build_tektos_ultima_bridge_router(registry))` immediately after `FastAPI(...)` instantiation, before the kill-switch middleware. Wrapped in `try/except` so a boot failure surfaces via `registry.errors["tektos_ultima_bridge"]` rather than crashing kernel startup.
+- **Files touched:** `kernel/tektos_ultima_bridge.py` (+bridge route), `kernel/app.py` (+40-line integration block after `app = FastAPI(...)`)
+- **Ports / adapters affected:** `EventBusPort` (bridge is a writer); ADR-086 namespace policy enforced at ingress
+- **PORTING_LEDGER / ADR updated:** honours ADR-023, ADR-086, ADR-091
+- **Stop-condition status:** met (in-memory FastAPI TestClient round-trip: 202 on valid envelope, 400 on `thermal.red` forgery attempt, 400 on missing kind, 400 on malformed payload, 503 when bus absent, mypy clean on new module)
+
+## 2026-09-10 01:20 EDT — Stage 2.6 · CSP frame-ancestors 'self' ASGI middleware
+
+- **Stage / plugin / port:** Stage 2.6 · CSP middleware
+- **What changed:** Added `KosmosIframeCSPMiddleware` to `kernel/tektos_ultima_bridge.py` — pure ASGI middleware (not BaseHTTPMiddleware) so streaming reverse-proxy responses are never buffered. Wraps `send`; on `http.response.start` merges `Content-Security-Policy: frame-ancestors 'self'` into headers. If upstream already set a CSP header, appends `; frame-ancestors 'self'` unless upstream already declared that directive (strictest-wins per CSP spec avoids conflict). Middleware registered on `app` immediately after router include so every HTTP response — static export at `/`, `/api/*`, `/tektos-ultima/frontend/*` proxy, `/tektos-ui`, `/gnosis-gate` — carries the directive. Prevents clickjacking of the whole Kosmos shell from a third-party origin.
+- **Files touched:** `kernel/tektos_ultima_bridge.py` (+middleware class), `kernel/app.py` (+`app.add_middleware(KosmosIframeCSPMiddleware)`)
+- **Ports / adapters affected:** none (transport hardening)
+- **PORTING_LEDGER / ADR updated:** honours ADR-089, ADR-091
+- **Stop-condition status:** met (in-memory smoke test: `GET /hello` returns `content-security-policy: frame-ancestors 'self'`)
+
+## 2026-09-10 01:26 EDT — Stage 2.7 · Playwright /tektos-ultima end-to-end spec landed
+
+- **Stage / plugin / port:** Stage 2.7 · e2e tests
+- **What changed:** Authored `ui/tests/20-tektos-ultima-shell.spec.ts` — six chromium tests: (1) `/tektos-ultima/` renders `tektos-ultima-page` + heading + iframe with `src="/tektos-ultima/frontend/"` and `sandbox="allow-same-origin allow-scripts allow-forms"`; (2) reverse proxy returns `502` with `{error: "tektos_ultima_upstream_unreachable", upstream, hint}` when no upstream Tektos-Ultima dev server runs (CI baseline); (3) bridge accepts `tektos.agent.turn.started` and returns `202 Accepted` with valid `event_id`; (4) bridge rejects `thermal.red` with `400` (ADR-086 namespace enforcement); (5) bridge rejects envelope missing `kind` with `400`; (6) kernel HTML response at `/` carries `Content-Security-Policy: frame-ancestors 'self'`. Follows the existing `playwright.config.ts` (workers=1, `KOSMOS_BASE_URL=http://127.0.0.1:8000`, kernel serves both `/api/*` and static-export `/`).
+- **Files touched:** `ui/tests/20-tektos-ultima-shell.spec.ts` (new)
+- **Ports / adapters affected:** none (test-only)
+- **PORTING_LEDGER / ADR updated:** honours ADR-091
+- **Stop-condition status:** met (spec compiles under `npx tsc --noEmit`; only pre-existing TS error is in `03-tektos-plan-workflow.spec.ts` line 20, unrelated to Stage 2)
+
+## 2026-09-10 01:32 EDT — Stage 2.8 · frontend-e2e Playwright chromium CI job wired
+
+- **Stage / plugin / port:** Stage 2.8 · CI e2e
+- **What changed:** Extended `.github/workflows/ci.yml` with `frontend-e2e` job (needs `[frontend-build]`, python 3.12 + node 22): installs project + dev deps (`pip install -e ".[dev]"`), UI deps (`npm ci`), Playwright chromium (`npx playwright install --with-deps chromium`); builds UI (`npx next build`); boots kernel via `nohup uvicorn kernel.app:app --host 127.0.0.1 --port 8000` with 30-second `/health` readiness poll; runs `npx playwright test --project=chromium` with `KOSMOS_BASE_URL=http://127.0.0.1:8000`; on failure tails last 200 lines of `kernel.log` and uploads `ui/playwright-report/` as retained artifact (7 days). Added `frontend-e2e` to the `summary` job's needs list + env reporting. **Also refreshed `ui/package-lock.json` via `npm install`** — the checked-in lockfile was stale against `ui/package.json` (Next 16.0.0 vs 16.2.11, missing `@tailwindcss/postcss`, `cmdk`, `react-cytoscapejs`, `react-force-graph-2d/3d`, `three`, etc.), which was silently blocking every `npm ci`-based CI job. Added `node_modules/` (root, defensive) to `.gitignore`; `ui/node_modules`, `ui/.next`, `ui/out` were already covered.
+- **Files touched:** `.github/workflows/ci.yml`, `ui/package-lock.json` (regenerated), `.gitignore` (+`node_modules/` root defensive line)
+- **Ports / adapters affected:** none (CI infrastructure)
+- **PORTING_LEDGER / ADR updated:** —
+- **Stop-condition status:** met (CI job definition passes YAML lint; local `npx next build` produces `/tektos-ultima` in the prerendered route table)

@@ -467,13 +467,13 @@ Source repo: `rmholston420/tektos-ultima` (public, no LICENSE file at source; so
 - **Modifications:** WebSocket proxy at `:8765` becomes an `EventBusPort` transport adapter; envelopes tagged per ADR-086 taxonomy (`tektos.*`, `immune.*`, `thermal.*`, `loop_safety.*`, `sandbox.*`, `hindsight.*`).
 - **ADR:** ADR-086
 
-#### Tektos frontend (Next.js 15.4, 40 panels) — PLANNED (Stage 2)
+#### Tektos frontend (Next.js 15.4, 40 panels) — SCAFFOLDED (Stage 2, 2026-09-10)
 - **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/frontend
 - **License:** MIT (relicensed at port-in)
-- **Kosmos location:** `plugins/tektos/frontend/`
-- **Port(s):** `FrontendContractPort` (ADR-089 adds `PanelKind.IFRAME`)
-- **Modifications:** Tektos Next 15.4 app served on internal port; Kosmos Next 16.2.11 shell mounts it as iframe under `/tektos/frontend` (same origin via reverse proxy); panels register through `FrontendContractPort` descriptors.
-- **ADR:** ADR-089
+- **Kosmos location:** `plugins/tektos/frontend/` (upstream code drop deferred to Stage 3.13+); Stage 2 shell integration lives at `ui/app/tektos-ultima/`, `ui/components/TektosUltimaBridge.tsx`, and `kernel/tektos_ultima_bridge.py`.
+- **Port(s):** `FrontendContractPort` (ADR-089 adds `PanelKind.IFRAME`); microfrontend shell integration per ADR-091.
+- **Modifications:** Tektos Next 15.4 app runs on upstream port `:5556` (spec §25.7); Kosmos kernel exposes it same-origin at `/tektos-ultima/frontend/*` via Starlette streaming proxy (env `KOSMOS_TEKTOS_ULTIMA_UPSTREAM`, default `http://127.0.0.1:5556`); Kosmos Next 16.2.11 shell mounts it as `PanelKind.IFRAME` under **`/tektos-ultima`** (not `/tektos`, which stays the ADR-065 approval list); postMessage bridge routes envelopes to `POST /api/tektos-ultima/bridge` which validates `tektos.*` namespace + publishes to `EventBusPort`. Stage 3.13+ ports upstream panels + wires them through `FrontendContractPort` descriptors.
+- **ADR:** ADR-089, ADR-091
 
 #### Tektos tool registry — PLANNED (Stage 4)
 - **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/tools
