@@ -19,7 +19,16 @@ One injectable Protocol seam so contract tests use a pure-stdlib double
 
     ManifestStore — async ``save(schema) -> None`` / ``load() -> KernelSchema | None``
 
-See ADR-031 for full context and rationale.
+ADR-089 (2026-09-10) extends this port with ``PanelKind.IFRAME`` so the
+Kosmos Next 16.2.11 shell can host the Tektos Next 15.4 UI as a
+microfrontend under ``/tektos/frontend``. Iframe panels carry an
+``IframeConfig`` (``src``, ``sandbox``, ``title``, ``size_hint``); the
+kernel dashboard renders them behind a same-origin reverse proxy with a
+postMessage bridge that validates ``event.origin`` and re-publishes
+cross-boundary events on server-side ``EventBusPort``. CSP
+``frame-ancestors 'self'`` MUST be set globally by the shell.
+
+See ADR-031 for the base contract; ADR-089 for the iframe extension.
 """
 from __future__ import annotations
 
@@ -31,12 +40,15 @@ from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
 __all__ = [
+    "DEFAULT_IFRAME_SANDBOX",
     "FrontendContractPort",
+    "IframeConfig",
     "KERNEL_SCHEMA_TITLE",
     "KernelSchema",
     "ManifestStore",
     "PLUGIN_REQUIRED_FIELDS",
     "Panel",
+    "PanelKind",
     "PanelSlot",
     "PluginDescriptor",
     "PluginDescriptorRejected",
@@ -76,6 +88,24 @@ class PanelSlot(str, Enum):
     AGENT_TRACE = "AGENT_TRACE"
 
 
+class PanelKind(str, Enum):
+    """How a panel's contents are produced (ADR-089).
+
+    ``LAZY_MODULE`` — default, matches Rigpa donor shape: the frontend
+    resolves ``Panel.lazy_module`` via ``import(...)`` and renders its
+    exported React component in-tree.
+
+    ``IFRAME``      — the frontend renders an ``<iframe>`` pointing at
+    ``Panel.iframe.src`` behind a same-origin reverse proxy, with the
+    HTML ``sandbox`` attributes from ``Panel.iframe.sandbox`` and a
+    postMessage bridge that validates ``event.origin`` before
+    re-publishing to server-side ``EventBusPort``.
+    """
+
+    LAZY_MODULE = "LAZY_MODULE"
+    IFRAME = "IFRAME"
+
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -89,6 +119,20 @@ PLUGIN_REQUIRED_FIELDS = frozenset(
 
 KERNEL_SCHEMA_TITLE: str = "Kosmos"
 """Build-Sequence §1.14 DoD anchor: empty dashboard renders this title."""
+
+
+DEFAULT_IFRAME_SANDBOX: tuple[str, ...] = (
+    "allow-same-origin",
+    "allow-scripts",
+    "allow-forms",
+)
+"""Default HTML ``sandbox`` tokens for ``PanelKind.IFRAME`` panels (ADR-089).
+
+Mirror the Tektos-Ultima frontend's own iframe embed defaults. Panels MAY
+replace this set (e.g. add ``allow-popups``) but MUST NOT drop
+``allow-same-origin`` while the postMessage bridge is required for event
+relay.
+"""
 
 
 _PLUGIN_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
@@ -114,11 +158,34 @@ class Route:
 
 
 @dataclass(frozen=True, slots=True)
+class IframeConfig:
+    """Iframe-rendering config for a ``PanelKind.IFRAME`` panel (ADR-089).
+
+    ``src`` is a same-origin URL served by the kernel's reverse proxy
+    (e.g. ``/tektos/frontend``). ``sandbox`` is the HTML sandbox token
+    set applied to the iframe. ``title`` is the accessible name. ``size_hint``
+    (``"small" | "medium" | "large" | "full"``) advises the shell on
+    default sizing; the shell may override.
+    """
+
+    src: str
+    title: str
+    sandbox: tuple[str, ...] = DEFAULT_IFRAME_SANDBOX
+    size_hint: str = "medium"
+
+
+@dataclass(frozen=True, slots=True)
 class Panel:
     """A kernel-dashboard panel contributed by a plugin.
 
     Higher :attr:`priority` renders first
     (matches ADR-029 priority-queue ordering).
+
+    ``kind`` defaults to ``PanelKind.LAZY_MODULE`` (the pre-ADR-089 shape,
+    so existing panels keep working unmodified). When ``kind`` is
+    ``PanelKind.IFRAME``, ``iframe`` MUST be non-``None`` and
+    ``lazy_module`` MAY be a sentinel like ``"iframe://<panel_id>"``
+    (validators only require it non-empty).
     """
 
     id: str
@@ -126,6 +193,8 @@ class Panel:
     priority: int
     lazy_module: str
     plugin_name: str
+    kind: PanelKind = PanelKind.LAZY_MODULE
+    iframe: IframeConfig | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,6 +307,39 @@ def validate_plugin_descriptor(descriptor: PluginDescriptor) -> None:
             raise PluginDescriptorRejected(
                 f"descriptor rejected: panels[{i}].lazy_module must be a "
                 f"non-empty str"
+            )
+        if not isinstance(panel.kind, PanelKind):
+            raise PluginDescriptorRejected(
+                f"descriptor rejected: panels[{i}].kind must be PanelKind "
+                f"enum member, got {type(panel.kind).__name__!r}"
+            )
+        if panel.kind is PanelKind.IFRAME:
+            if not isinstance(panel.iframe, IframeConfig):
+                raise PluginDescriptorRejected(
+                    f"descriptor rejected: panels[{i}].iframe must be "
+                    f"IframeConfig when kind=IFRAME (ADR-089), got "
+                    f"{type(panel.iframe).__name__!r}"
+                )
+            if not isinstance(panel.iframe.src, str) or not panel.iframe.src:
+                raise PluginDescriptorRejected(
+                    f"descriptor rejected: panels[{i}].iframe.src must be a "
+                    f"non-empty str (ADR-089)"
+                )
+            if not isinstance(panel.iframe.title, str) or not panel.iframe.title:
+                raise PluginDescriptorRejected(
+                    f"descriptor rejected: panels[{i}].iframe.title must be a "
+                    f"non-empty str (ADR-089)"
+                )
+            if "allow-same-origin" not in panel.iframe.sandbox:
+                raise PluginDescriptorRejected(
+                    f"descriptor rejected: panels[{i}].iframe.sandbox must "
+                    f"include 'allow-same-origin' for postMessage bridge "
+                    f"(ADR-089)"
+                )
+        elif panel.iframe is not None:
+            raise PluginDescriptorRejected(
+                f"descriptor rejected: panels[{i}].iframe must be None when "
+                f"kind={panel.kind.value} (ADR-089)"
             )
 
 

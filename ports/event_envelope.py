@@ -16,6 +16,34 @@ Design rules:
 
 Derived from Rigpa-LMS ``backend/src/rigpa/core/events/envelope.py``
 (one-for-one field parity; stdlib-only reimplementation).
+
+ADR-086 (2026-09-10) locks the Tektos-side ``event_type`` namespace. The
+following prefixes are RESERVED and MUST be used by their owning subsystems;
+CI (Stage 0.7) flags unlisted namespaces from Tektos-side code:
+
+- ``immune.*``       — ImmunePort verdicts (ADR-079)
+  Kinds: ``immune.verdict.allow`` / ``immune.verdict.warn`` /
+  ``immune.verdict.block``, ``immune.detector.registered``.
+- ``loop_safety.*``  — LoopSafetyPort state transitions (ADR-080, ADR-088)
+  Kinds: ``loop_safety.turn.started``, ``loop_safety.tokens.recorded``,
+  ``loop_safety.tool_call.recorded``, ``loop_safety.repetition_detected``,
+  ``loop_safety.exhausted``, ``loop_safety.read_only_budget_exhausted``,
+  ``loop_safety.turn.ended``.
+- ``thermal.*``      — ThermalPort telemetry + capping (ADR-081)
+  Kinds: ``thermal.green``, ``thermal.yellow``, ``thermal.cap``,
+  ``thermal.red``, ``thermal.power_cap.applied``,
+  ``thermal.power_cap.released``.
+- ``sandbox.*``      — SandboxPort lifecycle (ADR-082)
+  Kinds: ``sandbox.started``, ``sandbox.completed``, ``sandbox.killed``.
+- ``hindsight.*``    — Tektos hindsight subsystem (spec §25.3)
+  Kinds: ``hindsight.migration.started``, ``hindsight.migration.completed``.
+- ``tektos.*``       — Tektos plugin-level events
+  Kinds: ``tektos.agent.turn.started``, ``tektos.agent.turn.completed``,
+  ``tektos.self_modification.proposed``, ``tektos.gateway.connected``,
+  ``tektos.gateway.disconnected``, ``tektos.tool.invoked``.
+
+All other ADR-023 rules still apply verbatim (in particular rule 2:
+``producer_plugin`` MUST be non-empty regardless of namespace).
 """
 
 from __future__ import annotations

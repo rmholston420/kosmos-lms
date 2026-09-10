@@ -1,8 +1,14 @@
-"""ports.memory — MemoryPort Protocol (ADR-027, extends ADR-008).
+"""ports.memory — MemoryPort Protocol (ADR-027, extends ADR-008; hybrid search added by ADR-085).
 
 Locked in Stage 1.8. Backed by DozerDB (community Neo4j fork with enterprise
 features backported permissively, per ADR-008) + Graphiti temporal index +
 Agent Memory Guard v0.2.2 write-time policy filter.
+
+ADR-085 extended this surface with ``search_hybrid`` (lexical + semantic
+fusion via Reciprocal Rank Fusion, k=60 by default) to serve the Tektos
+hindsight-migration path at Stage 7.4. Weights sum to 1.0 (port-level
+guard); adapters without a lexical index MUST raise ``NotImplementedError``
+rather than silently degrade.
 
 Zero-trust guarantee (spec §7): every write MUST supply `provenance` and
 `confidence`. Enforcement is at the port layer (this module) — non-bypassable
@@ -29,6 +35,7 @@ __all__ = [
     "MemoryPort",
     "MemoryWriteBlocked",
     "MEMORY_REQUIRED_FIELDS",
+    "validate_hybrid_weights",
     "validate_zero_trust_write",
 ]
 
@@ -69,6 +76,31 @@ class MemoryWriteBlocked(RuntimeError):
     AMG `block` failures raise this (runtime policy invariant) so callers can
     distinguish "you passed bad args" from "policy says no".
     """
+
+
+def validate_hybrid_weights(
+    lexical_weight: float,
+    semantic_weight: float,
+) -> None:
+    """Enforce ADR-085 weight-sum invariant at the port layer.
+
+    Raises ValueError if either weight is outside [0.0, 1.0] or the two do
+    not sum to 1.0 (within a small floating-point epsilon). Non-bypassable.
+    """
+    for name, value in (("lexical_weight", lexical_weight), ("semantic_weight", semantic_weight)):
+        if not isinstance(value, Real) or isinstance(value, bool):
+            raise ValueError(
+                f"MemoryPort.search_hybrid {name!r} must be a real number in [0.0, 1.0] (ADR-085)."
+            )
+        if float(value) < 0.0 or float(value) > 1.0:
+            raise ValueError(
+                f"MemoryPort.search_hybrid {name!r} must be in [0.0, 1.0], got {float(value)} (ADR-085)."
+            )
+    total = float(lexical_weight) + float(semantic_weight)
+    if abs(total - 1.0) > 1e-6:
+        raise ValueError(
+            f"MemoryPort.search_hybrid weights must sum to 1.0, got {total} (ADR-085)."
+        )
 
 
 def validate_zero_trust_write(
@@ -219,6 +251,45 @@ class MemoryPort(Protocol):
         ``EmbeddingsPort`` or ``VectorPort`` is not booted; they MUST
         NOT swallow port-level guard failures (``ValueError`` is
         re-raised so callers see the bug immediately).
+        """
+        ...
+
+    async def search_hybrid(
+        self,
+        query: str,
+        *,
+        corpus: str | None = None,
+        limit: int = 20,
+        lexical_weight: float = 0.5,
+        semantic_weight: float = 0.5,
+        min_score: float = 0.0,
+    ) -> list[MemoryHit]:
+        """Hybrid lexical + semantic retrieval via Reciprocal Rank Fusion (ADR-085).
+
+        Runs a lexical query and ``search_semantic`` in parallel over the same
+        ``corpus``, then fuses the two ranked result lists via RRF with
+        constant ``k=60`` (default; adapters MAY expose a tuned ``k`` via
+        configuration but MUST NOT change the port default). The final score
+        of a hit ``h`` is
+
+            score(h) = lexical_weight * rrf(rank_lexical(h))
+                     + semantic_weight * rrf(rank_semantic(h))
+
+        where ``rrf(r) = 1 / (k + r)`` and hits absent from a list contribute
+        zero for that list.
+
+        ``lexical_weight`` + ``semantic_weight`` MUST sum to 1.0
+        (port-level guard: ``validate_hybrid_weights``). ``min_score``
+        filters out hits below the given fused score.
+
+        Adapters without a native lexical index MUST raise
+        ``NotImplementedError`` — no silent degrade to semantic-only
+        (ADR-085 rule: callers relying on hybrid deserve to know when
+        they aren't getting it).
+
+        Raises:
+            ValueError: port-level weight guard failed.
+            NotImplementedError: adapter has no lexical index.
         """
         ...
 
