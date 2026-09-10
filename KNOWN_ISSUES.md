@@ -92,3 +92,11 @@ Use the `kosmos-log-maintenance` Perplexity Computer skill.
 - **Attempted fixes:** none yet — surfaced by Stage 1.6 Phase 1 verify runs
 - **Next investigation:** `adapters/memory/dozerdb/kosmos_graphiti_embedder.py` (or wherever `KosmosGraphitiEmbedder` is defined) needs to subclass `graphiti_core.embedder.EmbedderClient` or the constructor wiring in `graphiti_temporal_index.py` should adapt to a duck-typed protocol. Also consider: ADR-073 marked GraphitiTemporalIndex path as deprecated — the correct fix may be to delete it entirely (hard-delete deferred per ADR-073 §Consequences).
 - **Related DEBUG_LOG search terms:** "GraphitiTemporalIndex", "EmbedderClient", "KosmosGraphitiEmbedder", "GraphitiClients validation"
+
+### 2026-09-10 — Stage 3.12 exit-gate end-to-end test fails on Cloud
+
+- **Blocks:** no blockers (Stage 3.12 already ratified; failure is Colossus-only expectation drift, not a regression)
+- **Symptom:** `plugins/tektos/tests/test_stage_3_12_exit_gate.py::test_tektos_refactors_real_kosmos_file_end_to_end_passes_ruff_bandit_pytest_build_sequence_3_12_dod` FAILS in Cloud sandbox
+- **Attempted fixes:** confirmed pre-existing at commit 52a7020 via `git stash` — this test was already failing before Stage 8.0 and Stage 8.1 landed; unchanged by either
+- **Next investigation:** either mark the test `@pytest.mark.colossus_only` (matching the Stage 4.6 live-tier pattern) or capture a Cloud-safe fixture snapshot; do NOT re-diagnose without running the Colossus tier first
+- **Related DEBUG_LOG search terms:** "3_12", "exit_gate", "refactor", "ruff bandit pytest"

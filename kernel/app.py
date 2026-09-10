@@ -107,6 +107,14 @@ class _BootRegistry:
         # Downstream call sites MUST tolerate ``None`` (health-check pattern:
         # ``if registry.relational_memory is None: ...``).
         self.relational_memory: Any = None
+        # Stage 8.1 (ADR-103): kernel-owned SessionPort — the 24th formal
+        # port + FSM substrate for Stages 8.2–8.7 (turn loop, reflection,
+        # planner, executor, manager, multi-agent). Populated by
+        # ``_boot_session``. Boots into the ``off`` state by default
+        # (returns None with no warning); explicit opt-in via
+        # ``KOSMOS_SESSION={inmemory,tektos}``. Downstream call sites MUST
+        # tolerate ``None`` (ADR-101 degrade pattern).
+        self.session: Any = None
         # Stage 1.6 Phase 0 (ADR-073): kernel-owned EmbeddingsPort. Separate
         # from ``self.llm`` so chat-only backends (e.g. llama-swap) don't
         # have to satisfy an embeddings surface. Populated by ``_boot_embeddings``.
@@ -653,6 +661,90 @@ async def lifespan(app: FastAPI):
         return adapter
 
     registry.relational_memory = _boot_relational_memory
+
+    # --- Session boot (Stage 8.1 / ADR-103) ---------------------------------
+    # Env contract (ADR-103 D4):
+    #   KOSMOS_SESSION = off | inmemory | tektos             (default: off)
+    #
+    # ``inmemory`` — asyncio-lock-protected in-process adapter. No
+    # dependencies beyond the kernel-owned EventBusPort (mirror is
+    # optional at construction; the in-memory adapter does not emit
+    # events, so bus + memory are not required).
+    # ``tektos`` — fidelity port of the tektos-ultima runtime. Requires
+    # ``registry.event_bus`` (envelope-first ADR-023); optional mirror
+    # to ``registry.relational_memory`` when present.
+    #
+    # Health failure follows the ADR-101 degrade pattern: unhealthy
+    # adapter → registry.session stays None with a warning log; the
+    # app boots and downstream call sites treat None as offline.
+    @_try("session")
+    def _boot_session():
+        import logging as _kosmos_logging
+        import os
+
+        log = _kosmos_logging.getLogger(__name__)
+        mode = os.environ.get("KOSMOS_SESSION", "off").lower().strip()
+
+        _ALLOWED = ("off", "inmemory", "tektos")
+        if mode not in _ALLOWED:
+            raise RuntimeError(
+                "KOSMOS_SESSION=%r is not one of %s (ADR-103 D4)."
+                % (mode, _ALLOWED)
+            )
+
+        if mode == "off":
+            return None  # silent — the default
+
+        if mode == "inmemory":
+            from adapters.session import InMemorySessionAdapter
+
+            adapter = InMemorySessionAdapter()
+            if not adapter.is_healthy():
+                log.warning(
+                    "kosmos.session: inmemory unhealthy at boot; "
+                    "SessionPort offline (ADR-103 D4)"
+                )
+                return None
+            log.info(
+                "kosmos.session: wired (ADR-103); adapter=inmemory"
+            )
+            return adapter
+
+        # mode == "tektos"
+        if registry.event_bus is None:
+            log.warning(
+                "kosmos.session: tektos adapter requires event_bus but "
+                "registry.event_bus is None; SessionPort offline "
+                "(ADR-103 D4)"
+            )
+            return None
+
+        try:
+            from adapters.session import TektosSessionAdapter  # type: ignore[attr-defined]
+        except ImportError:
+            log.warning(
+                "kosmos.session: tektos adapter import failed; "
+                "SessionPort offline (ADR-103 D4)"
+            )
+            return None
+
+        adapter = TektosSessionAdapter(
+            event_bus=registry.event_bus,
+            relational_memory=registry.relational_memory,
+        )
+        if not adapter.is_healthy():
+            log.warning(
+                "kosmos.session: tektos unhealthy at boot; "
+                "SessionPort offline (ADR-103 D4)"
+            )
+            return None
+        log.info(
+            "kosmos.session: wired (ADR-103); adapter=tektos mirror=%s",
+            "on" if registry.relational_memory is not None else "off",
+        )
+        return adapter
+
+    registry.session = _boot_session
 
     # --- Gnosis boot seeder (ADR-064) ----------------------------------------
     # Env-gated by ``KOSMOS_GNOSIS_SEED=1``. Iterates ``ALL_CORPORA`` and

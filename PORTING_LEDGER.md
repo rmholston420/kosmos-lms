@@ -780,3 +780,44 @@ adapters: NoOp (aiosqlite in-memory, required for CI) and Postgres
   pg_uuidv7 — first-class rather than approximated through the ORM)
 - **ADR:** ADR-102 D3, D7 (no auto-migrate on boot)
 - **Logged:** 2026-09-10 05:00 EDT
+
+## Stage 8.1 — SessionPort (ADR-103)
+
+#### Tektos-Ultima `state_machine.py` — VENDORED
+- **Source:** https://github.com/rmholston420/tektos-ultima
+- **Commit / Version:** as of `/home/user/workspace/audit/tektos-ultima` snapshot, 2026-09-10
+- **License:** MIT — re-licensed only at port-in-point; kosmos-lms declares
+  MIT; rmholston420 is sole copyright holder on both projects
+- **Kosmos location:** `adapters/session/tektos/vendor/state_machine.py` (235 lines)
+- **Port(s):** SessionPort (adapters/session/tektos/adapter.py)
+- **Modifications:** single import rewrite (ADR-103 D2):
+  - `from tektos.event_bus import get_event_bus` →
+    `from adapters.session.tektos.vendor_bindings import get_event_bus`
+    (shim wraps 3-arg positional `publish(event_type, session_id, payload)`
+    into an envelope-first `EventBusPort.publish(EventEnvelope)` — the
+    only concession needed to bridge donor's pre-ADR-023 publish surface)
+- **ADR:** ADR-103
+- **Logged:** 2026-09-10 05:24 EDT
+
+#### Tektos-Ultima `runtime/session.py` — VENDORED
+- **Source:** https://github.com/rmholston420/tektos-ultima
+- **Commit / Version:** as of `/home/user/workspace/audit/tektos-ultima` snapshot, 2026-09-10
+- **License:** MIT — re-licensed only at port-in-point
+- **Kosmos location:** `adapters/session/tektos/vendor/session.py` (494 lines)
+- **Port(s):** SessionPort (adapters/session/tektos/adapter.py)
+- **Modifications:** three import rewrites (ADR-103 D2):
+  - `from tektos.state_machine import State, get_state_machine` →
+    `from adapters.session.tektos.vendor.state_machine import State, get_state_machine`
+    (retargets to the vendored sibling so the two donor files stay a
+    self-consistent unit under `vendor/`)
+  - `from tektos.store.event_store import append_event` →
+    `from adapters.session.tektos.vendor_bindings import append_event`
+    (shim routes lifecycle events through the same EventBusPort used
+    by state transitions; the SQLite event store is deferred to Stage
+    13 per ADR-103 D3)
+  - Function-local `from tektos.store.event_store import delete_session
+    as store_delete` → `from adapters.session.tektos.vendor_bindings
+    import store_delete` (shim returns 0 with an INFO log at Stage 8.1)
+- **ADR:** ADR-103 (D2 fidelity port, D3 store deferral, D7 SessionState
+  naming precedence)
+- **Logged:** 2026-09-10 05:24 EDT
