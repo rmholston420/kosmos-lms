@@ -512,11 +512,17 @@ _Inserted 2026-09-10 by ADR-078. Full expansion per stage in `docs/plans/KOSMOS_
 - **DoD:** every self-modification write to `MemoryPort` carries `provenance=tektos_self_modification` with `confidence ≤ 0.9` (Stage 5.6 uses `0.85`); a scripted self-modification proposal round-trips through `ApprovalPort` and is denied without user approval (verified by `plugins/tektos/self_repair/test_proposer.py::test_deny_path_end_to_end_writes_denial_triple`); ADR-090 remains PROPOSED (no ratification in this stage).
 - **ADRs:** ADR-090 (PROPOSED, DEFERRED — SelfModificationPort surface), ADR-095 (RATIFIED — Stage 5.6 propose-only scope: D1 vendor-primitives-only, D2 two Kosmos-native proposers, D3 HUMAN_REQUIRED tier, D4 deny-path memory triple, D5 no SelfModificationPort file lands).
 
-### Stage 6.5 — Voice + Vision port-in
+### Stage 6.5 — Voice + Vision port-in — LANDED 2026-09-10 · ADR-096 / ADR-097 / ADR-098
 
-- **Ports touched:** `VoicePort` (ADR-083), `VisionPort` (ADR-084)
-- **What lands:** `VoicePort` Protocol + first adapter (Colossus local STT/TTS candidate to be selected per `kosmos-port-workflow`); `VisionPort` Protocol + first adapter (multimodal image ingest for Tektos frontend panels).
-- **DoD:** both port contract tests pass; VoicePort round-trips a short utterance; VisionPort round-trips a small PNG through Tektos frontend and back into `MemoryPort` with `provenance=tektos_frontend` and `confidence=1.0`.
+- **Ports touched:** `VoicePort` (ADR-083 surface already locked at Stage 1); `VisionPort` (ADR-084 surface already locked at Stage 1); `MemoryPort` (ADR-096 D1 two-write pattern for `tektos_frontend` provenance)
+- **What lands:**
+    - **Voice adapters** (ADR-097): `adapters/voice/noop/NoOpVoiceAdapter` + `adapters/voice/faster_whisper/FasterWhisperVoiceAdapter` (STT; TTS raises `TTSNotConfigured` — Piper GPL-blocked, Coqui MPL-fork evaluation deferred to Stage 6.5+1).
+    - **Vision adapters** (ADR-098): `adapters/vision/noop/NoOpVisionAdapter` + `adapters/vision/ollama_qwen_vl/OllamaQwenVLVisionAdapter` (`describe` + `detect` via `qwen2.5-vl:7b`, Apache-2.0) + `adapters/vision/tesseract/TesseractVisionAdapter` (`extract_text` via pytesseract, Apache-2.0). Split-adapter design (ADR-098 D2): each adapter raises `VisionCapabilityUnsupported` on verbs it does not implement.
+    - **Blob store helper** (ADR-096 D3): `adapters/data/blobs/BlobStore` — content-addressed sha256 storage; not a formal port.
+    - **Frontend memory writer** (ADR-096 D1): `adapters/tektos_frontend/TektosFrontendMemoryWriter` implements the two-write pattern (ingest triple `confidence=1.0` + result triple `confidence=<result.confidence>` passthrough) so both voice and vision adapters share one code path for MemoryPort writes.
+- **DoD:** both port contract tests pass (`tests/ports/test_voice_protocol.py`, `tests/ports/test_vision_protocol.py`); each of the 5 Stage 6.5 adapters has its own `test_contract.py` asserting `isinstance(<adapter>, VoicePort|VisionPort)`; `TektosFrontendMemoryWriter` round-trips a voice utterance and a vision PNG into `MemoryPort` as exactly two events per call (`tektos_frontend.ingested` @ `confidence=1.0`; `tektos_frontend.<verb>` @ `confidence=result.confidence`). Full regression: 1420 passed / 6 pre-existing failed / 14 skipped (baseline delta: +64 new pass, zero new fail).
+- **Explicit exclusions (deferred):** TTS engine selection (Stage 6.5+1 ADR after Coqui-fork benchmark); VoicePort streaming variants; wake-word + VAD + VoiceManager orchestration (would require a new `VoiceOrchestrationPort`); browser-side audio/image capture in the Tektos iframe (Stage 6.6).
+- **ADRs:** ADR-083 (VoicePort surface — pre-existing), ADR-084 (VisionPort surface — pre-existing), **ADR-096** (Stage 6.5 scope + two-write pattern), **ADR-097** (VoicePort adapter selection: faster-whisper STT + TTS deferred), **ADR-098** (VisionPort adapter selection: Qwen2.5-VL via Ollama + Tesseract OCR).
 
 ### Stage 7.4 — Hindsight migration (H1 → H2)
 

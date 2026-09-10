@@ -594,3 +594,90 @@ Source repo: `rmholston420/tektos-ultima` (public, no LICENSE file at source; so
 - **Port(s):** N/A (build infrastructure)
 - **Modifications:** six-job base (ruff, mypy, pytest, next build, eslint, Playwright chromium) plus two new jobs — Kosmos port-contract tests (`pytest tests/ports/`) and AST plugin-isolation guard (`scripts/check_plugin_isolation.py` enforcing ADR-007).
 - **ADR:** ADR-077
+
+---
+
+## Stage 6.5 — Voice + Vision port-in (2026-09-10)
+
+#### faster-whisper (SYSTRAN) — HAND-BUILT (donor-informed) (Stage 6.5)
+- **Source:** https://github.com/SYSTRAN/faster-whisper (pip: `faster-whisper`); design lineage from donor `https://github.com/rmholston420/tektos-ultima/blob/main/src/tektos/voice.py` (`STTEngine` class, lines 102–149)
+- **Commit / Version:** faster-whisper as installed at Stage 6.5 (pinned via optional `voice` extra); donor upstream commit `2b45cac1f9ac214c85ff53571b949445b5415209`
+- **License:** MIT (faster-whisper) — dependency `CTranslate2` also MIT; donor re-licensed MIT at port-in
+- **Kosmos location:** `adapters/voice/faster_whisper/adapter.py`
+- **Port(s):** `VoicePort` (transcribe only; synthesize raises `TTSNotConfigured` per ADR-097 D3)
+- **Modifications:** rewrite behind port — async wrapper around `WhisperModel.transcribe`; env-tunable model/device/compute-type (`KOSMOS_WHISPER_MODEL`/`_DEVICE`/`_COMPUTE_TYPE`); per-segment confidence derived from `avg_logprob` via `exp()` with `[0.0, 1.0]` clamp; aggregate confidence = mean of segment confidences; segments streamed through a bounded list; MIME → suffix table for temp-file spool; graceful `is_healthy()` false when `faster_whisper` import unavailable
+- **ADR:** ADR-097 (VoicePort adapter selection)
+- **Logged:** 2026-09-10 02:48 EDT
+
+#### NoOp VoicePort adapter — HAND-BUILT (Stage 6.5)
+- **Source:** Kosmos-native (no upstream)
+- **License:** MIT (kosmos-lms scaffold policy)
+- **Kosmos location:** `adapters/voice/noop/adapter.py`
+- **Port(s):** `VoicePort`
+- **Modifications:** N/A; ships a 44-byte-header silent WAV (100 ms @ 8 kHz mono 8-bit PCM) for `synthesize`; empty `Transcript` for `transcribe`; single `noop`/`No-op`/`und`/`neutral` VoiceProfile
+- **ADR:** ADR-097 D4
+- **Logged:** 2026-09-10 02:48 EDT
+
+#### rhasspy/piper + OHF-Voice/piper1-gpl — EVALUATED-REJECTED (Stage 6.5)
+- **Source:** https://github.com/rhasspy/piper (archived 2025-10-06); active fork https://github.com/OHF-Voice/piper1-gpl
+- **License:** rhasspy/piper was MIT; active fork `piper1-gpl` is **GPL-3.0**; runtime dep `espeak-ng` also GPL
+- **Reason for rejection:** fails `kosmos-port-workflow` §3 permissive-license filter (GPL viralizes the kosmos-lms monorepo). No user override sought — TTS is not on the Stage 6.5 DoD critical path; deferred to Stage 6.5+1 ADR (ADR-097 D3) after Coqui-fork benchmark.
+- **ADR:** ADR-097 D3
+
+#### edge-tts — EVALUATED-REJECTED (Stage 6.5)
+- **Source:** https://github.com/rany2/edge-tts (donor `src/tektos/voice.py` TTSVoice used this)
+- **License:** LGPL-3.0 (library) — the runtime engine is Microsoft Edge's **cloud** TTS service
+- **Reason for rejection:** violates persistent user preference "free, self-hosted, open-source tooling that runs on Linux" (relies on Microsoft cloud endpoint). TTS engine selection deferred per ADR-097 D3.
+- **ADR:** ADR-097 D3
+
+#### TTS engine selection — PLANNED (post-Stage 6.5)
+- **Candidates for post-Stage 6.5 benchmark:** `idiap/coqui-ai-TTS` (MPL-2.0 — most active Coqui fork), StyleTTS2 (MIT), Kokoro-82M (Apache-2.0), OpenVoice-derived forks
+- **Trigger:** Stage 6.5+1 ADR when a downstream feature requires synthesis
+- **Interim:** `FasterWhisperVoiceAdapter.synthesize` raises `TTSNotConfigured`; `NoOpVoiceAdapter` returns silent WAV for CI
+- **ADR:** ADR-097 D3
+
+#### Qwen2.5-VL 7B via Ollama — HAND-BUILT (Stage 6.5)
+- **Source:** https://ollama.com/library/qwen2.5-vl (upstream model: https://github.com/QwenLM/Qwen2.5-VL); no donor code (Kosmos-native adapter)
+- **Commit / Version:** `qwen2.5-vl:7b` at Ollama registry; adapter default overridable via env `KOSMOS_VISION_MODEL`
+- **License:** Apache-2.0 (Qwen2.5-VL model + Ollama runtime)
+- **Kosmos location:** `adapters/vision/ollama_qwen_vl/adapter.py`
+- **Port(s):** `VisionPort` (describe + detect; extract_text raises `VisionCapabilityUnsupported` per ADR-098 D3)
+- **Modifications:** N/A (no upstream code); async `httpx.AsyncClient` wrapper for `POST /api/generate` with base64-encoded `images` array; JSON-mode prompt for `detect` with robust parser tolerating top-level list, `{"detections": [...]}`  dict, or lone dict; malformed entries silently skipped; loopback-only base URL by default (`KOSMOS_OLLAMA_BASE_URL`); confidence for `describe` = 0.5 placeholder (model emits none); confidence for `detect` = per-entry JSON field with default 0.5; `is_healthy()` probes `GET /api/tags` with 2 s timeout
+- **ADR:** ADR-098 (VisionPort adapter selection)
+- **Logged:** 2026-09-10 02:48 EDT
+
+#### Tesseract + pytesseract — HAND-BUILT (Stage 6.5)
+- **Source:** https://github.com/tesseract-ocr/tesseract + https://github.com/madmaze/pytesseract; no donor code
+- **License:** Apache-2.0 (both)
+- **Kosmos location:** `adapters/vision/tesseract/adapter.py`
+- **Port(s):** `VisionPort` (extract_text; describe + detect raise `VisionCapabilityUnsupported` per ADR-098 D2)
+- **Modifications:** async wrapper around `pytesseract.image_to_data(output_type=DICT)`; per-block confidence normalised to `[0.0, 1.0]` via `conf/100`; blocks with `conf == -1` (Tesseract's "no OCR" sentinel) excluded from both text join and aggregate; aggregate confidence = mean of surviving block confidences; graceful `is_healthy()` false when binary missing; system `tesseract-ocr` binary path overridable via env `KOSMOS_TESSERACT_CMD`
+- **ADR:** ADR-098
+- **Logged:** 2026-09-10 02:48 EDT
+
+#### NoOp VisionPort adapter — HAND-BUILT (Stage 6.5)
+- **Source:** Kosmos-native
+- **License:** MIT
+- **Kosmos location:** `adapters/vision/noop/adapter.py`
+- **Port(s):** `VisionPort`
+- **Modifications:** N/A; empty `VisionDescription` (`model="noop"`); empty `OCRResult`; empty detections tuple; all confidences `0.0`
+- **ADR:** ADR-098 D1
+- **Logged:** 2026-09-10 02:48 EDT
+
+#### Kosmos BlobStore (content-addressed) — HAND-BUILT (Stage 6.5)
+- **Source:** Kosmos-native
+- **License:** MIT
+- **Kosmos location:** `adapters/data/blobs/blob_store.py`
+- **Port(s):** N/A — helper, not a formal Kosmos port (per ADR-096 D3 rationale)
+- **Modifications:** N/A; two-method sync API (`put_bytes(data) -> sha256_hex`, `open_path(sha256_hex) -> Path`); sha256 sharded 2-char prefix layout; atomic write via tempfile + `os.replace`; env `KOSMOS_BLOB_ROOT` override; idempotent — repeated writes of identical bytes are a no-op
+- **ADR:** ADR-096 D3
+- **Logged:** 2026-09-10 02:48 EDT
+
+#### Kosmos TektosFrontendMemoryWriter (two-write pattern) — HAND-BUILT (Stage 6.5)
+- **Source:** Kosmos-native
+- **License:** MIT
+- **Kosmos location:** `adapters/tektos_frontend/frontend_memory_writer.py`
+- **Port(s):** consumes `MemoryPort` + `BlobStore`; shared by all Stage 6.5 voice + vision adapters
+- **Modifications:** N/A; four record methods (voice, vision-description, vision-OCR, vision-detections); every call fans out to exactly two `MemoryPort.write_event` calls per ADR-096 D1 (ingest triple `confidence=1.0` + result triple with passthrough confidence per ADR-083/084); detection aggregate confidence = mean of per-detection confidences (empty → 0.0); result summary strings capped at 4 KiB / 256-char detection summary; raw bytes NEVER enter MemoryPort (bytes → BlobStore, URI + hash → MemoryPort)
+- **ADR:** ADR-096 D1
+- **Logged:** 2026-09-10 02:48 EDT

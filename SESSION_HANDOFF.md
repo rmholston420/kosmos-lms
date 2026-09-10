@@ -1,24 +1,40 @@
-# Kosmos Session Handoff — 2026-09-10 02:36 EDT
+# Kosmos Session Handoff — 2026-09-10 03:01 EDT
 
 ## Current build-sequencing position
-- **Stage / phase:** Stage 5.6 COMPLETE — self-improvement + self-repair propose-only landed under ADR-095
-- **Plugin / kernel component:** `plugins/tektos/self_improve/` + `plugins/tektos/self_repair/` (proposers only; engines DEFERRED post-ADR-090)
-- **Port(s) in progress:** none — Stage 5.6 uses existing `ApprovalGatewayPort` + `MemoryPort` + `EventBusPort` (no new port surface; `ports/self_modification.py` does NOT land in 5.6 per ADR-095 D5)
+
+- **Stage / phase:** Stage 6.5 (Voice + Vision port-in) — **LANDED**; ready to hand off to next stage (Stage 7.4 per Build-Sequence-v26 ordering)
+- **Plugin / kernel component:** `adapters/voice/{noop,faster_whisper}` + `adapters/vision/{noop,ollama_qwen_vl,tesseract}` + `adapters/data/blobs/` + `adapters/tektos_frontend/`
+- **Port(s) in progress:** none — `VoicePort` + `VisionPort` first-batch adapters shipped
 
 ## Completed this session
-- ADR-095 authored (Ratified v26, Stage 5.6, 5 decisions D1–D5, 221 lines)
-- Vendored donor data-model primitives (`adapters/tektos/vendor/self_repair_models_donor.py` 193 lines + `self_improve_models_donor.py` 78 lines) — upstream commit `2b45cac1f9ac214c85ff53571b949445b5415209`
-- `plugins/tektos/self_improve/proposer.py` (257 lines) landed — `SelfImprovementProposer` + `SelfImprovementProposal`
-- `plugins/tektos/self_repair/proposer.py` (275 lines) landed — `SelfRepairProposer` + `SelfRepairProposal`
-- 13 contract tests × all green; regression: zero new failures (6 pre-existing MemoryPort protocol drift on baseline `eb1d0b4`, unchanged)
-- Spec fan-out: Build-Sequence-v26 Stage 5.6 stanza LANDED marker + PORTING_LEDGER 4 new rows (2 VENDORED + 1 HAND-BUILT + 1 DEFERRED) + ADRs README ADR-095 row + open-decisions sentence
+
+- ADR-096 (Voice + Vision scope + `tektos_frontend` two-write pattern) — Ratified 2026-09-10
+- ADR-097 (VoicePort adapter selection: faster-whisper STT + TTS deferred) — Ratified 2026-09-10
+- ADR-098 (VisionPort adapter selection: Qwen2.5-VL via Ollama + Tesseract) — Ratified 2026-09-10
+- `BlobStore` helper landed at `adapters/data/blobs/blob_store.py` (13/13 contract tests green)
+- `TektosFrontendMemoryWriter` (two-write pattern) landed at `adapters/tektos_frontend/frontend_memory_writer.py` (7/7 contract tests green)
+- `NoOpVoiceAdapter` + `FasterWhisperVoiceAdapter` landed under `adapters/voice/` (17/17 contract tests green)
+- `NoOpVisionAdapter` + `OllamaQwenVLVisionAdapter` + `TesseractVisionAdapter` landed under `adapters/vision/` (29/29 contract tests green)
+- Full-suite regression: **1420 passed / 6 pre-existing failed / 14 skipped in 12.81s** (baseline 1356/6/14 → +64 new pass, zero new failures)
+- Spec fan-out: Build-Sequence-v26 Stage 6.5 stanza → LANDED marker; `PORTING_LEDGER.md` +10 rows under new Stage 6.5 section (7 HAND-BUILT + 2 EVALUATED-REJECTED + 1 PLANNED); `docs/adrs/README.md` +3 rows (ADR-096/097/098); "Remaining open decisions" sentence updated to list ADR-090 + TTS engine selection
+- BUILD_LOG.md: 8 new entries (ADRs authored, BlobStore, MemoryWriter, Voice adapters, Vision adapters, regression check, spec fan-out)
+- This SESSION_HANDOFF.md overwritten to reflect current state
 
 ## Remaining before current Definition of Done
-- git commit + push (message: "Stage 5.6: Self-improvement + self-repair propose-only (ADR-095)")
+
+- Stage 6.5 DoD is met. Remaining bookkeeping for this session: `git add` + `git commit` + `git push origin main` — see Exact next action below.
 
 ## Open questions / awaiting user answer
-- none
+
+- None. TTS engine selection is intentionally deferred to a Stage 6.5+1 ADR per ADR-097 D3 (blocked on a Coqui MPL-fork benchmark — not on user input).
 
 ## Exact next action
-- `git add -A && git commit -m "Stage 5.6: Self-improvement + self-repair propose-only (ADR-095)" && git push origin main`
-- Next stage: **Stage 6.5 (Voice + Vision port-in)** per Build-Sequence-v26
+
+```
+cd /home/user/workspace/audit/kosmos-lms && \
+  git add -A && \
+  git commit -m "Stage 6.5: Voice + Vision port-in — STT + Vision adapters, TTS deferred (ADR-096/097/098)" && \
+  git push origin main
+```
+
+After push lands, next work slice per Build-Sequence-v26 is **Stage 7.4** (per user's persistent build ordering); start the new session by reading this file first.
