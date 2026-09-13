@@ -821,3 +821,58 @@ adapters: NoOp (aiosqlite in-memory, required for CI) and Postgres
 - **ADR:** ADR-103 (D2 fidelity port, D3 store deferral, D7 SessionState
   naming precedence)
 - **Logged:** 2026-09-10 05:24 EDT
+
+## Stage 8.6 — Tektos S3 Manager engine (ADR-108)
+
+#### Tektos manager engine — VENDORED
+- **Source:** https://github.com/rmholston420/tektos-ultima
+- **Commit / Version:** as of `/home/user/workspace/audit/tektos-ultima` snapshot, 2026-09-13
+- **License:** MIT — re-licensed only at port-in-point; kosmos-lms declares
+  MIT; rmholston420 is sole copyright holder on both projects
+- **Kosmos location:** `plugins/tektos/manager/{__init__.py, models.py,
+  guardrails.py, archetype_tracker.py, engine.py, api.py}`
+- **Port(s):** port-consuming rewrite; no new formal port. Consumes
+  `RelationalMemoryPort` (required), `EventBusPort` (optional, envelope-first
+  per ADR-023), `ImmunePort` (optional; primary guardrail surface),
+  `ObservabilityPort` (optional; replaces donor in-process
+  `PrimeMoverMetrics.samples` accumulator)
+- **Modifications:** rewrite of donor
+  `tektos-ultima/src/tektos/agents/manager/{orchestrator,archetype_tracker,
+  metrics,guardrails}.py` (~1646 LOC across four files) as five Kosmos-native
+  files (~1291 LOC). Donor pydantic models → frozen slotted dataclasses;
+  donor in-process `PrimeMoverMetrics.samples` accumulator dropped in favour
+  of `ObservabilityPort.score`; donor inline guardrail regex tables
+  (`_SECRET_PATTERNS`, `_COMPUTE_PATTERNS`) preserved verbatim as
+  `plugins/tektos/manager/guardrails.py` and used only as a fallback scan
+  when `ImmunePort` is unbound OR raises. Donor threshold table preserved
+  verbatim as module-level pure `_check_threshold(name, value)` (direction
+  semantics: `below` = lower-is-better, `above` = higher-is-better). Donor
+  `agents/manager/telemetry.py` (RTX 5090 pynvml + Unix-socket fan
+  controller) REJECTED — `ThermalPort` (ADR-081) owns the threshold table.
+  ADR-007 preserved: `ports.immune.ImmuneScanRequest` import is lazy inside
+  `_scan_guardrails` to keep module-load imports clean. Every port call
+  wrapped in `try/except Exception` with `log.exception(...)`; ring buffer
+  of last N feedbacks always populated (fail-open per ADR-108 D10).
+- **ADR:** ADR-108 (D2 rewrite; D3 write surface; D4 five locked constants;
+  D5 `TektosPlugin.manager` dataclass slot; D6 bespoke kernel boot; D7
+  three envelope-first event types; D8 seven FastAPI routes; D9 pure
+  `classify_recovery` discharges ADR-107 D9 point 1; D10 fail-open)
+- **Logged:** 2026-09-13 12:05 EDT
+
+#### Tektos archetype tracker — VENDORED
+- **Source:** https://github.com/rmholston420/tektos-ultima
+- **Commit / Version:** as of `/home/user/workspace/audit/tektos-ultima` snapshot, 2026-09-13
+- **License:** MIT — re-licensed only at port-in-point
+- **Kosmos location:** `plugins/tektos/manager/archetype_tracker.py`
+- **Port(s):** plugin-internal helper consumed by `TektosManager`; no
+  formal port at 8.6.
+- **Modifications:** rewrite of donor
+  `tektos-ultima/src/tektos/agents/manager/archetype_tracker.py` (~180 LOC)
+  as a Kosmos-native frozen-record tracker (~163 LOC). Donor pydantic model
+  → frozen slotted dataclass; ring-buffer records rebuilt via
+  `dataclasses.replace` to preserve immutability + slot layout on update.
+  Recognises the same five archetypes as the donor (`success_pattern`,
+  `failure_pattern`, `recovery_pattern`, `optimization_pattern`,
+  `interaction_pattern`).
+- **ADR:** ADR-108 (D2 rewrite; part of manager subpackage)
+- **Logged:** 2026-09-13 12:05 EDT

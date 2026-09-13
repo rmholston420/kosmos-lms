@@ -191,6 +191,16 @@ class TektosPlugin:
     executor: object | None = field(default=None)
     tool_router: object | None = field(default=None)
 
+    # Stage 8.6 (ADR-108 D5): optional handle to the kernel-wired
+    # Tektos S3 Manager engine (VSM variety regulator + guardrail
+    # enforcer). Populated by ``kernel/app.py::_boot_tektos_manager``
+    # when ``KOSMOS_TEKTOS_MANAGER=on`` and ``registry.relational_memory``
+    # is bound. The manager also picks up ``registry.event_bus``,
+    # ``registry.immune``, and ``registry.observability`` when wired
+    # (falls open per ADR-108 D9 when any are unwired). ``object | None``
+    # typing per same ADR-007 rationale above.
+    manager: object | None = field(default=None)
+
     _started: bool = field(default=False, init=False, repr=False)
     _registration: PluginRegistration | None = field(
         default=None, init=False, repr=False

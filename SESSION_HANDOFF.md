@@ -1,38 +1,34 @@
-# Kosmos Session Handoff — 2026-09-10 07:45 EDT
+# Kosmos Session Handoff — 2026-09-13 12:05 EDT
 
 ## Current build-sequencing position
-- **Stage / phase:** Stage 8.5 COMPLETE → Stage 8.6 next (Tektos agent manager)
-- **Plugin / kernel component:** `plugins/tektos/` — executor package landed; manager subpackage next
-- **Port(s) in progress:** none (Stage 8.5 was port-consuming; Stage 8.6 also expected to be port-consuming per Plan v2)
+
+- **Stage / phase:** Stage 8.6 · LANDED (ADR-108)
+- **Plugin / kernel component:** `plugins/tektos/manager/` · Tektos S3 Manager engine (VSM System-3 variety regulator + guardrail enforcer)
+- **Port(s) in progress:** none — no new formal port at 8.6 (port-consuming rewrite); consumes `RelationalMemoryPort` (required), `EventBusPort` / `ImmunePort` / `ObservabilityPort` (all optional); `TektosPlugin` dataclass gained one new optional slot `manager: object | None = None`
 
 ## Completed this session
-- ADR-107 filed at `docs/adrs/ADR-107-tektos-executor-and-tool-router.md` (D1–D12)
-- ADR-107 row added to `docs/adrs/README.md` between ADR-106 and ADR-090
-- ADR-107 row added to `docs/Kosmos-Build-Spec-v26.md` §17 above ADR-106
-- Stage 8.5 stanza appended to `docs/Kosmos-Build-Sequence-v26.md` after Stage 8.4
-- Two VENDORED entries appended to `docs/PORTING_LEDGER.md` (Tektos spec-executor + Tektos tool-router)
-- `plugins/tektos/executor/{__init__.py, models.py, engine.py, api.py}` landed (TektosSpecExecutor + TektosToolRouter + verbatim donor scaffold helpers + `build_spec_executor_router` + `build_tool_router_router`)
-- `plugins/tektos/plugin.py` grew `executor` + `tool_router` optional fields
-- `kernel/app.py` grew two `_BootRegistry` slots + `_boot_tektos_tool_router` (via shared `_boot_stage_8_x_engine`) + `_boot_tektos_executor` (bespoke, consumes optional `registry.sandbox`) + registry assignments
-- Four new test modules — 71 tests green (29 spec-executor engine + 20 tool-router engine + 9 routers + 13 kernel wiring)
-- Full regression on plugin/kernel testpaths: **1708 passed / 21 skipped / 1 deselected** (baseline 1650 + 58 delta)
-- BUILD_LOG entry appended (2026-09-10 07:45 EDT)
+
+- Stage 8.6 donor audit — Tektos Manager (delivered as `Stage 8.6 Donor Audit — Tektos Manager` shared asset, asset_id `d3e550a4-b88e-45e9-9388-58c1d15fca95`)
+- **ADR-108 authored + implemented + fanned out** (this session):
+  - `docs/adrs/ADR-108-tektos-manager.md` (239 lines · D1–D12 + R1–R4)
+  - `docs/adrs/README.md` — ADR-108 row inserted
+  - `docs/Kosmos-Build-Spec-v26.md` — ADR-108 row inserted in §17 above ADR-107
+  - `docs/Kosmos-Build-Sequence-v26.md` — Stage 8.6 stanza appended after Stage 8.5 stanza
+  - `PORTING_LEDGER.md` — two new VENDORED entries (manager engine + archetype tracker)
+  - `BUILD_LOG.md` — 2026-09-13 12:05 EDT entry appended
+- Manager subpackage landed at `plugins/tektos/manager/{__init__.py, models.py, guardrails.py, archetype_tracker.py, engine.py, api.py}` (1561 total LOC including docstrings)
+- Kernel wiring: `_BootRegistry.tektos_manager` slot + bespoke `_boot_tektos_manager` @_try (consumes optional `event_bus`, `immune`, `observability` in addition to required `relational_memory`; env-gate `KOSMOS_TEKTOS_MANAGER={off,on}`, default `off`, unknown → `RuntimeError`; degrade-to-None with WARN log per ADR-101). `TektosPlugin` dataclass grew `manager: object | None = None`.
+- Test surface: 75 new tests green (36 engine + 14 archetype tracker + 6 guardrails + 12 router + 7 kernel wiring)
+- Full regression: **1775 passed / 21 skipped / 1 failed** on plugin/kernel testpaths. The one failure is `test_stage_3_12_exit_gate.py::test_tektos_refactors_real_kosmos_file_end_to_end` — pre-existing environmental (asserts `.venv/bin/ruff` absent in sandbox), unrelated to 8.6 (`git status` confirms untouched)
 
 ## Remaining before current Definition of Done
-- (none — Stage 8.5 DoD met; commit + tag + push next)
+
+- **DoD MET.** `git commit` + `git tag stage-8-6-complete` + push to `rmholston420/kosmos-lms` remains as the closeout.
 
 ## Open questions / awaiting user answer
+
 - none
 
 ## Exact next action
-- Commit + tag `stage-8-5-complete` + push (single command in the plan; use `api_credentials=["github"]`):
-```bash
-cd /home/user/workspace/audit/kosmos-lms && \
-  git -c user.email="agent@kosmos-lms.local" -c user.name="Kosmos Agent" \
-    add -A && \
-  git -c user.email="agent@kosmos-lms.local" -c user.name="Kosmos Agent" \
-    commit -m "Stage 8.5 · ADR-107 Tektos executor + tool-router engines" && \
-  git tag stage-8-5-complete && \
-  git push --tags origin HEAD
-```
-- After push: begin Stage 8.6 Tektos agent manager (donor audit → ADR-108 → implementation → tests → docs fanout → commit).
+
+- `cd /home/user/workspace/audit/kosmos-lms && git add -A && git commit -m "Stage 8.6 · ADR-108 Tektos S3 Manager engine" && git tag stage-8-6-complete && git push origin HEAD && git push origin stage-8-6-complete`
