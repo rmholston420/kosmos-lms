@@ -1,25 +1,47 @@
 import { test, expect } from "@playwright/test";
 
-// Stage 2 microfrontend shell integration (ADR-091).
+// Tektos integration Stage 9.2 (ADR-109) — the ADR-091 microfrontend
+// shell moved to /tektos-ultima/legacy; the native dashboard now owns
+// /tektos-ultima (real Kosmos page driving the Tektos API through the
+// kernel gateway at /api/tektos-ultima/gateway/*).
 //
 // Covers:
-//   • /tektos-ultima renders the Kosmos shell page with iframe + heading.
-//   • The iframe carries the ADR-089 DEFAULT_IFRAME_SANDBOX attribute and
-//     the same-origin /tektos-ultima/frontend/ src (kernel reverse proxy).
-//   • The reverse proxy responds 502 with the documented diagnostic when
-//     no upstream Tektos-Ultima dev server is running (CI baseline).
+//   • /tektos-ultima renders the native dashboard (heading, status
+//     pill, upstream line, 14 subsystem cards, legacy link).
+//   • The kernel gateway health probe returns the typed ADR-109
+//     envelope ({upstream, reachable, status_code, body?}) — 200 when
+//     the Tektos API is up, 503 with `tektos_ultima_unavailable` when
+//     down.
+//   • /tektos-ultima/legacy renders the preserved ADR-091 iframe with
+//     the ADR-089 sandbox attribute and same-origin src.
 //   • The bridge endpoint accepts a valid tektos.* envelope and returns
-//     202 + event_id.
-//   • The bridge endpoint rejects a non-tektos.* namespace with 400.
+//     202 + event_id; rejects non-tektos.* namespaces with 400.
 //   • Every HTML response carries CSP `frame-ancestors 'self'` per
-//     KosmosIframeCSPMiddleware.
+//     KosmosIframeCSPMiddleware (retires in Stage 9.5).
 
 const DEFAULT_IFRAME_SANDBOX = "allow-same-origin allow-scripts allow-forms";
 const FRONTEND_PATH = "/tektos-ultima/frontend/";
 const BRIDGE_PATH = "/api/tektos-ultima/bridge";
+const GATEWAY_HEALTH = "/api/tektos-ultima/gateway/health";
+const CARD_IDS = [
+  "immune",
+  "thermal",
+  "inference",
+  "memory",
+  "rag",
+  "skills",
+  "tools",
+  "models",
+  "plugins",
+  "neo4j",
+  "postgres",
+  "redis",
+  "hindsight",
+  "self_repair",
+];
 
-test.describe("Tektos-Ultima microfrontend shell (ADR-091)", () => {
-  test("shell page renders iframe + heading with ADR-089 sandbox", async ({
+test.describe("Tektos-Ultima native dashboard (Stage 9.2, ADR-109)", () => {
+  test("dashboard renders heading, status pill, upstream line, legacy link", async ({
     page,
   }) => {
     await page.goto("/tektos-ultima/");
@@ -28,31 +50,64 @@ test.describe("Tektos-Ultima microfrontend shell (ADR-091)", () => {
     await expect(page.getByTestId("tektos-ultima-heading")).toHaveText(
       "Tektos-Ultima",
     );
-
-    const iframe = page.getByTestId("tektos-ultima-iframe");
-    await expect(iframe).toBeAttached();
-    await expect(iframe).toHaveAttribute("src", FRONTEND_PATH);
-    await expect(iframe).toHaveAttribute("sandbox", DEFAULT_IFRAME_SANDBOX);
-    await expect(iframe).toHaveAttribute(
-      "title",
-      "Tektos-Ultima autonomous coding agent",
+    await expect(page.getByTestId("tektos-ultima-status-pill")).toBeVisible();
+    await expect(page.getByTestId("tektos-ultima-upstream")).toContainText(
+      ":",
+    );
+    await expect(page.getByTestId("tektos-ultima-legacy-link")).toHaveText(
+      "Legacy UI →",
     );
   });
 
-  test("reverse proxy returns 502 with diagnostic when upstream absent", async ({
-    request,
+  test("dashboard renders one card per subsystem, each with a status", async ({
+    page,
   }) => {
-    // CI does not run a Tektos-Ultima dev server on :5556; the proxy
-    // MUST surface a machine-parseable diagnostic rather than a raw
-    // connection error.
-    const response = await request.get(`${FRONTEND_PATH}`);
-    expect(response.status()).toBe(502);
-    const body = await response.json();
-    expect(body.error).toBe("tektos_ultima_upstream_unreachable");
-    expect(typeof body.upstream).toBe("string");
-    expect(body.hint).toContain("KOSMOS_TEKTOS_ULTIMA_UPSTREAM");
+    await page.goto("/tektos-ultima/");
+
+    for (const id of CARD_IDS) {
+      const card = page.getByTestId(`tektos-ultima-card-${id}`);
+      await expect(card, `card ${id}`).toBeVisible();
+      await expect(
+        page.getByTestId(`tektos-ultima-card-status-${id}`),
+        `status ${id}`,
+      ).toBeVisible();
+    }
   });
 
+  test("gateway health probe returns the ADR-109 typed envelope", async ({
+    request,
+  }) => {
+    const response = await request.get(GATEWAY_HEALTH);
+    const status = response.status();
+    if (status === 200) {
+      const body = await response.json();
+      expect(typeof body.upstream).toBe("string");
+      expect(body.reachable).toBe(true);
+      expect(body.status_code).toBe(200);
+    } else {
+      // CI / no standalone Tektos API: the gateway MUST surface the
+      // typed degrade envelope, never a raw connection error.
+      expect(status).toBe(503);
+      const body = await response.json();
+      expect(body.error).toBe("tektos_ultima_unavailable");
+      expect(typeof body.upstream).toBe("string");
+    }
+  });
+
+  test("legacy iframe page preserves the ADR-089 sandbox contract", async ({
+    page,
+  }) => {
+    await page.goto("/tektos-ultima/legacy/");
+
+    await expect(page.getByTestId("tektos-ultima-legacy-page")).toBeVisible();
+    const iframe = page.getByTestId("tektos-ultima-legacy-iframe");
+    await expect(iframe).toBeAttached();
+    await expect(iframe).toHaveAttribute("src", FRONTEND_PATH);
+    await expect(iframe).toHaveAttribute("sandbox", DEFAULT_IFRAME_SANDBOX);
+  });
+});
+
+test.describe("Tektos-Ultima bridge + CSP (ADR-091, unchanged until 9.5)", () => {
   test("bridge accepts valid tektos.* envelope and returns 202", async ({
     request,
   }) => {
@@ -66,7 +121,6 @@ test.describe("Tektos-Ultima microfrontend shell (ADR-091)", () => {
     const body = await response.json();
     expect(body.status).toBe("accepted");
     expect(body.event_type).toBe("tektos.agent.turn.started");
-    // event_id is a uuid4; length + shape is sufficient for a smoke test.
     expect(typeof body.event_id).toBe("string");
     expect(body.event_id.length).toBeGreaterThanOrEqual(32);
   });
@@ -74,8 +128,6 @@ test.describe("Tektos-Ultima microfrontend shell (ADR-091)", () => {
   test("bridge rejects non-tektos.* namespace with 400", async ({
     request,
   }) => {
-    // ADR-091 forbids the iframe from originating any namespace it does
-    // not own (thermal.*, immune.*, etc. are server-side only).
     const response = await request.post(BRIDGE_PATH, {
       data: {
         kind: "thermal.red",
@@ -97,8 +149,6 @@ test.describe("Tektos-Ultima microfrontend shell (ADR-091)", () => {
   test("kernel HTML responses carry CSP frame-ancestors 'self'", async ({
     request,
   }) => {
-    // Hit the static-export root; middleware runs uniformly on every
-    // HTTP response, so any HTML route proves the CSP directive is on.
     const response = await request.get("/");
     const csp = response.headers()["content-security-policy"] ?? "";
     expect(csp).toContain("frame-ancestors 'self'");
