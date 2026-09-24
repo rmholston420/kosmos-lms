@@ -40,6 +40,7 @@ Adapter-level rules:
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from typing import Any
@@ -62,6 +63,10 @@ __all__ = [
 
 _event_bus: Any | None = None
 _relational_memory: Any | None = None
+# Strong references to in-flight mirror tasks. The event loop holds only weak
+# refs to tasks, so without this set a GC sweep could drop a scheduled
+# write mid-flight and silently lose a session audit-ledger entry.
+_pending_mirror_tasks: set[asyncio.Future] = set()
 
 
 def bind_event_bus(event_bus: Any) -> None:
@@ -256,14 +261,16 @@ def _maybe_mirror(
             confidence=1.0,
         )
         if inspect.isawaitable(result):
-            import asyncio
-
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 asyncio.run(result)  # type: ignore[arg-type]
             else:
-                loop.create_task(result)  # type: ignore[arg-type]
+                task = asyncio.ensure_future(result)
+                # Hold a strong ref until completion; the loop only holds a
+                # weak ref, so without this the task can be GC'd mid-flight.
+                _pending_mirror_tasks.add(task)
+                task.add_done_callback(_pending_mirror_tasks.discard)
     except Exception:
         log.exception(
             "RelationalMemoryPort mirror failed for %s/%s", session_id, event_type

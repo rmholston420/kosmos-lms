@@ -49,6 +49,7 @@ TurnStopReason = Literal[
     "llm_error",
     "sandbox_error",
     "resource_exhausted",
+    "preflight_error",
 ]
 
 
@@ -214,7 +215,23 @@ class TektosTurnLoop:
             kind="tektos.agent.prompt",
             source_plugin="tektos_runtime",
         )
-        prompt_verdict = await self._immune.scan(prompt_scan)
+        try:
+            prompt_verdict = await self._immune.scan(prompt_scan)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "immune.scan (prompt) failed for session=%s agent=%s",
+                session_id,
+                agent_id,
+            )
+            await self._session_fail(session_id, "immune_scan_error")
+            return TurnOutcome(
+                stop_reason="preflight_error",
+                handle=None,
+                summary=None,
+                prompt_verdict=None,
+                thermal_pressure=self._thermal.pressure(),
+                tool_outcomes=(),
+            )
         if prompt_verdict.decision == "block":
             await self._publish_turn_event(
                 "tektos.agent.turn.blocked",
@@ -259,7 +276,23 @@ class TektosTurnLoop:
             )
 
         # 3. Open the loop-safety turn.
-        handle = await self._loop_safety.begin_turn(agent_id)
+        try:
+            handle = await self._loop_safety.begin_turn(agent_id)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "loop_safety.begin_turn failed for session=%s agent=%s",
+                session_id,
+                agent_id,
+            )
+            await self._session_fail(session_id, "loop_safety_error")
+            return TurnOutcome(
+                stop_reason="preflight_error",
+                handle=None,
+                summary=None,
+                prompt_verdict=prompt_verdict,
+                thermal_pressure=self._thermal.pressure(),
+                tool_outcomes=(),
+            )
         await self._publish_turn_event(
             "tektos.agent.turn.started",
             agent_id=agent_id,

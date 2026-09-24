@@ -122,3 +122,15 @@ def test_sub_tasks_are_immutable_frozen_dataclasses() -> None:
     with pytest.raises((AttributeError, TypeError, Exception)):
         plan.sub_tasks[0].status = "complete"  # type: ignore[misc]
     assert isinstance(plan, DecompositionPlan)
+
+
+def test_none_task_is_guarded_never_raises_fail_open() -> None:
+    """decompose must never raise on a None task — the .lower() call was
+    previously outside the fail-open try/except (public API edge)."""
+    dec = TaskDecomposer()
+    plan, narrative_id = _run(
+        dec.decompose(session_id="s-none", task=None)  # type: ignore[arg-type]
+    )
+    assert isinstance(plan, DecompositionPlan)
+    assert narrative_id is None
+    assert len(plan.sub_tasks) == 4  # generic plan

@@ -211,8 +211,8 @@ class TaskDecomposer:
         Never raises (fail-open). Returns ``(plan, narrative_id)`` — the id is
         ``None`` when persistence is unbound or the port call fails.
         """
-        task_lower = task.lower()
         try:
+            task_lower = (task or "").lower()
             if _is_build_task(task_lower):
                 plan = _decompose_build_task(task)
             elif _is_code_generation_task(task_lower):

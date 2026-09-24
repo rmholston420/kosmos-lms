@@ -553,3 +553,99 @@ async def test_stage_8_2_golden_path_all_ports_bound() -> None:
     assert kinds.count("tektos.agent.turn.tool_call") == 2
     assert kinds.count("tektos.agent.turn.sandbox_completed") == 2
     assert "tektos.agent.turn.completed" in kinds
+
+
+# ── ADR-104 D2 · preflight fault containment (immune/loop-safety) ────
+#
+# immune.scan and loop_safety.begin_turn run BEFORE run_turn's outer
+# try/finally. If either port faults, the session turn opened at the top
+# of run_turn must still be failed on the FSM — otherwise the session
+# adapter is left holding a perpetually open turn.
+
+
+class _ThrowingImmune:
+    async def scan(self, request) -> Any:  # noqa: ANN001
+        raise RuntimeError("immune scan boom")
+
+
+class _PassingImmune:
+    class _Verdict:
+        decision = "pass"
+        reason = ""
+
+    async def scan(self, request) -> Any:  # noqa: ANN001
+        return self._Verdict()
+
+
+class _ThrowingLoopSafety:
+    async def begin_turn(self, agent_id: str) -> Any:
+        raise RuntimeError("begin_turn boom")
+
+
+class _GreenThermal:
+    class _Pressure:
+        level = "green"
+        gpu_temp_c = 30.0
+
+    def pressure(self) -> Any:
+        return self._Pressure()
+
+
+async def _build_faulting_loop(
+    *,
+    session_port,
+    immune,
+    loop_safety,
+) -> tuple[TektosTurnLoop, _RecordingBus]:
+    bus = _RecordingBus()
+    loop = TektosTurnLoop(
+        immune=immune,
+        loop_safety=loop_safety,
+        thermal=_GreenThermal(),
+        event_bus=bus,
+        session_port=session_port,
+    )
+    return loop, bus
+
+
+@pytest.mark.asyncio
+async def test_stage_8_2_D2_immune_scan_fault_fails_session_turn() -> None:
+    """immune.scan raising before the outer try must not leak the open
+    session turn — run_turn returns preflight_error and fails the FSM."""
+    session = _FakeSessionPort()
+    loop, _bus = await _build_faulting_loop(
+        session_port=session,
+        immune=_ThrowingImmune(),
+        loop_safety=TektosLoopSafetyAdapter(event_bus=_RecordingBus()),
+    )
+    outcome = await loop.run_turn(
+        agent_id="a-f1", prompt="benign", session_id="s-f1"
+    )
+    assert outcome.stop_reason == "preflight_error"
+    assert outcome.handle is None
+    assert outcome.prompt_verdict is None
+    verbs = [c[0] for c in session.calls]
+    assert verbs == ["start_turn", "fail_turn"]
+    assert session.calls[1][2] == "immune_scan_error"
+
+
+@pytest.mark.asyncio
+async def test_stage_8_2_D2_begin_turn_fault_fails_session_turn() -> None:
+    """loop_safety.begin_turn raising must fail the open session turn and
+    return preflight_error without emitting turn.started."""
+    session = _FakeSessionPort()
+    loop, bus = await _build_faulting_loop(
+        session_port=session,
+        immune=_PassingImmune(),
+        loop_safety=_ThrowingLoopSafety(),
+    )
+    outcome = await loop.run_turn(
+        agent_id="a-f2", prompt="benign", session_id="s-f2"
+    )
+    assert outcome.stop_reason == "preflight_error"
+    assert outcome.handle is None
+    verbs = [c[0] for c in session.calls]
+    assert verbs == ["start_turn", "fail_turn"]
+    assert session.calls[1][2] == "loop_safety_error"
+    started = [e for e in bus.published if e.event_type == "tektos.agent.turn.started"]
+    assert started == []

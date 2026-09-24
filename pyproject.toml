@@ -24,6 +24,9 @@ dependencies = [
     "rfc8785>=0.1.4",
     "cryptography>=49",
     "aiosqlite>=0.20",
+    # Stage 6.5 · zetesis research search backend (plugins/zetesis/research/
+    # search_backend.py imports it at module scope).
+    "beautifulsoup4>=4.12",
     # Stage 3.3 · aider repomap pattern-vendor (ADR-038)
     "tree-sitter>=0.24",
     "tree-sitter-language-pack>=1.13",
@@ -66,6 +69,16 @@ ui = [
     "fastapi>=0.115",
     "uvicorn>=0.32",
     "httpx>=0.27",
+]
+# Stage 8.0 · RelationalMemoryPort Postgres adapter (ADR-102). The runtime
+# driver is lazily imported (ADR-100 D1) so a base install degrades the 5th
+# layer gracefully; installing this extra enables the live Postgres layer,
+# and sqlalchemy/alembic are required by the vendored migration package.
+postgres = [
+    "asyncpg>=0.29",
+    "pgvector>=0.2",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
 ]
 
 [build-system]
