@@ -1497,6 +1497,28 @@ except Exception as _tektos_ultima_bridge_exc:  # noqa: BLE001
         f"{_tektos_ultima_bridge_exc}"
     )
 
+# --- Tektos-Ultima API gateway (ADR-109, Stage 9.1) ------------------------
+# Pure kernel-side proxy to the standalone Tektos API (TEKTOS_ULTIMA_API_URL,
+# default http://127.0.0.1:8020). No registry coupling: it degrades to 503
+# envelopes per-request, never at boot (ADR-109 D2). The /tektos-ultima
+# iframe proxy (ADR-091) stays mounted until Stage 9.5 parity retires it.
+try:
+    from kernel.tektos_ultima_gateway import (
+        build_tektos_ultima_gateway_router as _build_tektos_ultima_gateway_router,
+    )
+
+    app.include_router(_build_tektos_ultima_gateway_router())
+except Exception as _tektos_ultima_gateway_exc:  # noqa: BLE001
+    import logging as _tektos_ultima_gateway_logging
+
+    _tektos_ultima_gateway_logging.getLogger(__name__).warning(
+        "Tektos-Ultima gateway not mounted: %s", _tektos_ultima_gateway_exc
+    )
+    registry.errors["tektos_ultima_gateway"] = (
+        f"{type(_tektos_ultima_gateway_exc).__name__}: "
+        f"{_tektos_ultima_gateway_exc}"
+    )
+
 
 # ---------------------------------------------------------------------------
 # Kill-switch middleware — ADR-069 (Stage 1.5 Wave C)
