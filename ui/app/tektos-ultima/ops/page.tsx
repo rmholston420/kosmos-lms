@@ -4,11 +4,11 @@
  * /tektos-ultima/ops — Tektos subsystem operations page (Tektos integration
  * Stage 9.4, ADR-112).
  *
- * Seven tabs: db/memory/skills/tools/logs/telemetry are kernel-native
- * (same-origin kernel endpoints, ADR-129/135/136/137/138); self-repair is
- * split (ADR-139) — status is kernel-native (ADR-128), history + repair
- * trigger still drive the standalone Tektos API (:8020) through the kernel
- * gateway (ADR-109 D1), same-origin:
+ * Seven tabs: db/memory/skills/tools/logs/telemetry/self-repair are all
+ * kernel-native (same-origin kernel endpoints, ADR-129/135/136/137/138);
+ * the self-repair ADR-139 gateway split is CLOSED by ADR-141 R7 — the
+ * executing daemon (kernel.reliability, ADR-142) now serves status,
+ * history AND the repair trigger:
  *
  *   db        (kernel-native, ADR-137) GET /api/db — persistence lane
  *             booted state (postgres/dozerdb/qdrant/valkey, registry
@@ -28,10 +28,10 @@
  *   telemetry (kernel-native, ADR-138) GET /api/telemetry (polled 5 s) —
  *             donor {gpu, system} envelope re-implemented in
  *             kernel.tektos_telemetry (nvidia-smi + /proc)
- *   repair    SPLIT (ADR-139): status = kernel-native GET
- *             /api/self_repair/status (ADR-128, propose-only);
- *             history GET /api/self_repair/history + trigger
- *             POST /api/self_repair/repair stay on the gateway
+ *   repair    (kernel-native, ADR-141 R7) GET /api/self_repair/status
+ *             (executing daemon + propose-only proposer) ·
+ *             GET /api/self_repair/history ·
+ *             POST /api/self_repair/repair — all same-origin kernel
  *
  * Every upstream body is null-guarded (`Array.isArray` / `isObj`) per the
  * Stage 9.2/9.3 convention — a shape change degrades one tab, never the
@@ -82,9 +82,9 @@ async function g<T = unknown>(path: string, base: string = GATEWAY): Promise<T |
   }
 }
 
-async function act(path: string, body?: unknown): Promise<{ ok: boolean; error?: string; data?: unknown }> {
+async function act(path: string, body?: unknown, base: string = GATEWAY): Promise<{ ok: boolean; error?: string; data?: unknown }> {
   try {
-    const r = await fetch(`${GATEWAY}${path}`, {
+    const r = await fetch(`${base}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: body === undefined ? "{}" : JSON.stringify(body),
@@ -877,26 +877,73 @@ type RepairEvent = {
   response?: string;
 };
 
+// Normalized history row (kernel-native engine records, ADR-141 R7).
+type RepairRow = {
+  time: string;
+  event: string;
+  detector: string;
+  severity: string;
+  response: string;
+  status: string;
+};
+
+const _SEV_LABEL: Record<string, string> = {
+  "0": "LOW",
+  "1": "MEDIUM",
+  "2": "HIGH",
+  "3": "CRITICAL",
+};
+
+function repairRow(e: Record<string, unknown>): RepairRow {
+  // Engine RepairRecord (kernel-native, ADR-141 R7): created_at epoch-seconds.
+  if (typeof e["created_at"] === "number") {
+    const degradation = str(e["degradation_applied"]);
+    const parts = [
+      str(e["strategy_used"]),
+      degradation && degradation !== "none" ? `degraded:${degradation}` : "",
+      str(e["error"]) ? `error:${str(e["error"]).slice(0, 60)}` : "",
+    ].filter(Boolean);
+    return {
+      time: new Date(e["created_at"] * 1000).toLocaleTimeString(),
+      event: str(e["description"]) || str(e["threat_category"]) || "—",
+      detector: str(e["threat_category"]) || "—",
+      severity: _SEV_LABEL[str(e["threat_severity"])] || str(e["threat_severity"]) || "—",
+      response: parts.join(" → ") || "—",
+      status: str(e["status"]),
+    };
+  }
+  // Legacy immune-style event shape (tolerated, never produced by the kernel now).
+  const ev = e as unknown as RepairEvent;
+  return {
+    time: str(ev.timestamp).slice(11, 19),
+    event: str(ev.event) || str(ev.description),
+    detector: str(ev.detector),
+    severity: str(ev.severity),
+    response: str(ev.response) || str(ev.action),
+    status: "",
+  };
+}
+
 function RepairTab() {
   const [status, setStatus] = useState<Record<string, unknown> | null>(null);
-  const [history, setHistory] = useState<RepairEvent[]>([]);
+  const [history, setHistory] = useState<RepairRow[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
 
   const load = useCallback(async () => {
-    // SPLIT BACKENDS (ADR-139): status is kernel-native (ADR-128, propose-only
-    // proposer) — base "" is the same-origin kernel. history stays on the
-    // gateway (the executing daemon's ledger is real data there until the
-    // standalone engine retires).
+    // FULLY KERNEL-NATIVE (ADR-141 R7, ADR-142): the executing daemon
+    // (kernel.reliability) serves status AND history; the ADR-139 gateway
+    // split is closed. base "" = same-origin kernel.
     const [s, h] = await Promise.all([
       g<Record<string, unknown> | null>("/api/self_repair/status", ""),
-      g<{ history?: unknown } | unknown[]>("/api/self_repair/history"),
+      g<{ history?: unknown } | unknown[]>("/api/self_repair/history", ""),
     ]);
     setStatus(s);
-    if (Array.isArray(h)) setHistory(h as RepairEvent[]);
-    else if (isObj(h) && Array.isArray(h["history"])) setHistory(h["history"] as RepairEvent[]);
-    else setHistory([]);
+    let raw: unknown[] = [];
+    if (Array.isArray(h)) raw = h;
+    else if (isObj(h) && Array.isArray(h["history"])) raw = h["history"] as unknown[];
+    setHistory(raw.filter(isObj).map((x) => repairRow(x as Record<string, unknown>)));
   }, []);
 
   useEffect(() => {
@@ -908,35 +955,39 @@ function RepairTab() {
   const repair = async () => {
     setBusy(true);
     setMsg(null);
-    const r = await act("/api/self_repair/repair", { note: note.trim() || undefined });
+    const r = await act("/api/self_repair/repair", { note: note.trim() || undefined }, "");
     setBusy(false);
     setMsg(r.ok ? "repair triggered" : `repair failed: ${r.error ?? "unknown"}`);
     void load();
   };
 
-  // ADR-128 kernel envelope (kernel-native since ADR-139): status, healthy,
-  // note, proposer.{wired,tier,confidence,provenance},
-  // strategies.{strategies_registered,categories,strategy_names}.
+  // ADR-141 R7 / ADR-142 kernel envelope: engine (the executing daemon),
+  // proposer (ADR-095, propose-only), strategies (static 19-label catalog).
+  const engine = isObj(status?.["engine"]) ? (status!["engine"] as Record<string, unknown>) : null;
   const proposer = isObj(status?.["proposer"]) ? (status!["proposer"] as Record<string, unknown>) : null;
   const strategies = isObj(status?.["strategies"]) ? (status!["strategies"] as Record<string, unknown>) : null;
-  const proposerWired = proposer?.["wired"] ?? null;
-  const proposerTier = proposer?.["tier"] ?? null;
+  const engineRunning = engine?.["running"] ?? null;
+  const engineWired = engine?.["wired"] ?? null;
+  const totalRepairs = engine?.["total_repairs"] ?? null;
+  const completedRepairs = engine?.["completed_repairs"] ?? null;
+  const failedRepairs = engine?.["failed_repairs"] ?? null;
   const registered = strategies?.["strategies_registered"] ?? null;
 
   return (
     <div data-testid="tektos-ops-repair">
       <div style={{ ...panelStyle, display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center" }}>
-        <Metric label="Proposer" value={proposerWired === null ? "—" : proposerWired ? "wired" : "not wired"} />
-        <Metric label="Approval tier" value={str(proposerTier) || "—"} />
+        <Metric label="Engine" value={engineWired === null ? "—" : engineWired ? (engineRunning ? "running" : "stopped") : "not wired"} />
+        <Metric label="Repairs" value={totalRepairs === null ? "—" : `${String(totalRepairs)} (${str(completedRepairs)}✓)`} />
+        <Metric label="Failed" value={str(failedRepairs)} />
         <Metric label="Strategies" value={registered === null ? "—" : String(registered)} />
-        <Metric label="Events (engine)" value={String(history.length)} />
+        <Metric label="History" value={String(history.length)} />
       </div>
 
       <div style={{ fontSize: "var(--font-sm, 0.8125rem)", margin: "0 0 14px", color: "var(--color-text-dim, #888)" }}>
-        Kernel proposer is propose-only (ADR-128): it proposes self-modification and publishes{" "}
-        <span style={{ fontFamily: "var(--font-mono, monospace)" }}>tektos.self_modification.proposed</span> for human
-        approval — execution is not wired in the kernel. History and the repair trigger below are served by the
-        standalone Tektos engine through the kernel gateway (real executed-repair ledger until it retires).
+        Executing daemon (kernel.reliability, ADR-142): diagnose → repair → verify → learn against
+        Tektos threat-model strategies and healing workflows. The repair trigger and history below
+        are served by the kernel directly — the standalone :8020 engine is retired. The ADR-095
+        propose-only proposer runs alongside for self-modification proposals.
       </div>
 
       <div style={{ ...panelStyle, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -989,15 +1040,15 @@ function RepairTab() {
             <tbody>
               {history.slice(0, 50).map((e, i) => (
                 <tr key={i}>
-                  <Td mono>{str(e["timestamp"]).slice(11, 19) || "—"}</Td>
-                  <Td>{str(e["event"]) || str(e["description"]) || "—"}</Td>
-                  <Td>{str(e["detector"]) || "—"}</Td>
+                  <Td mono>{e.time || "—"}</Td>
+                  <Td>{e.event || "—"}</Td>
+                  <Td>{e.detector || "—"}</Td>
                   <Td>
-                    <span style={{ color: str(e["severity"]) === "CRITICAL" || str(e["severity"]) === "HIGH" ? "var(--color-amitabha, #e07070)" : undefined }}>
-                      {str(e["severity"]) || "—"}
+                    <span style={{ color: e.severity === "CRITICAL" || e.severity === "HIGH" ? "var(--color-amitabha, #e07070)" : undefined }}>
+                      {e.severity || "—"}
                     </span>
                   </Td>
-                  <Td>{str(e["response"]) || str(e["action"]) || "—"}</Td>
+                  <Td>{e.response || "—"}</Td>
                 </tr>
               ))}
             </tbody>
