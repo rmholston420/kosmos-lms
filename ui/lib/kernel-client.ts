@@ -130,6 +130,9 @@ export const kernelClient = {
 
   // ADR-068 Stage 1.5 GUI-realization backend deltas.
   getOllamaStatus: () => getJSON<OllamaStatus>("/api/ollama/status"),
+  // ADR-118: the top-bar indicator reads the ACTIVE LLM lane (llama.cpp
+  // :8090 primary / Ollama fallback), not the embedder Ollama happens to hold.
+  getLlmStatus: () => getJSON<LlmStatus>("/api/llm/status"),
   getPraxisConstitution: () => getJSON<PraxisConstitution>("/api/praxis/constitution"),
   getPraxisApexPolicies: () => getJSON<PraxisApexPolicy[]>("/api/praxis/apex/policies"),
 
@@ -265,6 +268,22 @@ export interface OllamaStatus {
   size_ram: number;
   /** Host VRAM capacity in bytes (constant 34_359_738_368 for RTX 5090). */
   vram_capacity_bytes: number;
+}
+
+// --- ADR-118: /api/llm/status — the ACTIVE kernel LLM lane ---
+export interface LlmStatus {
+  healthy: boolean;
+  /** Transport actually routing requests: "llama.cpp" | "ollama" | null. */
+  backend: string | null;
+  /** Failover lane in use: "primary" | "fallback" | null. */
+  lane: string | null;
+  /** Default model of the active lane — what the top bar should display. */
+  model: string | null;
+  base_url: string | null;
+  /** Real GPU VRAM used (bytes) from nvidia-smi, or null when unavailable. */
+  vram_used_bytes: number | null;
+  vram_capacity_bytes: number;
+  detail: string;
 }
 
 // --- ADR-068 D2: /api/praxis/constitution ---

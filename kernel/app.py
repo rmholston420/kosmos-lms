@@ -3181,6 +3181,97 @@ async def ollama_status() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Active LLM status (ADR-118) — the top-bar model indicator must report the
+# LLM the kernel is ACTUALLY routing through (ADR-116 failover lanes), not
+# whichever model Ollama happens to have loaded (often just the embedder).
+# Envelope: {healthy, backend, lane, model, base_url, vram_used_bytes,
+# vram_capacity_bytes, detail}. VRAM is the real GPU reading from
+# nvidia-smi when available; None (never fabricated) when it is not.
+# ---------------------------------------------------------------------------
+
+_GPU_VRAM_CACHE_TTL_S = 5.0
+_gpu_vram_cache: tuple[float, int, int] | None = None  # (ts, used, total)
+
+
+async def _gpu_vram_bytes() -> tuple[int, int] | None:
+    """Real GPU memory (used, total) in bytes via nvidia-smi, 5s cached."""
+    global _gpu_vram_cache
+    import time
+
+    now = time.monotonic()
+    if _gpu_vram_cache and now - _gpu_vram_cache[0] < _GPU_VRAM_CACHE_TTL_S:
+        return (_gpu_vram_cache[1], _gpu_vram_cache[2])
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "nvidia-smi",
+            "--query-gpu=memory.used,memory.total",
+            "--format=csv,noheader,nounits",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+        line = out.decode("utf-8", "replace").strip().splitlines()[0]
+        used_mb, total_mb = (int(x) for x in line.split(","))
+        MiB = 1024 * 1024
+        _gpu_vram_cache = (now, used_mb * MiB, total_mb * MiB)
+        return (used_mb * MiB, total_mb * MiB)
+    except Exception:  # noqa: BLE001 — GPU reading is best-effort
+        return None
+
+
+@app.get("/api/llm/status")
+async def llm_status() -> dict[str, Any]:
+    """Report the ACTIVE kernel LLM lane (ADR-116 failover) + real GPU VRAM.
+
+    ``backend`` is the transport actually routing requests: ``llama.cpp``
+    (:8090 primary) or ``ollama`` (:11434 fallback, active only after a
+    failover pin). ``model`` is that lane's default model — what the user
+    should see in the top bar. Always 200 with ``healthy``; 503 only when
+    no LLM registry entry exists at all.
+    """
+    if registry.llm is None:
+        return {
+            "healthy": False,
+            "backend": None,
+            "lane": None,
+            "model": None,
+            "base_url": None,
+            "vram_used_bytes": None,
+            "vram_capacity_bytes": _COLOSSUS_VRAM_CAPACITY_BYTES,
+            "detail": registry.errors.get("llm") or "no LLM adapter",
+        }
+
+    # ADR-116: registry.llm is a FailoverLLMAdapter with .active_backend
+    # ("primary" | "fallback"), ._primary (LlamaSwapAdapter), ._fallback
+    # (Ollama adapter). Fall back to plain-adapter attributes if the
+    # failover wrapper is ever removed.
+    active = getattr(registry.llm, "active_backend", "primary")
+    primary = getattr(registry.llm, "_primary", None)
+    fallback = getattr(registry.llm, "_fallback", None)
+    if active == "fallback" and fallback is not None:
+        lane_adapter, backend, lane = fallback, "ollama", "fallback"
+    else:
+        lane_adapter, backend, lane = primary or registry.llm, "llama.cpp", "primary"
+
+    model = getattr(lane_adapter, "_default_model", None)
+    base_url = getattr(lane_adapter, "_base_url", None)
+
+    vram = await _gpu_vram_bytes()
+    return {
+        "healthy": True,
+        "backend": backend,
+        "lane": lane,
+        "model": model,
+        "base_url": base_url,
+        "vram_used_bytes": vram[0] if vram else None,
+        "vram_capacity_bytes": (
+            vram[1] if vram else _COLOSSUS_VRAM_CAPACITY_BYTES
+        ),
+        "detail": f"{backend} @ {base_url}" if base_url else backend,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Praxis constitution (ADR-068 D2) — read-only integrity anchor for the
 # GOVERNANCE panel. Lazily loads + verifies the constitution on first hit,
 # then caches on ``registry.praxis_constitution``. A tamper failure at read
