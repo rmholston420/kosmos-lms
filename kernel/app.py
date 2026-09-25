@@ -3766,6 +3766,91 @@ def skills_stats() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# /api/tools — ADR-126 (v2 Stage 11.10, tools family)
+#
+# The old card proxied :8020/api/tools — the standalone engine's executable
+# TektosToolRegistry (11 descriptors with sandbox limits + live call
+# counters). The kernel never boots that registry; its real tools surface is
+# the Tektos Tool Router (Stage 8.5, ADR-107): the static capability table
+# (known tool → category) + a routing-only engine that maps task
+# descriptions / SubTask.tools_needed onto ToolRoutes. Execution (approval
+# gateway + sandbox) stays on the standalone engine for now — this endpoint
+# reports what the kernel actually has and says so honestly.
+# ---------------------------------------------------------------------------
+
+
+def _tools_route_dict(r: Any) -> dict[str, Any]:
+    """Serialize one ToolRoute (duck-typed — plugin internals, ADR-007)."""
+    return {
+        "id": getattr(r, "id", None),
+        "primary_tool": getattr(r, "primary_tool", None),
+        "category": getattr(r, "category", None),
+        "reason": getattr(r, "reason", None),
+        "matched_tools": list(getattr(r, "matched_tools", ()) or ()),
+        "unrouted_tools": list(getattr(r, "unrouted_tools", ()) or ()),
+        "created_at": getattr(r, "created_at", None),
+    }
+
+
+@app.get("/api/tools")
+def tools_stats() -> dict[str, Any]:
+    """Tektos tools surface: capability table + live Tool Router.
+
+    Always 200. ``wired: false`` (default — the ADR-107 router is off
+    unless KOSMOS_TEKTOS_TOOL_ROUTER=on and relational_memory is bound) is
+    a valid degraded state. The capability table is a static import and is
+    reported even when the router is not booted.
+    """
+    errors: list[str] = []
+
+    # Static capability table (ADR-107 D1) — import inside the handler to
+    # match kernel lazy-import style; degrade to None on any failure.
+    known_tools: list[str] = []
+    categories: dict[str, int] = {}
+    try:
+        from plugins.tektos.executor.engine import _CAPABILITY_TABLE
+
+        known_tools = sorted(_CAPABILITY_TABLE.keys())
+        for _tool, _cat in _CAPABILITY_TABLE.items():
+            categories[_cat] = categories.get(_cat, 0) + 1
+    except Exception as exc:  # noqa: BLE001
+        known_tools = []
+        categories = {}
+        errors.append(f"capability table unavailable: {type(exc).__name__}: {exc}")
+
+    # Live router (registry slot, None when the gate is off).
+    router = getattr(registry, "tektos_tool_router", None)
+    wired = router is not None
+    recent_routes: list[dict[str, Any]] = []
+    routes_buffered: int | None = None
+    if wired:
+        try:
+            _buf = getattr(router, "_buffer", None)
+            if _buf is not None:
+                routes_buffered = len(_buf)
+            recent_routes = [_tools_route_dict(r) for r in router.list_recent(10)]
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"router query failed: {type(exc).__name__}: {exc}")
+
+    return {
+        "status": "initialized" if wired else "degraded",
+        "healthy": wired,
+        "tools": {
+            "router": "routing-only (ADR-107 D9 — execution deferred)",
+            "wired": wired,
+            "known_tools": len(known_tools),
+            "categories": categories,
+            "known_tool_names": known_tools,
+            "routes_buffered": routes_buffered,
+            "recent_routes": recent_routes,
+            "execution": "not wired in kernel (standalone Tektos registry)",
+        },
+        "errors": errors,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Praxis constitution (ADR-068 D2) — read-only integrity anchor for the
 # GOVERNANCE panel. Lazily loads + verifies the constitution on first hit,
 # then caches on ``registry.praxis_constitution``. A tamper failure at read

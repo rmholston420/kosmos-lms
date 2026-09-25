@@ -62,7 +62,7 @@ const SUBSYSTEMS: Subsystem[] = [
   { id: "memory", title: "Memory", icon: "🧩", endpoint: "/api/memory/stats", base: "" },
   { id: "rag", title: "RAG", icon: "📚", endpoint: "/api/rag/status", base: "" },
   { id: "skills", title: "Skills", icon: "⚡", endpoint: "/api/skills/stats", base: "" },
-  { id: "tools", title: "Tools", icon: "🔧", endpoint: "/api/tools" },
+  { id: "tools", title: "Tools", icon: "🔧", endpoint: "/api/tools", base: "" },
   { id: "models", title: "Models", icon: "🎛️", endpoint: "/api/llm/status" },
   { id: "plugins", title: "Plugins", icon: "🧩", endpoint: "/api/plugins" },
   { id: "neo4j", title: "Neo4j", icon: "🌐", endpoint: "/neo4j/status", base: DATA_SERVICES },
@@ -243,14 +243,30 @@ function parseCard(sub: Subsystem, data: unknown): CardData {
       };
     }
     case "tools": {
-      if (!Array.isArray(data)) break;
-      const tools = data as unknown[];
-      const enabled = tools.filter((t) => isObj(t) && t.enabled === true).length;
-      const names = tools.filter((t) => isObj(t) && t.enabled === true).slice(0, 3).map((t) => str(isObj(t) ? t.name : null) ?? "?");
+      // ADR-126 (Stage 11.10): kernel-native — the old card proxied :8020's
+      // executable TektosToolRegistry (11 descriptors + live call counters).
+      // The kernel never boots that registry; its real tools surface is the
+      // Tektos Tool Router (ADR-107): the static capability table + a
+      // routing-only engine. Execution (approval gateway + sandbox) stays on
+      // the standalone engine — the card says so honestly.
+      const t = isObj(o?.tools) ? (o.tools as Record<string, unknown>) : null;
+      const wired = t?.wired === true;
+      const known = num(t?.known_tools) ?? 0;
+      const cats = isObj(t?.categories) ? (t.categories as Record<string, unknown>) : {};
+      const catStr = Object.entries(cats)
+        .map(([k, v]) => `${k} ${num(v) ?? 0}`)
+        .join(" · ");
+      const buffered = num(t?.routes_buffered);
+      const errs = Array.isArray(o?.errors) ? (o.errors as unknown[]) : [];
       return {
-        status: enabled > 0 ? "healthy" : "down",
-        lines: [`${enabled}/${tools.length} enabled`, names.join(" · ") || "none enabled"],
-        detail: tools.length > 3 ? `+${tools.length - 3} more` : undefined,
+        status: wired ? "healthy" : "degraded",
+        lines: [
+          `${known} known tools · routing-only`,
+          wired ? catStr || "no capability table" : "router offline (KOSMOS_TEKTOS_TOOL_ROUTER=off)",
+        ],
+        detail: wired
+          ? `router live · ${buffered ?? 0} routes buffered · execution on standalone registry (ADR-107 D9)`
+          : str(errs[0]) ?? "capability table only · execution deferred (ADR-107 D9)",
       };
     }
     case "models": {
