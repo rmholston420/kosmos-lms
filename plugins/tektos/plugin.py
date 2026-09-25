@@ -201,6 +201,20 @@ class TektosPlugin:
     # typing per same ADR-007 rationale above.
     manager: object | None = field(default=None)
 
+    # Stage 8.7 (ADR-114 D5): optional handles to the kernel-wired
+    # multi-agent orchestration engine family (TektosOrchestrator bundle +
+    # TektosHierarchicalAgent + TektosLongRunningAgent). Populated by
+    # ``kernel/app.py::_boot_tektos_orchestrator`` when
+    # ``KOSMOS_TEKTOS_ORCHESTRATOR=on`` and ``registry.relational_memory``
+    # is bound. The orchestrator picks up ``registry.sandbox`` (command
+    # dispatch), ``registry.llm`` (hierarchical role handlers), and
+    # ``registry.event_bus`` when wired (falls open per ADR-114 D9 when
+    # any are unwired). ``object | None`` typing per same ADR-007
+    # rationale above.
+    orchestrator: object | None = field(default=None)
+    hierarchical_agent: object | None = field(default=None)
+    long_running_agent: object | None = field(default=None)
+
     _started: bool = field(default=False, init=False, repr=False)
     _registration: PluginRegistration | None = field(
         default=None, init=False, repr=False

@@ -941,6 +941,14 @@
 - **ADR:** ADR-107
 - **Logged:** 2026-09-10 07:45 EDT
 
+#### Tektos multi-agent orchestrator + hierarchical + long-running engines — `VENDORED (Stage 8.7, ADR-114)`
+- **Source:** `~/dev/tektos-ultima-v1/src/tektos/runtime/{multi_agent_orchestrator,hierarchical_agent,long_running_agent}.py` (541 + 347 + 492 = 1,380 lines)
+- **Kosmos location:** `plugins/tektos/orchestrator/` (seventh engine subpackage after reflection/synthesis/experience/planner/executor/manager)
+- **Port(s):** `SandboxPort.run` (command dispatch, fail-open), `RelationalMemoryPort.record_event` (persistence + long-running checkpoints), `EventBusPort.publish` (lifecycle events), `LLMPort.chat` (hierarchical role handlers, template fallback)
+- **Modifications:** donor task/agent lifecycle + capability-keyword `assign_task` matching + 4-agent default roster preserved verbatim; donor `subprocess.run(shell=True)` → `SandboxPort.run` (fail-open when unwired, ADR-107 precedent); donor's sequential `execute_parallel` → real `asyncio.gather` under `asyncio.Semaphore`; failure recovery via `classify_recovery` imported from `plugins.tektos.manager.engine` (discharges ADR-108 D9); donor hierarchical LLM-stub role handlers → `LLMPort.chat` when bound, deterministic donor template strings verbatim when unwired (discharges ADR-107 D9); donor's `./checkpoints` raw-JSON dir → `RelationalMemoryPort.record_event` + ring-buffer fallback; donor module-level `_agents` singletons REJECTED (state in kernel registry slots); frozen slotted dataclasses in `models.py`; env-gated behind `KOSMOS_TEKTOS_ORCHESTRATOR={off,on}` (default off) with degrade-to-None when `registry.relational_memory` is None (ADR-101); FastAPI router factory `build_orchestrator_router()` with per-engine `503` ADR-101 degrade guard closures (manager pattern: no internal prefix, mount-time prefix under `/tektos/api/orchestrator`; deliverable factory — not inline-mounted in `kernel/app.py`, per Stage 8.3–8.6 pattern).
+- **ADR:** ADR-114 (discharges ADR-108 D9 + ADR-107 D9)
+- **Logged:** 2026-09-24 (Stage 8.7 landing)
+
 ---
 
 ## Gnosis (Knowledge)

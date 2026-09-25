@@ -151,6 +151,18 @@ class _BootRegistry:
         # degrade to ``None`` with a WARN log. Downstream call sites
         # MUST tolerate ``None``.
         self.tektos_manager: Any = None
+        # Stage 8.7 (ADR-114): kernel-owned Tektos multi-agent
+        # orchestration engine family (TektosOrchestrator +
+        # TektosHierarchicalAgent + TektosLongRunningAgent). Env-gated via
+        # ``KOSMOS_TEKTOS_ORCHESTRATOR={off,on}`` (default ``off``). ``on``
+        # requires ``registry.relational_memory`` non-None; optionally
+        # consumes ``registry.sandbox``, ``registry.llm`` and
+        # ``registry.event_bus``. Missing hard requirement → ADR-101
+        # degrade to ``None`` with a WARN log. Downstream call sites
+        # MUST tolerate ``None``.
+        self.tektos_orchestrator: Any = None
+        self.tektos_hierarchical: Any = None
+        self.tektos_long_running: Any = None
         # Stage 1.6 Phase 0 (ADR-073): kernel-owned EmbeddingsPort. Separate
         # from ``self.llm`` so chat-only backends (e.g. llama-swap) don't
         # have to satisfy an embeddings surface. Populated by ``_boot_embeddings``.
@@ -1120,6 +1132,83 @@ async def lifespan(app: FastAPI):
                 )
         return engine
 
+    @_try("tektos_orchestrator")
+    def _boot_tektos_orchestrator():
+        import logging as _kl
+        import os as _os
+
+        from plugins.tektos.orchestrator import (
+            OrchestratorBundle,
+            TektosHierarchicalAgent,
+            TektosLongRunningAgent,
+            TektosOrchestrator,
+        )
+
+        _log = _kl.getLogger(__name__)
+        _env = "KOSMOS_TEKTOS_ORCHESTRATOR"
+        _mode = _os.environ.get(_env, "off").lower().strip()
+        _ALLOWED = ("off", "on")
+        if _mode not in _ALLOWED:
+            raise RuntimeError(
+                "%s=%r is not one of %s (ADR-114 D6)."
+                % (_env, _mode, _ALLOWED)
+            )
+        if _mode == "off":
+            return None
+
+        rmem = getattr(registry, "relational_memory", None)
+        ebus = getattr(registry, "event_bus", None)
+        sbox = getattr(registry, "sandbox", None)
+        llm = getattr(registry, "llm", None)
+        if rmem is None:
+            _log.warning(
+                "kosmos.tektos_orchestrator: RelationalMemoryPort unavailable; "
+                "engine family offline (ADR-114; ADR-101 degrade pattern)"
+            )
+            return None
+
+        orchestrator = TektosOrchestrator(
+            sandbox=sbox,
+            relational_memory=rmem,
+            event_bus=ebus,
+        )
+        bundle = OrchestratorBundle(
+            orchestrator=orchestrator,
+            wired_sandbox=sbox is not None,
+            wired_memory=True,
+            wired_event_bus=ebus is not None,
+        )
+        hierarchical = TektosHierarchicalAgent(llm=llm, event_bus=ebus)
+        long_running = TektosLongRunningAgent(relational_memory=rmem)
+        _log.info(
+            "kosmos.tektos_orchestrator: wired (ADR-114); sandbox=%s; llm=%s; event_bus=%s",
+            "on" if sbox is not None else "off",
+            "on" if llm is not None else "off",
+            "on" if ebus is not None else "off",
+        )
+
+        _tp = getattr(registry, "tektos", None)
+        if _tp is not None:
+            for _attr, _value in (
+                ("orchestrator", bundle),
+                ("hierarchical_agent", hierarchical),
+                ("long_running_agent", long_running),
+            ):
+                if hasattr(_tp, _attr):
+                    try:
+                        setattr(_tp, _attr, _value)
+                    except Exception:  # noqa: BLE001 — frozen dataclass tolerated
+                        _log.debug(
+                            "kosmos.tektos_orchestrator: TektosPlugin.%s "
+                            "assignment skipped (frozen?)",
+                            _attr,
+                        )
+        # Stash the sibling engines on the bundle so the caller (which
+        # only sees the registry-slot return value) can reach them.
+        registry.tektos_hierarchical = hierarchical
+        registry.tektos_long_running = long_running
+        return bundle
+
     registry.tektos_reflection = _boot_tektos_reflection
     registry.tektos_synthesis = _boot_tektos_synthesis
     registry.tektos_experience = _boot_tektos_experience
@@ -1128,6 +1217,7 @@ async def lifespan(app: FastAPI):
     registry.tektos_tool_router = _boot_tektos_tool_router
     registry.tektos_executor = _boot_tektos_executor
     registry.tektos_manager = _boot_tektos_manager
+    registry.tektos_orchestrator = _boot_tektos_orchestrator
 
     # --- Gnosis boot seeder (ADR-064) ----------------------------------------
     # Env-gated by ``KOSMOS_GNOSIS_SEED=1``. Iterates ``ALL_CORPORA`` and
