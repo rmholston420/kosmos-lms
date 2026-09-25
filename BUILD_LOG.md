@@ -4872,3 +4872,19 @@ MCP, metabolism) in ROI order.
   D-route Stage 13 subsystem ports, `/health` probe removal ×3, ADR-140 WS,
   ADR-109 gateway deletion + :8020 retirement.
 - **Stop-condition status:** met — T3 complete; next T1 or T4 in ROI order
+
+---
+
+## 2026-09-25 13:55 EDT — ADR-141 T2 complete: session-adjacent surfaces (9 routes) kernel-native
+
+- **Stage / plugin / port:** Stage 11 exit gate (ADR-141) · T2 · SessionPort + state anchor
+- **What changed:** All nine donor session-adjacent routes now kernel-native, replacing the :8020 gateway proxy:
+  - **T2a** (`2fc7973`): `kernel/session_state.py` — donor `SessionState` + `SessionStateManager` port (byte-faithful `to_markdown`, verified against the donor manager) with the **documented donor fix**: files keyed per-session at `<workspace>/tektos_state/<sid>.md` (the donor hardcoded every session to one shared `/home/rmholston` path). 3 routes: `GET /api/state/{sid}`, `POST .../save` (donor `StateSaveRequest`), `POST .../snapshot` (version bump + `state.snapshot` bus event).
+  - **T2b** (`80ff592`): `kernel/tektos_replay.py` refactored — `get_replay` shares `_collect_mapped` with new `get_events(event_bus, sid, since_seq, limit, event_type)` implementing donor `event_store.get_events` filter semantics (seq > since_seq, then limit, then exact type). `GET /api/sessions/{sid}/events` returns the donor raw-array wire (`{seq, type, payload, protocol_version, created_at}`, ascending seq).
+  - **T2c** (`80ff592`): `/api/archive/sessions` (list, is_archived-filtered, donor substring search over title/tag/id/root), `/{sid}` (detail; 400 not-archived / 404 unknown), `/{sid}/messages` (`get_replay` verbatim — same bus read as `/replay`), `/{sid}/rename` + `/{sid}/tag` (KeyError → 404 exactly as the donor catches it). All on `registry.session` (SessionPort).
+- **Files touched:** `kernel/session_state.py` (new), `kernel/app.py` (3 state routes + `_state_managers` + `StateSaveRequest` + `_emit_state_event`; events route; 5 archive routes), `kernel/tektos_replay.py` (refactor + `get_events`), `tests/kernel/test_adr141_t2_session_surfaces.py` (new, 15 tests).
+- **Ports / adapters affected:** SessionPort (consumer only — `search_sessions`/`rename_session`/`tag_session`/`get_session` surfaces used, unchanged); EventBusPort (read via `tektos_replay`).
+- **Verification:** 15 wire-shape tests, ADR-132 pattern (fixture `TektosSessionAdapter` + FakeBus, monkeypatched ports, no lifespan, `cwd→tmp_path` so `tektos_state` artifacts never leak into the workspace). Covers the per-session isolation fix and the donor-faithful snapshot subtlety (`from_markdown` does not restore `version` → every snapshot returns 2, verified against the donor manager directly). Full `tests/kernel/`: **533 passed, 0 failed**.
+- **PORTING_LEDGER / ADR updated:** ADR-141 T2 row → **P (2026-09-25, `2fc7973` + `80ff592`)**.
+- **Gate progress (ADR-141):** T1 ✓, T2 ✓, T3 ✓. Remaining before `main.py` deletion: T4 (planner), T5 (tools mgmt), T6 (memory actions), T7 (embedder), T8 (misc), D-route Stage 13 subsystem ports, `/health` probe removal ×3, ADR-140 WS, ADR-109 gateway deletion + :8020 retirement.
+- **Stop-condition status:** met — T2 complete; next T4 (planner surface, 4 routes — `build_spec_planner_router` exists unmounted).

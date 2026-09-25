@@ -244,7 +244,15 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
      `build_orchestrator_router`. Smallest possible first port. **P (2026-09-25, `7395319`)** — donor-fidelity routes on `/tektos/api/orchestrator/{status,agents}`, AgentsTab re-pointed, 7 tests green + live-verified on :8000.
    - **T2 — session-adjacent surfaces**: `state/{session_id}` read/save/snapshot
      (3), `sessions/{session_id}/events` (1, pairs with ADR-140 WS parity),
-     `archive/*` (5).
+     `archive/*` (5). **P (2026-09-25, `2fc7973` + `80ff592`)** — all 9
+     routes kernel-native: T2a `kernel/session_state.py` (donor `SessionState`
+     + `SessionStateManager` port with the per-session file fix — donor keyed
+     every session at one shared path) + 3 state routes; T2b
+     `tektos_replay.get_events` (filtered view over the same bus read as
+     `/replay`) + `/api/sessions/{sid}/events` (since_seq/limit/event_type,
+     donor `event_store.get_events` semantics); T2c `/api/archive/*`
+     (list/detail/messages/rename/tag) on `registry.session`. 15 wire-shape
+     tests green; full `tests/kernel/` 533 passed.
    - **T3 — self-improvement read surface** (5 routes: status/metrics/report/
      experiences/enqueue) — pairs with the ADR-134 hindsight read-side. **P (2026-09-25, ADR-143)** — all 5 routes kernel-native on `registry.tektos_self_improve`/`registry.tektos_learning`; donor + UI wire-compatible.
    - **T4 — planner surface** (4: templates/status/plan/language-games) — the
