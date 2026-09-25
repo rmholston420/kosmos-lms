@@ -1,0 +1,294 @@
+# ADR-141: Tektos-Ultima functionality-preservation audit (route-by-route disposition)
+
+- **Status:** Ratified (2026-09-25)
+- **Scope:** Stage 11 exit gate (main.py deletion) — governing constraint enforcement
+- **Supersedes:** ADR-139 "Run-repair trigger is retired" (reversed by user decision, see Decision 1)
+- **Governing constraint (user, 2026-09-25, verbatim):** "Kosmos-LMS Tektos must not lose any of the functionality of Tektos-Ultima."
+
+## Context
+
+The Stage 11 exit gate requires deleting the standalone `main.py` and its :8020
+service. The governing constraint converts that gate from "delete and accept the
+residual" into a **functionality-preservation proof**: every donor route must map
+to either (P) an existing kernel/plugin referent, (D) a recorded deferral with a
+named port path, or (T) a to-port item with a committed work item. "Removed with
+main.py" is an acceptable resolution only where the functionality is superseded by
+an equivalent kernel mechanism.
+
+### Audit method
+
+- Donor inventory: regex over `tektos-ultima-v1/src/tektos/main.py` — **152 HTTP
+  routes + 2 WebSocket routes** (`/ws/{session_id}`, `/ws/pty`).
+- Referent inventory: all `@app.*` / `@router.*` routes across
+  `kernel/*.py`, `plugins/**/*.py`, `adapters/**/*.py`, then **live-verified
+  against the running kernel on :8000** (route exists in code AND is reachable —
+  e.g. `GET /api/plugins` → 200; `/tektos/api/orchestrator/*` mounted but 503 when
+  the bundle is not booted; other `build_*_router` plugins are defined but
+  **not mounted** in `kernel/app.py` and are NOT counted as referents).
+- Capability cross-check: for every "no referent" path, a function-level grep for
+  the underlying capability in kernel/plugins/adapters, to distinguish "path
+  renamed" from "functionality absent".
+
+### Disposition counts (152 HTTP + 2 WS)
+
+| Disposition | Count | Meaning |
+|---|---|---|
+| **P — Preserved** | 35 | kernel/plugin referent exists and is live |
+| **D — Deferred** | 70 + 2 WS | recorded path; functionality lost until the named port lands |
+| **T — To-port** | 47 | no referent yet; each becomes a work item before deletion |
+
+The deferral buckets are **honest temporary losses**, not permanent omissions:
+every D route names the stage or ADR that carries its functionality. The Stage 11
+exit gate cannot pass until every T route is P, and the plan's Stage 13 (subsystem
+ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
+
+## Route-by-route disposition
+
+### Preserved — kernel/plugin referent exists (35 routes)
+
+| Donor route (on :8020) | Disposition / referent |
+|---|---|
+| `GET /api/db` | kernel /api/db (ADR-137) — status only |
+| `GET /api/hindsight/experiences` | kernel /api/hindsight/experiences (ADR-134) |
+| `GET /api/hindsight/status` | kernel /api/hindsight/status (ADR-134) + data-services |
+| `GET /api/immune/detectors` | kernel /api/immune/detectors (ADR-133) |
+| `GET /api/immune/health` | kernel /api/immune/health (ADR-133) |
+| `GET /api/immune/memory` | kernel /api/immune/memory (ADR-133) |
+| `GET /api/immune/memory/entries` | kernel /api/immune/memory/entries (ADR-133) |
+| `GET /api/immune/responses` | kernel /api/immune/responses (ADR-133) |
+| `GET /api/immune/threats` | kernel /api/immune/threats (ADR-133) |
+| `GET /api/inference/status` | kernel /api/inference/status |
+| `GET /api/logs` | kernel /api/logs (ADR-129) |
+| `GET /api/memory` | kernel /api/memory (ADR-135) |
+| `GET /api/memory/stats` | kernel /api/memory/stats (ADR-135) |
+| `GET /api/models` | kernel /api/models (ADR-132) |
+| `GET /api/neo4j/status` | data-services /api/tektos/data-services/neo4j/status |
+| `GET /api/plugins` | kernel /api/plugins (primary) |
+| `GET /api/postgres/status` | data-services /api/tektos/data-services/postgres/status |
+| `POST /api/prompt/sse` | kernel POST /api/prompt/sse (ADR-066 prompt SSE, kernel-native) |
+| `GET /api/redis/status` | data-services /api/tektos/data-services/redis/status |
+| `GET /api/self_repair/status` | kernel /api/self_repair/status (ADR-128) |
+| `GET /api/sessions` | kernel /api/sessions |
+| `POST /api/sessions` | kernel session create (primary) |
+| `DELETE /api/sessions/{session_id}` | kernel session delete |
+| `GET /api/sessions/{session_id}` | kernel /api/sessions/{session_id} |
+| `PATCH /api/sessions/{session_id}` | kernel session patch |
+| `POST /api/sessions/{session_id}/archive` | kernel archive (referent) |
+| `POST /api/sessions/{session_id}/fork` | kernel session fork |
+| `POST /api/sessions/{session_id}/interrupt` | kernel session interrupt |
+| `POST /api/sessions/{session_id}/model` | kernel session model switch |
+| `GET /api/sessions/{session_id}/replay` | kernel session replay (ADR-133) |
+| `GET /api/skills/stats` | kernel /api/skills/stats (ADR-136) |
+| `GET /api/telemetry` | kernel /api/telemetry (ADR-138) |
+| `GET /api/thermal/status` | kernel /api/thermal/status (ADR-121) |
+| `GET /api/tools` | kernel /api/tools (ADR-136) |
+| `GET /health` | kernel /health (kernel-native) |
+
+### Deferred — recorded path (70 routes)
+
+| Donor route (on :8020) | Disposition / referent |
+|---|---|
+| `GET /api/axioms` | Stage 13 subsystem (axioms) |
+| `POST /api/axioms/{axiom_id}/verify` | Stage 13 subsystem (axioms) |
+| `GET /api/context/status` | Stage 13 (context subsystem) |
+| `GET /api/contextCurator/status` | Stage 13 (context curator) |
+| `GET /api/db/analyze` | Stage 13.2 db_manager |
+| `POST /api/db/backup` | Stage 13.2 db_manager |
+| `GET /api/db/backups` | Stage 13.2 db_manager |
+| `POST /api/db/dml` | Stage 13.2 db_manager |
+| `POST /api/db/explain` | Stage 13.2 db_manager |
+| `POST /api/db/export` | Stage 13.2 db_manager |
+| `POST /api/db/import` | Stage 13.2 db_manager |
+| `POST /api/db/indexes` | Stage 13.2 db_manager |
+| `DELETE /api/db/indexes/{index_name}` | Stage 13.2 db_manager |
+| `POST /api/db/optimize` | Stage 13.2 db_manager |
+| `POST /api/db/query` | Stage 13.2 db_manager |
+| `POST /api/db/restore` | Stage 13.2 db_manager |
+| `GET /api/db/schema` | Stage 13.2 db_manager |
+| `POST /api/db/tables` | Stage 13.2 db_manager |
+| `DELETE /api/db/tables/{table_name}` | Stage 13.2 db_manager |
+| `GET /api/db/tables/{table_name}/analyze` | Stage 13.2 db_manager |
+| `POST /api/db/tables/{table_name}/columns` | Stage 13.2 db_manager |
+| `DELETE /api/db/tables/{table_name}/columns/{column_name}` | Stage 13.2 db_manager |
+| `PATCH /api/db/tables/{table_name}/columns/{old_name}/rename` | Stage 13.2 db_manager |
+| `PATCH /api/db/tables/{table_name}/rename` | Stage 13.2 db_manager |
+| `GET /api/db/tables/{table_name}/sample` | Stage 13.2 db_manager |
+| `POST /api/db/transaction` | Stage 13.2 db_manager |
+| `POST /api/hindsight/recall` | ADR-134 honest limit (kernel /api/memory/search-semantic is the read-side referent) |
+| `POST /api/hindsight/reflect` | ADR-134 honest limit |
+| `POST /api/hindsight/retain` | ADR-134 honest limit: kernel hindsight is read-side; retain/recall/reflect actions deferred |
+| `GET /api/inference/metrics` | kernel /api/inference/status (partial); metrics surface deferred |
+| `POST /api/mcp/connect` | Stage 13 (MCP) |
+| `GET /api/mcp/status` | Stage 13 (MCP) |
+| `GET /api/metabolism` | Stage 13 (metabolism) |
+| `GET /api/metabolism/context` | Stage 13 (metabolism) |
+| `GET /api/metabolism/history` | Stage 13 (metabolism) |
+| `GET /api/nervous-system/status` | Stage 13 (nervous-system) |
+| `GET /api/observability/status` | Stage 13 (observability) |
+| `GET /api/rag/status` | Stage 13 (RAG) |
+| `GET /api/ragRetriever/status` | Stage 13 (RAG) |
+| `GET /api/repoMap/status` | Stage 13 (repo map) |
+| `POST /api/schema/apply` | Stage 13.1 schema_evolution |
+| `GET /api/schema/patterns` | Stage 13.1 schema_evolution |
+| `POST /api/schema/propose` | Stage 13.1 schema_evolution |
+| `POST /api/self_repair/health` | part of full self-repair daemon port |
+| `GET /api/self_repair/history` | ADR-139 split; user 2026-09-25: port full daemon (see ADR-141 decision) |
+| `POST /api/self_repair/repair` | ADR-139: trigger; user 2026-09-25 decision = FULL port (supersedes 'retired') |
+| `GET /api/skills` | ADR-108 D9: donor skills manager (830 LOC) ratified deferral |
+| `POST /api/skills` | ADR-108 D9 |
+| `POST /api/skills/dedup` | ADR-108 D9 |
+| `GET /api/skills/dedup/groups` | ADR-108 D9 |
+| `POST /api/skills/maintenance` | ADR-108 D9 |
+| `GET /api/skills/search` | ADR-108 D9 |
+| `POST /api/skills/select` | ADR-108 D9 |
+| `DELETE /api/skills/{skill_id}` | ADR-108 D9 |
+| `GET /api/skills/{skill_id}` | ADR-108 D9 |
+| `PUT /api/skills/{skill_id}` | ADR-108 D9 |
+| `POST /api/skills/{skill_id}/execute` | ADR-108 D9 |
+| `POST /api/skills/{skill_id}/improve` | ADR-108 D9 |
+| `POST /api/skills/{skill_id}/improve/from-execution` | ADR-108 D9 |
+| `POST /api/skills/{skill_id}/prune` | ADR-108 D9 |
+| `POST /api/skills/{skill_id}/toggle` | ADR-108 D9 |
+| `GET /api/thermal/health` | Stage 13 thermal subsystem; kernel has /api/thermal/status (ADR-121) — health/reset action surface rides with it |
+| `POST /api/thermal/reset` | Stage 13 thermal subsystem |
+| `GET /api/toolRouter/status` | kernel tool_router router (executor/api.py) — status surface unverified |
+| `POST /api/vision/analyze` | Stage 13.7 (vision :8094) |
+| `POST /api/vision/analyze-url` | Stage 13.7 (vision :8094) |
+| `GET /api/vision/status` | Stage 13.7 (vision :8094) |
+| `GET /api/voice/state` | Stage 13.7 (voice) |
+| `POST /api/voice/stt` | Stage 13.7 (voice) |
+| `POST /api/voice/tts` | Stage 13.7 (voice) |
+
+### To-port — no referent yet (47 routes)
+
+| Donor route (on :8020) | Disposition / referent |
+|---|---|
+| `GET /api/archive/sessions` | no referent — archive session list |
+| `GET /api/archive/sessions/{session_id}` | no referent |
+| `GET /api/archive/sessions/{session_id}/messages` | no referent |
+| `POST /api/archive/sessions/{session_id}/rename` | no referent |
+| `POST /api/archive/sessions/{session_id}/tag` | no referent |
+| `GET /api/config` | no referent — config read |
+| `PATCH /api/config` | no referent — config write |
+| `POST /api/delegate` | no referent — delegate action (kernel has delegation via subagents, no HTTP surface) |
+| `GET /api/directory_list` | no referent — directory listing helper |
+| `GET /api/dreamtime/history` | no referent |
+| `POST /api/dreamtime/run` | no referent |
+| `GET /api/dreamtime/summary` | no referent — dreamtime read |
+| `POST /api/dreamtime/trigger-skill-generation` | no referent |
+| `POST /api/embedder/embed` | no referent — embed action |
+| `GET /api/embedder/status` | no referent — embedder :8091 status |
+| `GET /api/evaluation/status` | no referent — evaluation harness status |
+| `GET /api/hooks` | no referent — hooks list |
+| `POST /api/hooks/fire` | no referent — hooks fire |
+| `GET /api/keys` | no referent — keys list |
+| `POST /api/llm/probe` | no referent — LLM probe action |
+| `POST /api/memory/decay` | no referent — memory decay action |
+| `DELETE /api/memory/{tier}/{entry_id}` | no referent — memory entry delete |
+| `GET /api/multi-agent-orchestrator/agents` | TO-PORT: engine.agents roster dict exists, /agents route missing |
+| `GET /api/multi-agent-orchestrator/status` | TO-PORT: engine + bundle exist (ADR-114), /stats present, /status route missing |
+| `GET /api/planner/language-games` | no referent |
+| `POST /api/planner/plan` | no referent |
+| `GET /api/planner/status` | no referent |
+| `GET /api/planner/templates` | no referent — planner read (planner router exists, templates surface unverified) |
+| `POST /api/plugins/{name}/toggle` | no referent — plugin toggle |
+| `GET /api/routing/decide` | no referent — routing decision |
+| `GET /api/schedule` | no referent — schedule read |
+| `GET /api/schema` | no referent — schema read (kernel has /api/kernel/schema, different surface) |
+| `GET /api/search` | no referent — search (kernel has /api/memory/search-semantic + zetesis) |
+| `POST /api/self_improvement/enqueue` | no referent |
+| `GET /api/self_improvement/experiences` | no referent |
+| `GET /api/self_improvement/metrics` | no referent — self-improvement read |
+| `GET /api/self_improvement/report` | no referent |
+| `GET /api/self_improvement/status` | no referent |
+| `GET /api/sessions/{session_id}/events` | no referent — session events stream (see ADR-140 WS parity) |
+| `GET /api/state/{session_id}` | no referent — session state read |
+| `POST /api/state/{session_id}/save` | no referent |
+| `POST /api/state/{session_id}/snapshot` | no referent |
+| `POST /api/tools/register` | no referent — tool registration |
+| `GET /api/tools/schema` | no referent — tool schema surface |
+| `POST /api/tools/{tool_name}/disable` | no referent |
+| `POST /api/tools/{tool_name}/enable` | no referent |
+| `POST /api/tools/{tool_name}/execute` | no referent |
+
+## WebSocket disposition (2 routes)
+
+| Donor route | Disposition |
+|---|---|
+| `WS /ws/{session_id}` | **D** — ADR-140: deferred to the deletion gate; parity-via-bus (`/api/events/ws` ADR-061 + prompt event publishing) or documented SSE-sufficient |
+| `WS /ws/pty` | **D** — Stage 13 sandbox work (PTY is a sandbox-surface concern) |
+
+## Decisions
+
+1. **Self-repair: FULL donor port (supersedes ADR-139's "trigger is retired").**
+   The donor self-repair subsystem is a 2,465-LOC package
+   (`tektos-ultima-v1/src/tektos/self_repair/`: engine 466 LOC, strategies 723,
+   health_monitor 261, workflows 470, models 245, effectiveness 233) with 8 builtin
+   strategy classes (ResourceExhaustion, ContextOverflow, LoopDetection,
+   PromptInjection, InfrastructureFailure, PerformanceDegradation, SelfDegradation,
+   GuardrailViolation) plus `RepairStrategyRegistry`. The user directed (2026-09-25):
+   port it with **FULL donor execution semantics** (no ADR-090 human-approval gate),
+   accepting the architectural tension with the kernel's propose-only ADR-128.
+   Resolution: land it as `plugins/tektos/self_repair/` — a plugin subsystem,
+   env-gated (`KOSMOS_TEKTOS_SELF_REPAIR=on`), with the daemon loop (start/stop,
+   `_monitoring_loop`, `repair_threat`, `manual_health_check`, history) executing
+   in-process. The ADR-128 kernel `/api/self_repair/status` endpoint becomes a
+   **bridge** to the ported engine's `get_status()` rather than the static
+   propose-only envelope, so the ops tab and the daemon share one source of truth.
+   This is the single largest preservation item in the audit.
+
+2. **T-bucket ordering for pre-deletion work** (highest functional value first,
+   smallest first within a tier):
+   - **T1 — orchestrator `/status` + `/agents`** (2 routes): engine + `agents`
+     roster dict already exist (ADR-114); two small routes on the mounted
+     `build_orchestrator_router`. Smallest possible first port.
+   - **T2 — session-adjacent surfaces**: `state/{session_id}` read/save/snapshot
+     (3), `sessions/{session_id}/events` (1, pairs with ADR-140 WS parity),
+     `archive/*` (5).
+   - **T3 — self-improvement read surface** (5 routes: status/metrics/report/
+     experiences/enqueue) — pairs with the ADR-134 hindsight read-side.
+   - **T4 — planner surface** (4: templates/status/plan/language-games) — the
+     `build_spec_planner_router` exists unmounted; mounting + missing routes.
+   - **T5 — tool management surface** (5: register/schema/enable/disable/execute)
+     — pairs with the ADR-136 tools read-side.
+   - **T6 — memory actions** (2: decay, entry delete) — pairs with ADR-135.
+   - **T7 — embedder surface** (2: status :8091, embed) — pairs with the ADR-132
+     LLM lanes.
+   - **T8 — misc singletons**: config GET/PATCH, keys, hooks list/fire, schedule,
+     search, routing/decide, delegate, llm/probe, evaluation/status, directory_list,
+     plugins/{name}/toggle, schema GET, dreamtime (4).
+
+3. **D-bucket ports ride the plan's Stage 13** in its own order
+   (13.1 schema_evolution → 13.2 db_manager → … → 13.7 voice), each with its own
+   ADR + tests + live verify, consistent with the per-stage convention.
+
+4. **Gate definition.** `main.py` may be deleted when: (a) every T route is P
+   (referent live-verified on :8000); (b) the self-repair daemon (Decision 1) is
+   ported and running; (c) the ADR-139 split resolves — history reads the ported
+   engine's `get_repair_history()`, the repair trigger reads its
+   `repair_threat()`; (d) the ADR-140 WS decision executes; (e) the page-level
+   `/health` upstream probe and "upstream down" banner are removed; (f) the
+   ADR-109 gateway module is deleted and :8020 is retired. D routes may remain at
+   deletion only if their named Stage 13 port has already landed; otherwise they
+   gate the deletion too.
+
+## Consequences
+
+- The Stage 11 "exit gate" is now a **152-route checklist**, not a single file
+  deletion. This ADR is that checklist; each T item flips to P with a commit.
+- ADR-139's "trigger retired" and "history → honest empty state" are superseded by
+  Decision 1 (full port). ADR-139 gains a STATUS AMENDMENT block.
+- The `tektos-ultima-v1` donor tree stays read-only reference material until the
+  gate passes; it is NOT deleted at Stage 14 until every D route's port is green.
+
+## Verification (live, 2026-09-25)
+
+- `GET /api/plugins` on :8000 → **200** (kernel-native, P-confirmed).
+- `GET /tektos/api/orchestrator/stats` on :8000 → **503** (router mounted; bundle
+  not booted in this instance — confirms the mount exists, route absent = T1).
+- All other `build_*_router` plugin surfaces (manager/planner/experience/
+  reflection/synthesis/decomposer/executor/tool-router) → **404**: defined in
+  `plugins/tektos/*/api.py` but **not mounted** in `kernel/app.py`. Not counted as
+  referents.
+- Data-services router (ADR-118) live: neo4j/postgres/redis/hindsight/qdrant
+  status all → 200.

@@ -1,5 +1,17 @@
 # ADR-139: kernel-native ops Self-Repair tab (split backends)
 
+> **STATUS AMENDMENT (2026-09-25, ADR-141):** the split's resolution path is
+> AMENDED, not reversed. The "Run-repair trigger is retired" disposition and the
+> "history → bus-derived or honest empty state" fallback are superseded: per the
+> governing constraint ("Kosmos-LMS Tektos must not lose any of the functionality
+> of Tektos-Ultima") and the user's 2026-09-25 decision, the donor self-repair
+> daemon (2,465-LOC package) is **ported in full with donor execution semantics**
+> to `plugins/tektos/self_repair/` before the `main.py` deletion. At deletion,
+> history reads the ported engine's `get_repair_history()` and the trigger reads
+> its `repair_threat()` — neither is retired nor emptied. The split state
+> (status kernel-native, history+trigger on the ADR-109 bridge) remains valid
+> until that port lands. See ADR-141 Decision 1.
+
 - **Status:** Ratified (2026-09-25)
 - **Scope:** v2 Stage 11.23 (endpoint split, self-repair family)
 - **Supersedes:** none

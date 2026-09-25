@@ -4708,3 +4708,51 @@ the bus (parity, ADR-061 exists) or close as SSE-sufficient; `/ws/pty`
   gains an explicit item: "resolve 11.7 per ADR-140".
 - **Stage 11 is at the exit-gate boundary.** Next: Stage 14.5 `main.py`
   deletion recon, or Stage 12 deployment surface per plan order.
+
+---
+
+## Stage 11 exit gate — Functionality-preservation audit (ADR-141) — 2026-09-25
+
+**Trigger:** user governing constraint (verbatim): *"Kosmos-LMS Tektos must not
+lose any of the functionality of Tektos-Ultima."* This converts the `main.py`
+deletion gate from "delete and accept the residual" into a functionality
+preservation **proof**.
+
+**Method:** inventoried the donor `tektos-ultima-v1/src/tektos/main.py` —
+**152 HTTP routes + 2 WS routes** — and matched each to a kernel/plugin referent
+(all `@app.*`/`@router.*` across `kernel/`, `plugins/`, `adapters/`), then
+**live-verified** candidate referents against the running :8000 kernel (e.g.
+`GET /api/plugins` → 200; orchestrator router mounted; `build_*_router` plugins
+that are defined but NOT mounted → 404 → not counted).
+
+**Disposition (152 HTTP + 2 WS):**
+- **35 P** (preserved, referent live on :8000)
+- **70 D + 2 WS** (deferred to a named path — Stage 13 subsystem ports,
+  ADR-134/108/140)
+- **47 T** (to-port, no referent yet) — ordered T1→T8 in ADR-141.
+
+**Key decision — self-repair FULL donor port (supersedes ADR-139 "trigger
+retired"):** the donor self-repair subsystem is a 2,465-LOC package
+(engine 466 + strategies 723 + health_monitor 261 + workflows 470 + models 245 +
+effectiveness 233) with 8 builtin strategy classes + a `RepairStrategyRegistry`,
+an autonomous daemon (start/stop, monitoring loop, repair_threat, manual_health_check,
+history). The user directed a **full port with donor execution semantics**
+(no ADR-090 approval gate) to `plugins/tektos/self_repair/`, env-gated. The
+ADR-128 kernel `/api/self_repair/status` becomes a **bridge** to the ported
+engine's `get_status()`. ADR-139 gains a STATUS AMENDMENT recording the
+supersession; the split state remains valid until the port lands.
+
+**Gate redefined** (ADR-141): `main.py` may be deleted when (a) every T route is
+P (live-verified), (b) self-repair daemon ported + running, (c) ADR-139 split
+resolves (history ← `get_repair_history()`, trigger ← `repair_threat()`),
+(d) ADR-140 WS decision executes, (e) page-level `/health` probe + banner
+removed, (f) ADR-109 gateway module deleted + :8020 retired. D routes gate the
+deletion unless their named Stage 13 port has already landed.
+
+**Artifacts:** ADR-141 (route-by-route table), ADR-139 STATUS AMENDMENT, README
+row. No code change this step — ADR-141 is the checklist; execution is the
+T1→T8 port sequence + the self-repair daemon port.
+
+**Next:** T1 — orchestrator `/status` + `/agents` routes on the already-mounted
+`build_orchestrator_router` (smallest real gap; engine + `agents` roster dict
+exist, two routes missing).
