@@ -11,9 +11,10 @@
  * multi-agent, self-improvement, schema, hindsight, axioms, knowledge and
  * configuration. Tabs whose families have a kernel referent are
  * kernel-native (same origin): logs (ADR-129), directory (ADR-130),
- * immune (ADR-133); the rest still drive the standalone Tektos API
- * (:8020) through the kernel gateway (ADR-109). All GET-only (the page
- * mutates nothing, so CI can run it against a live upstream safely).
+ * immune (ADR-133), hindsight (ADR-134); the rest still drive the
+ * standalone Tektos API (:8020) through the kernel gateway (ADR-109).
+ * All GET-only (the page mutates nothing, so CI can run it against a
+ * live upstream safely).
  *
  * Tab -> endpoints:
  *   status   /api/nervous-system/status /api/observability/status /api/mcp/status
@@ -30,7 +31,7 @@
  *   selfimp  /api/self_improvement/status /api/self_improvement/metrics
  *            /api/self_improvement/report /api/self_improvement/experiences
  *   schema   /api/schema /api/schema/patterns /api/skills/dedup/groups
- *   hindsight /api/hindsight/status /api/hindsight/experiences
+ *   hindsight (kernel-native, ADR-134) /api/hindsight/status /api/hindsight/experiences
  *   axioms   /api/axioms
  *   knowledge /api/search /api/directory_list /api/archive/sessions
  *            /api/archive/sessions/{session_id}
@@ -1022,8 +1023,8 @@ function HindsightTab() {
 
   const load = useCallback(async () => {
     const [s, e] = await Promise.all([
-      g<Record<string, unknown>>("/api/hindsight/status"),
-      g<unknown[] | Record<string, unknown>>("/api/hindsight/experiences"),
+      g<Record<string, unknown>>("/api/hindsight/status", ""),
+      g<unknown[] | Record<string, unknown>>("/api/hindsight/experiences", ""),
     ]);
     setStatus(s);
     setExperiences(asList(e));
