@@ -1450,10 +1450,48 @@ async def lifespan(app: FastAPI):
         except Exception as exc:  # noqa: BLE001
             registry.errors["tektos_ui"] = f"{type(exc).__name__}: {exc}"
 
+    # --- Stage 8.7 (ADR-114 D8) orchestrator router mount -----------------
+    # ADR-114 D8: ``build_orchestrator_router(bundle)`` mounts under
+    # ``/tektos/api/orchestrator`` with no internal prefix; a missing bundle
+    # degrades per-route to 503 (ADR-101 shape) via the factory's
+    # ``_guard_bundle()``. The bundle only exists after the boot slots run,
+    # so the mount happens here in the lifespan (same pattern as the
+    # ``/tektos-ui`` mount above) rather than at import time. Mounted before
+    # the static ``/`` mount so the routes resolve first.
+    try:
+        from plugins.tektos.orchestrator.engine import OrchestratorBundle as _OrchBundle
+        from plugins.tektos.orchestrator.api import build_orchestrator_router
+
+        _orch_bundle = getattr(registry, "tektos_orchestrator", None)
+        if not isinstance(_orch_bundle, _OrchBundle):
+            _orch_bundle = None
+        if not any(
+            getattr(r, "path", "") == "/tektos/api/orchestrator/stats"
+            for r in app.routes
+        ):
+            app.include_router(
+                build_orchestrator_router(
+                    _orch_bundle,
+                    hierarchical=getattr(registry, "tektos_hierarchical", None),
+                    long_running=getattr(registry, "tektos_long_running", None),
+                ),
+                prefix="/tektos/api/orchestrator",
+            )
+    except Exception as _orch_router_exc:  # noqa: BLE001
+        import logging as _orch_router_logging
+
+        _orch_router_logging.getLogger(__name__).warning(
+            "tektos orchestrator router not mounted: %s", _orch_router_exc
+        )
+        registry.errors["tektos_orchestrator_router"] = (
+            f"{type(_orch_router_exc).__name__}: {_orch_router_exc}"
+        )
+
     # --- Stage 1 GUI mount: serve Next.js static export at kernel root "/"
     # (ADR-067). Runs last so `/api/*`, `/health`, `/openapi.json`, `/docs`,
-    # `/gnosis-gate`, `/tektos-ui` all resolve first via Starlette's
-    # insertion-order routing. Skipped silently if `ui/out` is absent.
+    # `/gnosis-gate`, `/tektos-ui`, `/tektos/api/orchestrator` all resolve
+    # first via Starlette's insertion-order routing. Skipped silently if
+    # `ui/out` is absent.
     try:
         from pathlib import Path as _KosmosPath
         from fastapi.staticfiles import StaticFiles as _KosmosStaticFiles

@@ -4200,3 +4200,14 @@ Use the `kosmos-log-maintenance` Perplexity Computer skill.
 - **Ports / adapters affected:** none new — `SandboxPort`/`RelationalMemoryPort`/`EventBusPort`/`LLMPort` consumed as-is
 - **Verification:** functional smoke (orchestrator task+agent round-trip, hierarchical 6-role plan, long-running checkpoint→resume) all green; `test_stage_8_7_orchestrator_api.py` + `test_stage_8_7_orchestrator_wiring.py` **25/25 green**; full `tests/kernel` + `tests/plugins/tektos` regression exit 0 (0 failed, 0 error). ADR-101 degrade preserved: every route 503s per-engine when unwired; kernel boot degrades to `None` with WARN, never crashes. Router is a deliverable factory (not inline-mounted in `kernel/app.py`) per the Stage 8.3–8.6 pattern — tests mount via TestClient.
 - **Stop-condition status:** met — Stage 8.7 complete; engine family wired, tested, documented. Remaining Stage 8.x work: none (8.1–8.7 all landed).
+
+## 2026-09-25 — Stage 8.7 router mount (exit-gate enablement)
+
+- `kernel/app.py` lifespan: mount `build_orchestrator_router` under
+  `/tektos/api/orchestrator` (ADR-114 D8; 12 routes). Bundle resolved
+  post-boot from `registry.tektos_orchestrator`; missing bundle degrades
+  per-route to 503 (ADR-101 shape) via the factory guards. Duplicate-mount
+  guard mirrors the `/tektos-ui` pattern.
+- Verified live: `GET /tektos/api/orchestrator/stats` 200 (4 agents,
+  Postgres-backed); `POST /tasks` → `task_2` → `POST .../assign`
+  → `{"assigned": true}`; `long-running/status` reports `wired_memory: true`.
