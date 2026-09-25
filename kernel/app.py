@@ -66,6 +66,7 @@ import os
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import time
 from decimal import Decimal, InvalidOperation
 from typing import Any, AsyncIterator
 
@@ -3422,6 +3423,72 @@ async def thermal_status() -> dict[str, Any]:
         },
         "regulation_count": 0,
         "history": [],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Immune status (ADR-122, Stage 11.6) — kernel-native, reads the LIVE
+# registry.immune (TektosImmuneAdapter, KOSMOS_IMMUNE=on). The old card
+# proxied :8020/api/immune/health — a system-health composite (gpu/context/
+# loop_safety/inference/threat_level scores) the kernel does not track.
+# This serves what the kernel's immune port actually IS: a scan-on-request
+# detector registry. Envelope mirrors the :8020 keys (overall, status,
+# active_threats, uptime_seconds) so the existing parseCard works; adds a
+# `detectors` array + `scans` counter the card can surface. Always 200.
+# ---------------------------------------------------------------------------
+
+_KERNEL_BOOT_TS = time.monotonic()  # set at import; uptime of this kernel
+
+
+@app.get("/api/immune/health")
+async def immune_health() -> dict[str, Any]:
+    """Kernel-native immune health — the live detector registry."""
+    adapter = registry.immune
+    now = datetime.now(timezone.utc)
+
+    if adapter is None or not adapter.is_healthy():
+        # Adapter not booted (KOSMOS_IMMUNE=off) or unhealthy — report it,
+        # never 500. The card renders this as "degraded", not "down".
+        return {
+            "overall": 0.0,
+            "status": "degraded",
+            "components": {},
+            "active_threats": 0,
+            "resolved_threats": 0,
+            "uptime_seconds": round(time.monotonic() - _KERNEL_BOOT_TS, 1),
+            "detectors": [],
+            "detail": "ImmunePort offline (KOSMOS_IMMUNE=off or boot failed)",
+            "timestamp": now.isoformat(),
+        }
+
+    try:
+        infos = await adapter.list_detectors()
+    except Exception:  # noqa: BLE001 — list_detectors raising = degraded
+        infos = ()
+
+    detectors = [
+        {
+            "name": d.name,
+            "severity_ceiling": (
+                d.severity_ceiling.value
+                if hasattr(d.severity_ceiling, "value")
+                else str(d.severity_ceiling)
+            ),
+            "description": d.description,
+        }
+        for d in infos
+    ]
+
+    return {
+        "overall": 1.0,
+        "status": "healthy",
+        "components": {},  # kernel port has no per-component scoring
+        "active_threats": 0,  # scan-on-request: no persistent threat ledger
+        "resolved_threats": 0,
+        "uptime_seconds": round(time.monotonic() - _KERNEL_BOOT_TS, 1),
+        "detectors": detectors,
+        "detail": f"{len(detectors)} detectors registered",
+        "timestamp": now.isoformat(),
     }
 
 

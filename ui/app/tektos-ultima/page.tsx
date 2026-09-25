@@ -56,7 +56,7 @@ interface Subsystem {
 }
 
 const SUBSYSTEMS: Subsystem[] = [
-  { id: "immune", title: "Immune System", icon: "🛡️", endpoint: "/api/immune/health" },
+  { id: "immune", title: "Immune System", icon: "🛡️", endpoint: "/api/immune/health", base: "" },
   { id: "thermal", title: "Thermal", icon: "🌡️", endpoint: "/api/thermal/status", base: "" },
   { id: "inference", title: "Inference", icon: "🧠", endpoint: "/api/inference/status", base: "" },
   { id: "memory", title: "Memory", icon: "🧩", endpoint: "/api/memory/stats" },
@@ -122,9 +122,16 @@ function parseCard(sub: Subsystem, data: unknown): CardData {
       const healthy = status === "healthy" || num(o?.overall) === 1;
       const threats = num(o?.active_threats) ?? 0;
       const uptime = Math.round((num(o?.uptime_seconds) ?? 0) / 3600);
+      const dets: Array<{ name: string }> = Array.isArray(o?.detectors)
+        ? (o.detectors as Array<{ name: string }>).slice(0, 4)
+        : [];
+      const detLine =
+        dets.length > 0
+          ? `${dets.length} detectors · ${dets.map((d) => d.name).join(", ")}`
+          : "0 detectors";
       return {
         status: healthy && threats === 0 ? "healthy" : "degraded",
-        lines: [status ?? "unknown", `${threats} active threats`],
+        lines: [status ?? "unknown", `${threats} active threats`, detLine],
         detail: `overall ${o?.overall ?? "?"} · ${uptime} h uptime`,
       };
     }

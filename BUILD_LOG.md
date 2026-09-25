@@ -4435,3 +4435,11 @@ Hermes Agent uses) is now the primary LLM lane; Ollama is fallback-only.
 - **D3** kernel-native `GET /api/thermal/status` — :8020-shaped envelope the card already parses + new `gpu.cooldown` block; one-shot read degrade when the watchdog is off; always 200.
 - **D4** `page.tsx`: thermal card `base: ""` + `❄ arming X/60s` / `❄ cooldown` line (quiet below 75°C).
 - **Verified:** 17/17 tests (8 rule + 9 watchdog, all GPU-free); live endpoint after restart: 47°C GPU / 60°C CPU / relax / 400 W / cooldown inactive, history accumulating at 5 s; `boot_errors: {}`; `next build` clean + served chunk verified.
+
+## 2026-09-25 — Stage 11.6 · ADR-122: kernel-native /api/immune/health (Immune card re-point)
+
+- **Why:** the Immune card proxied `:8020/api/immune/health` — a 5-component system-health composite (gpu/context/loop_safety/inference/threat_level scores) the kernel does not track. The kernel already boots a **live** `TektosImmuneAdapter` (Stage 9.1, `KOSMOS_IMMUNE=on`) — a scan-on-request **detector registry**, a different kind of thing.
+- **D1** kernel-native `GET /api/immune/health` (after the ADR-121 thermal endpoint) reads the live `registry.immune`: booted + healthy → `status: healthy`, `overall: 1.0`, real `detectors[]` (12 donor detectors: prompt_injection, secret_exposure, dangerous_command, …); `None` (off) or unhealthy → `degraded` + `detail: ImmunePort offline`; `list_detectors()` raising → healthy w/ 0 detectors (never 500). `active_threats: 0` is honest — no persistent threat ledger. Envelope keeps the old keys so `parseCard` works; adds `detectors`.
+- **D2** `page.tsx`: immune card `base: ""` + detector line (`12 detectors · prompt_injection, secret_exposure, dangerous_command, context_collapse`).
+- **D3** `components: {}` is intentional — no fabricated component scores (would overlap the Thermal/Inference/LLM cards' real data).
+- **Verified:** 5/5 tests (GPU-free, stub adapter); live endpoint after restart: 12 detectors in <50 ms, `boot_errors: {}`; `tsc` clean, `next build` clean + served chunk verified.
