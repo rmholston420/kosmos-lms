@@ -4344,27 +4344,23 @@ async def plugins_stats() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# /api/self_repair/status — ADR-128 (v2 Stage 11.12, self_repair family)
+# /api/self_repair/* — ADR-128 (v2 Stage 11.12) as EXTENDED by ADR-141/142
 #
-# The old card proxied :8020/api/self_repair/status — the standalone
-# engine's *executing* repair daemon (uptime, completed_repairs,
-# effectiveness rates, 8 registered strategies). Two corrections make
-# that envelope wrong for the kernel:
+# Two surfaces, both kernel-native now (the ADR-139 "keep history+trigger
+# on the gateway until 14.5" split is CLOSED — the executing daemon
+# exists in the kernel):
 #
-#  1. The kernel's self-repair surface is the propose-only
-#     ``SelfRepairProposer`` (Stage 5.6, ADR-095 D2): it builds a
-#     ``SelfRepairProposal``, routes it through ApprovalPort at tier
-#     HUMAN_REQUIRED (never auto-applied), writes a MemoryPort triple
-#     (provenance ``tektos_self_modification``, confidence 0.85), and
-#     publishes ``tektos.self_modification.proposed`` on the event bus.
-#     ``apply()`` physically raises NotImplementedError (ADR-090).
-#  2. Execution (the repair loop, strategies, effectiveness) stays on the
-#     standalone engine — the kernel must report that honestly, not
-#     fabricate ``completed_repairs``.
+#  1. **engine** — the full donor repair daemon (ADR-141 R-series, ADR-142
+#     re-home): ``kernel.reliability.SelfRepairEngine`` booted at kernel
+#     start with the Tektos threat-model policy (8 strategies + 6
+#     healing workflows) injected by the composition root. FULL donor
+#     execution semantics (no approval gate) — donor-faithful.
+#  2. **proposer** — the older propose-only ``SelfRepairProposer``
+#     (Stage 5.6, ADR-095 D2) behind ApprovalPort. Unchanged.
 #
-# The strategy catalog is static data (the vendored donor
-# ``RepairStrategy`` enum, 19 labels), reported even when the proposer is
-# off — the card is never empty.
+# Envelope note: the donor served the engine's raw ``get_status()`` at
+# ``/status``; the kernel keeps that exact payload under ``engine``
+# (UI-compatible) and adds the proposer + static catalog alongside.
 # ---------------------------------------------------------------------------
 
 # Strategy catalog: every vendored RepairStrategy label grouped into the
@@ -4444,42 +4440,142 @@ def _self_repair_strategy_catalog() -> dict[str, Any]:
 
 @app.get("/api/self_repair/status")
 async def self_repair_status() -> dict[str, Any]:
-    """Kernel self-repair truth: propose-only proposer + strategy catalog.
+    """Kernel self-repair truth: the executing engine + the proposer.
 
-    Always 200. ``proposer.wired`` = the SelfRepairProposer is booted
-    (``KOSMOS_TEKTOS_SELF_REPAIR=on`` + approval/memory/event_bus
-    present); ``wired: false`` (the default) is a valid degraded state.
-    ``strategies`` is static data (the vendored RepairStrategy enum),
-    reported even when the proposer is off. ``execution`` explicitly says
-    the repair loop stays on the standalone engine — no fabricated
-    ``completed_repairs`` / effectiveness counters.
+    Always 200. ``engine`` is the DI-wired repair daemon (ADR-141/142) —
+    the donor-faithful ``get_status()`` payload (running, uptime,
+    repair counts, effectiveness, latest health, health trend) when
+    booted; ``engine.wired: false`` is an honest degraded state.
+    ``proposer`` is the older propose-only ADR-095 surface (HUMAN_REQUIRED
+    approval tier). ``strategies`` is the static 19-label catalog.
     """
     errors: list[str] = []
     catalog = _self_repair_strategy_catalog()
     errors.extend(catalog["errors"])
 
     proposer = getattr(registry, "tektos_self_repair", None)
-    wired = proposer is not None
+    proposer_wired = proposer is not None
+
+    engine = getattr(registry, "self_repair", None)
+    engine_wired = engine is not None
+    boot_error = registry.errors.get("self_repair")
+
+    engine_status: dict[str, Any]
+    if engine_wired:
+        try:
+            engine_status = engine.get_status()
+        except Exception as exc:  # noqa: BLE001
+            engine_status = {"error": f"{type(exc).__name__}: {exc}"}
+            errors.append(f"engine.get_status: {type(exc).__name__}: {exc}")
+    else:
+        engine_status = {
+            "wired": False,
+            "note": "engine not booted"
+            + (f" ({boot_error})" if boot_error else ""),
+        }
+    engine_status.setdefault("wired", True)
+
+    healthy = engine_wired and engine_status.get("running", False)
 
     return {
-        "status": "initialized" if wired else "degraded",
-        "healthy": wired,
-        "note": "propose-only (ADR-095 D2): HUMAN_REQUIRED approval, no execution in kernel",
+        "status": "initialized" if healthy else "degraded",
+        "healthy": healthy,
+        "note": "executing daemon (kernel.reliability, ADR-142) + propose-only proposer (ADR-095)",
+        "engine": engine_status,
         "proposer": {
-            "wired": wired,
+            "wired": proposer_wired,
             "tier": "HUMAN_REQUIRED",
-            "confidence": getattr(proposer, "_confidence", None) if wired else None,
-            "provenance": getattr(proposer, "provenance", None) if wired else None,
+            "confidence": getattr(proposer, "_confidence", None) if proposer_wired else None,
+            "provenance": getattr(proposer, "provenance", None) if proposer_wired else None,
         },
         "strategies": {
             "strategies_registered": catalog["strategies_registered"],
             "categories": catalog["categories"],
             "strategy_names": catalog["strategy_names"],
         },
-        "execution": "not wired in kernel (standalone Tektos repair engine, :8020/api/self_repair/status)",
         "errors": errors,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@app.get("/api/self_repair/history")
+async def self_repair_history(limit: int = 100) -> dict[str, Any]:
+    """Recent executed repairs (donor envelope: ``{"history": [...]}``).
+
+    ADR-141 R7 — donor main.py:3063-3068 verbatim shape. The ledger is
+    the DI-wired engine's real repair records (diagnose → repair →
+    verify → learn), not the gateway's :8020 proxy anymore.
+    """
+    engine = getattr(registry, "self_repair", None)
+    if engine is None:
+        return {"error": "Self-repair engine not initialized", "history": []}
+    return {"history": engine.get_repair_history(limit=limit)}
+
+
+@app.post("/api/self_repair/repair")
+async def self_repair_repair(request: Request) -> dict[str, Any]:
+    """Manually trigger a repair (donor envelope: ``{"record": ...}``).
+
+    ADR-141 R7 — donor main.py:3071-3083. The UI sends ``{"note": ...}``
+    (free-text suspect description); the donor accepts
+    threat_category/threat_severity/ctx. Both shapes work: a bare note
+    maps to an "unknown" threat with the note as context, explicit
+    fields pass through untouched. 500 on engine failure (donor parity).
+    """
+    engine = getattr(registry, "self_repair", None)
+    if engine is None:
+        return {"error": "Self-repair engine not initialized"}
+    body = await _read_optional_json(request)
+    threat_category = body.get("threat_category", "unknown")
+    threat_severity = body.get("threat_severity", 1)
+    ctx: dict[str, Any] = dict(body.get("ctx") or {})
+    note = body.get("note")
+    if note:
+        ctx.setdefault("note", note)
+    if not body.get("threat_category") and not body.get("ctx"):
+        # UI "Run repair" without a specific suspect: run a general
+        # health-check-driven pass at severity 1 (donor-equivalent
+        # manual trigger).
+        threat_category = "manual_check"
+        threat_severity = 1
+    try:
+        record = await engine.repair_threat(threat_category, int(threat_severity), ctx)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, detail=f"invalid threat_severity: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, detail=str(exc)) from exc
+    return {"record": record.to_dict()}
+
+
+@app.post("/api/self_repair/health")
+async def self_repair_health(request: Request) -> dict[str, Any]:
+    """Trigger a manual health check with provided scores.
+
+    ADR-141 R7 — donor main.py:3086-3106 verbatim shape: all scores
+    optional (default 1.0 = healthy), returns the HealthSnapshot dict.
+    """
+    engine = getattr(registry, "self_repair", None)
+    if engine is None:
+        return {"error": "Self-repair engine not initialized"}
+    body = await _read_optional_json(request)
+    try:
+        snapshot = await engine.manual_health_check(
+            gpu_score=float(body.get("gpu_score", 1.0)),
+            context_score=float(body.get("context_score", 1.0)),
+            loop_safety_score=float(body.get("loop_safety_score", 1.0)),
+            inference_score=float(body.get("inference_score", 1.0)),
+            threat_level_score=float(body.get("threat_level_score", 1.0)),
+            active_threats=int(body.get("active_threats", 0)),
+            resolved_threats=int(body.get("resolved_threats", 0)),
+            pending_repairs=int(body.get("pending_repairs", 0)),
+            successful_repairs_24h=int(body.get("successful_repairs_24h", 0)),
+            failed_repairs_24h=int(body.get("failed_repairs_24h", 0)),
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, detail=f"invalid score payload: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, detail=str(exc)) from exc
+    return snapshot.to_dict()
 
 
 # ---------------------------------------------------------------------------
