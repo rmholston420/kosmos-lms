@@ -62,8 +62,11 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import logging
 import os
+import threading
 import uuid
+from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import time
@@ -79,6 +82,115 @@ from fastapi import (
 )
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# ADR-129 (Stage 11.13): kernel-native log ring buffer
+# ---------------------------------------------------------------------------
+# The ops Logs tab previously proxied :8020/api/logs — the *standalone*
+# Tektos engine's own records (tektos.thermal.*, tektos.self_repair.*).
+# The kernel's referent is the kernel's OWN records: this bounded
+# logging.Handler captures every record the kernel root logger sees.
+# Shared kernel infrastructure — always on, no env gate, no dependency.
+
+_LOG_RING_MAX = 500
+_LOG_RING_LEVEL = logging.INFO  # keep uvicorn/httpx DEBUG chatter out
+
+
+def _redact_dsn(dsn: str) -> str:
+    """Redact the password from a connection DSN for safe logging.
+
+    ``scheme://user:pass@host/db`` → ``scheme://user:***@host/db``.
+    Boot logs (and the /api/logs ring) must never carry credentials.
+    """
+    at = dsn.find("@")
+    if at < 0:
+        return dsn
+    scheme_end = dsn.find("://")
+    start = scheme_end + 3 if scheme_end >= 0 else 0
+    colon = dsn.find(":", start)
+    if colon < 0 or colon > at:
+        return dsn  # no user:pass segment — nothing to redact
+    return dsn[:colon + 1] + "***" + dsn[at:]
+
+
+def _log_record_to_dict(record: logging.LogRecord) -> dict[str, Any]:
+    """Serialize one LogRecord to the shape the ops LogsTab renders.
+
+    ``{timestamp, level, logger, message}`` — identical to the
+    :8020/api/logs element shape, so the tab is drop-in compatible.
+    """
+    try:
+        ts = datetime.fromtimestamp(record.created, timezone.utc).isoformat()
+    except (OverflowError, OSError, ValueError):
+        ts = datetime.now(timezone.utc).isoformat()
+    return {
+        "timestamp": ts,
+        "level": record.levelname,
+        "logger": record.name,
+        "message": record.getMessage(),
+    }
+
+
+class _KosmosLogRing(logging.Handler):
+    """Bounded, thread-safe ring buffer of recent kernel log records.
+
+    Attached to the process root logger — every kernel logger is a
+    module name (``kernel.app``, ``plugins.*``, ``adapters.*``) and
+    propagates there. Library noise (uvicorn access/error, httpx,
+    httpcore) is dropped in ``emit`` so the ring shows kernel-owned
+    records, not framework chatter. ``snapshot()`` returns oldest-first.
+    """
+
+    _NOISE_PREFIXES = ("uvicorn", "httpx", "httpcore", "multipart", "watchfiles")
+
+    def __init__(self, maxlen: int = _LOG_RING_MAX) -> None:
+        super().__init__(level=_LOG_RING_LEVEL)
+        self._lock = threading.Lock()
+        self._records: deque[logging.LogRecord] = deque(maxlen=maxlen)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.name.startswith(self._NOISE_PREFIXES) or any(
+            record.name.startswith(p + ".") for p in self._NOISE_PREFIXES
+        ):
+            return
+        with self._lock:
+            self._records.append(record)
+
+    def snapshot(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return [_log_record_to_dict(r) for r in self._records]
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._records)
+
+
+_log_ring: _KosmosLogRing | None = None
+
+
+def _install_log_ring() -> _KosmosLogRing:
+    """Install (once) the ring buffer on the process root logger.
+
+    Also lifts the root level to ``_LOG_RING_LEVEL`` (INFO) when it is
+    higher — by default the process root sits at WARNING, which would
+    drop the kernel's own INFO records before they reach the ring
+    (and stdout). Library noise is dropped per-name in ``emit``.
+    """
+    global _log_ring
+    if _log_ring is None:
+        _log_ring = _KosmosLogRing()
+        root = logging.getLogger()
+        if root.level in (logging.NOTSET, logging.WARNING, logging.ERROR,
+                          logging.CRITICAL) or root.level > _LOG_RING_LEVEL:
+            root.setLevel(_LOG_RING_LEVEL)
+        if not any(
+            isinstance(h, _KosmosLogRing) for h in root.handlers
+        ):
+            root.addHandler(_log_ring)
+    return _log_ring
+
+
+_log_ring = _install_log_ring()
 
 # ---------------------------------------------------------------------------
 # Boot helpers
@@ -766,7 +878,7 @@ async def lifespan(app: FastAPI):
             return None
         log.info(
             "kosmos.relational_memory: wired (ADR-102); adapter=postgres dsn=%s",
-            dsn,
+            _redact_dsn(dsn),
         )
         return adapter
 
@@ -4129,6 +4241,33 @@ async def self_repair_status() -> dict[str, Any]:
         },
         "execution": "not wired in kernel (standalone Tektos repair engine, :8020/api/self_repair/status)",
         "errors": errors,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# /api/logs — ADR-129 (Stage 11.13): kernel-native log ring buffer
+# ---------------------------------------------------------------------------
+
+@app.get("/api/logs")
+async def kernel_logs() -> dict[str, Any]:
+    """Kernel's OWN recent log records (the ops Logs tab's referent).
+
+    Replaces the :8020/api/logs proxy — the standalone engine's
+    ``tektos.*`` records. The ring captures every INFO+ record the
+    kernel's root logger sees (uvicorn/httpx noise dropped), bounded
+    at 500, thread-safe. Shape ``{logs: [...]}`` matches the
+    :8020 element schema, so the tab renders it unchanged.
+    """
+    records = _log_ring.snapshot() if _log_ring is not None else []
+    levels: dict[str, int] = {}
+    for r in records:
+        levels[r["level"]] = levels.get(r["level"], 0) + 1
+    return {
+        "logs": records,
+        "count": len(records),
+        "max_records": _LOG_RING_MAX,
+        "level_histogram": levels,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 

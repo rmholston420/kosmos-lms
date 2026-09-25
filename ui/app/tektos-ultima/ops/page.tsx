@@ -69,9 +69,9 @@ function fmtBytes(b: unknown): string {
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
-async function g<T = unknown>(path: string): Promise<T | null> {
+async function g<T = unknown>(path: string, base: string = GATEWAY): Promise<T | null> {
   try {
-    const r = await fetch(`${GATEWAY}${path}`, { cache: "no-store" });
+    const r = await fetch(`${base}${path}`, { cache: "no-store" });
     if (!r.ok) return null;
     return (await r.json()) as T;
   } catch {
@@ -628,7 +628,11 @@ function LogsTab() {
   const [query, setQuery] = useState("");
 
   const load = useCallback(async () => {
-    const l = await g<unknown>("/api/logs");
+    // ADR-129 (Stage 11.13): kernel-native — the old call proxied :8020's
+    // standalone-engine logs (tektos.thermal/self_repair/llm_client).
+    // base "" → relative fetch against the kernel origin (same convention
+    // as the main dashboard cards); the {logs:[...]} shape is unchanged.
+    const l = await g<unknown>("/api/logs", "");
     if (Array.isArray(l)) setLogs(l as LogEntry[]);
     else if (isObj(l) && Array.isArray(l["logs"])) setLogs(l["logs"] as LogEntry[]);
     else setLogs([]);
