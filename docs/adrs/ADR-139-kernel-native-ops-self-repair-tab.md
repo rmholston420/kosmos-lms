@@ -1,5 +1,14 @@
 # ADR-139: kernel-native ops Self-Repair tab (split backends)
 
+> **STATUS AMENDMENT 2 (2026-09-25, ADR-142 / ADR-141 R7+R8):** the split is
+> **CLOSED**. The self-repair substrate now lives in `kernel/reliability/`
+> (ADR-142) and the kernel serves all three calls natively: status (dual
+> surface — executing engine + propose-only proposer), history
+> (`get_repair_history()`), and the repair trigger (`repair_threat()`). The
+> ops tab no longer touches the ADR-109 gateway for self-repair. The
+> "keep as-is until 14.5" interim state (Amendment 1) ended when R7 landed
+> (`5cb5f46`) and R8 re-pointed the UI (`20343da`).
+
 > **STATUS AMENDMENT (2026-09-25, ADR-141):** the split's resolution path is
 > AMENDED, not reversed. The "Run-repair trigger is retired" disposition and the
 > "history → bus-derived or honest empty state" fallback are superseded: per the

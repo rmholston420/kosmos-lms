@@ -4756,3 +4756,71 @@ T1→T8 port sequence + the self-repair daemon port.
 **Next:** T1 — orchestrator `/status` + `/agents` routes on the already-mounted
 `build_orchestrator_router` (smallest real gap; engine + `agents` roster dict
 exist, two routes missing).
+
+---
+
+## Stage 11 exit gate — Self-repair daemon port + kernel re-home + ADR-139 split closed (ADR-141 R1–R8, ADR-142) — 2026-09-25
+
+**Trigger:** ADR-141 gate items (b)+(c) — self-repair daemon ported + running,
+ADR-139 split resolved (history ← `get_repair_history()`, trigger ←
+`repair_threat()`). Mid-port, the user re-stated the governing layering rule
+(coding-agent-specific → plugin; generic machinery → kernel shared infra);
+the R1–R6 port had landed the whole subsystem under `plugins/tektos/` —
+under-application acknowledged and fixed via **ADR-142**.
+
+**What changed (in order):**
+
+- **R2–R6** — donor 2,465-LOC package ported (models extended with
+  `RepairResult`/`HealthSnapshot`/`DegradationPlan`; 8 strategies + registry
+  + effector; health monitor + effectiveness tracker + 6 healing workflows;
+  engine daemon). Boot wiring: `kernel/app.py` starts the daemon
+  unconditionally (degrades to `registry.errors['self_repair']` on failure),
+  stops it before thermal-watchdog teardown. Donor simulation mode confirmed
+  (donor never calls `set_effector` → ctx-mutation + `[simulated]` marker;
+  hard-fail only under `TEKTOS_SELF_REPAIR_REQUIRE_REAL`).
+- **ADR-142 substrate re-home** (`94cf998`) — engine/health_monitor/
+  effectiveness/models → `kernel/reliability/` (same class as
+  `tektos_immune`/`tektos_thermal_watchdog`/`tektos_telemetry`); 8 strategies
+  + 6 workflows + proposer stay `plugins/tektos/self_repair/` (Tektos
+  threat-model policy). DI seam: `SelfRepairEngine.__init__(strategy_registry,
+  healing_workflows)` injected by the composition root; unwired → honest
+  escalate-only (ADR-007: kernel never imports plugin). Vendor models file
+  `git mv`'d to `kernel/reliability/models.py`.
+- **R7 kernel routes** (`5cb5f46`) — all four donor endpoints
+  (`main.py:3055-3106`) now kernel-native: `GET /api/self_repair/status`
+  rewritten to a dual-surface envelope (executing engine `get_status()` +
+  propose-only proposer + static 19-label catalog; `healthy` tracks the
+  daemon, not the proposer); `GET /history` (donor `{"history": [...]}`),
+  `POST /repair` (donor `{"record": ...}`; UI note shape → `manual_check`
+  severity 1 with note in ctx, donor threat_category/severity/ctx shape
+  passthrough), `POST /health` (donor HealthSnapshot; all scores optional).
+- **R8 UI re-point** (`20343da`) — ops RepairTab: status + history + trigger
+  all same-origin kernel (`act()` gains an optional base param); metrics
+  surface the executing daemon (running/repairs/failed) instead of the
+  propose-only proposer; history rows normalized from engine `RepairRecord`
+  (legacy immune shape still tolerated); header updated (split CLOSED).
+
+**Verification (live, not mocks):** running :8000 kernel — `/status` 200
+(engine wired+running, 8 strategies + 6 workflows injected, uptime ticking,
+19-label catalog intact); `/repair` donor shape → `throttle_workload` →
+completed → verified; `/repair` UI note shape → honest `escalate_to_user` +
+reduced degradation; `/history` empty→2 records (ledger reflected in
+`/status` total=2/completed=1); `/health` gpu 0.4 → overall 0.68/`warning`.
+Wired engine = donor behavior exactly; bare engine = honest escalate-only.
+New `tests/kernel/test_adr141_r7_self_repair_routes.py` (16 tests) +
+`test_stage_11_12_adr_128` updated to the dual-surface envelope. Full
+regression green (PYTEST_EXIT=0). `tsc`: only a pre-existing Playwright spec
+error, untouched. Kernel restart: `/health` ok, zero self-repair boot error.
+
+**Artifacts:** ADR-142 (new), ADR-139 STATUS AMENDMENT 2 (split closed),
+README ADR-142 row.
+
+**Gate progress (ADR-141):** (b) self-repair daemon ported + running ✓,
+(c) ADR-139 split resolved ✓. Remaining before `main.py` deletion: the ~47 T
+routes (T3 self-improvement → T8 misc), D-route Stage 13 subsystem ports,
+page-level `/health` probe removal ×3, ADR-140 WS decision execution,
+ADR-109 gateway module deletion + :8020 retirement.
+
+**Next:** T3 — self-improvement routes (next T-family per ADR-141 order),
+or Stage 13 subsystem ports (schema_evolution, db_manager, vision, voice,
+MCP, metabolism) in ROI order.
