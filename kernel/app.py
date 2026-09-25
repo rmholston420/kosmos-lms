@@ -1974,6 +1974,15 @@ async def lifespan(app: FastAPI):
         except Exception:  # noqa: BLE001
             pass
 
+    # ADR-143 T3 / S5c: stop the learning-cycle driver (background cycle
+    # task) before the event-bus teardown — its tick emitter publishes to
+    # the bus. Donor had no explicit stop either.
+    if getattr(registry, "tektos_self_improve", None) is not None:
+        try:
+            await registry.tektos_self_improve.stop()
+        except Exception:  # noqa: BLE001
+            pass
+
     # ADR-121 (Stage 11.5): stop the sustained-thermal watchdog before
     # anything else so it can't race the event-bus teardown.
     if getattr(registry, "thermal_watchdog", None) is not None:
@@ -4668,6 +4677,103 @@ async def self_repair_health(request: Request) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(500, detail=str(exc)) from exc
     return snapshot.to_dict()
+
+
+# ---------------------------------------------------------------------------
+# /api/self_improvement — ADR-143 T3 (S5b): kernel-native self-improvement
+# (learning substrate + Hegelian loop driver). Replaces the :8020 proxy.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/self_improvement/metrics")
+async def self_improvement_metrics() -> dict[str, Any]:
+    """Learning metrics: tasks, improvements, velocity, model rankings.
+
+    ADR-143 — donor main.py:3144-3150 verbatim. ``get_learning_metrics``
+    reads the meta-learning store; unwired substrate → honest error.
+    """
+    engine = getattr(registry, "tektos_learning", None)
+    if engine is None:
+        return {"error": "Self-improvement adapter not initialized"}
+    return engine.get_learning_metrics()
+
+
+@app.get("/api/self_improvement/experiences")
+async def self_improvement_experiences(top_k: int = 20) -> dict[str, Any]:
+    """Recent experience records (donor ``{"experiences": [...]}``).
+
+    ADR-143 — donor main.py:3152-3159 verbatim. Each record is the donor
+    wire shape (``to_dict``); the UI reads ``timestamp``/``task``/``outcome``.
+    """
+    engine = getattr(registry, "tektos_learning", None)
+    if engine is None:
+        return {"error": "Self-improvement adapter not initialized"}
+    records = engine.get_experience(top_k=top_k)
+    return {"experiences": [r.to_dict() for r in records]}
+
+
+@app.get("/api/self_improvement/report")
+async def self_improvement_report() -> dict[str, Any]:
+    """Human-readable self-improvement report (donor ``{"report": str}``).
+
+    ADR-143 — donor main.py:3161-3166 verbatim.
+    """
+    engine = getattr(registry, "tektos_learning", None)
+    if engine is None:
+        return {"error": "Self-improvement adapter not initialized"}
+    return {"report": engine.get_report()}
+
+
+@app.post("/api/self_improvement/enqueue")
+async def self_improvement_enqueue(request: Request) -> dict[str, Any]:
+    """Enqueue a prompt for the background learning-cycle driver.
+
+    ADR-143 — donor main.py:4555-4573 verbatim. The driver's ``enqueue``
+    caps the queue (drop-oldest) as a safety net the donor's unbounded
+    ``app.state`` list lacked; the response carries the new queue depth as
+    ``pending`` (donor field). ``run_now=true`` runs one cycle immediately
+    (kernel addition for operator use; degrades honestly when the gate is
+    off or no loop is wired).
+    """
+    body = await _read_optional_json(request)
+    prompt = str(body.get("prompt", "")).strip()
+    if not prompt:
+        return {"queued": False, "error": "prompt is required"}
+    driver = getattr(registry, "tektos_self_improve", None)
+    if driver is None:
+        return {"queued": False, "error": "learning driver not initialized"}
+    try:
+        pending = driver.enqueue(prompt)
+    except ValueError as exc:
+        return {"queued": False, "error": str(exc)}
+    response: dict[str, Any] = {"queued": True, "pending": pending}
+    if body.get("run_now"):
+        cycle = await driver.run_cycle_now(prompt)
+        response["cycle"] = cycle
+    return response
+
+
+@app.get("/api/self_improvement/status")
+async def self_improvement_status() -> dict[str, Any]:
+    """Driver enablement + queue depth + loop health (donor shape).
+
+    ADR-143 — donor main.py:4575-4588 field set (``enabled``,
+    ``orchestrator_ready``, ``pending``, ``interval_seconds``). The driver's
+    ``get_status`` carries the richer kernel view (recent cycles, loop
+    health); ``pending`` is aliased from ``queue_length`` so the donor
+    field the UI reads stays present.
+    """
+    driver = getattr(registry, "tektos_self_improve", None)
+    if driver is None:
+        return {
+            "enabled": False,
+            "orchestrator_ready": False,
+            "pending": 0,
+            "interval_seconds": 1800.0,
+            "error": "learning driver not initialized",
+        }
+    status = driver.get_status()
+    status["pending"] = status.get("queue_length", 0)
+    return status
 
 
 # ---------------------------------------------------------------------------
