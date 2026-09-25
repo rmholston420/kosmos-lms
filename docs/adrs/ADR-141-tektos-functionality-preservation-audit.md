@@ -268,7 +268,22 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
      SDK task-start plan hook (donor `sdk.py:889`, `plan.*` WS broadcast)
      rides with ADR-140.
    - **T5 — tool management surface** (5: register/schema/enable/disable/execute)
-     — pairs with the ADR-136 tools read-side.
+     — pairs with the ADR-136 tools read-side. **P (2026-09-25)** — all 5
+     routes kernel-native at the donor paths (main.py:2843-2935): the
+     registry SUBSTRATE (donor `ToolRegistry` + `ToolDefinition`,
+     register/get/list/execute/schema + `tool.*` events) elevated to
+     `kernel/tool_registry.py` (T5a — generic infrastructure); the
+     coding-agent toolset (donor `SandboxProvider` 7 built-in tool handlers)
+     ported to `plugins/tektos/tools/sandbox_provider.py` (T5b) + the 7
+     `ToolDefinition`s in `plugins/tektos/tools/builtin_defs.py` (T5c),
+     injected at boot in `kernel/app.py` (T5d, composition root, ADR-007).
+     Donor parity: `POST /register` is the donor's 501 stub (HTTP tool
+     registration refused); execute/enable/disable wires byte-identical to
+     donor; 13/13 live donor-vs-kernel registry diffs (separate tmp
+     sandboxes, roots normalized) + live :8000 smoke (all 5 routes, bash
+     disable/enable round-trip, file_write→search round-trip). 20 tests;
+     full `tests/kernel/` 566 passed. Donor Terminal-Bench Docker proxying
+     + web/rag/delegate handlers are separate subsystems (out of T5 scope).
    - **T6 — memory actions** (2: decay, entry delete) — pairs with ADR-135.
    - **T7 — embedder surface** (2: status :8091, embed) — pairs with the ADR-132
      LLM lanes.

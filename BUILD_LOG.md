@@ -4931,3 +4931,54 @@ MCP, metabolism) in ROI order.
   retirement.
 - **Stop-condition status:** met — T4 complete; next T5 (tool
   management surface, 5 routes — pairs with ADR-136 tools read-side).
+
+## 2026-09-25 15:23 EDT — ADR-141 T5 complete: tool management surface (5 routes) kernel-native
+
+- **T5a — registry substrate** (`kernel/tool_registry.py`): donor
+  `ToolRegistry` + `ToolDefinition` (`tools/registry.py`, ~170 LOC)
+  elevated to the kernel — register/get/list/execute/to_tools_schema +
+  `tool.registered`/`tool.unregistered`/`tool.executed` events. The donor
+  published via 3-positional `publish(type, producer, payload)`; the
+  kernel `EventBusPort` is async (ADR-023), so `_emit` wraps the donor
+  (type, producer, payload) in an `EventEnvelope` and bridges the sync
+  call site with a fire-and-forget `create_task` (no loop → drop + debug
+  log, the donor's unwired-bus behavior). Never raises.
+- **T5b — sandbox executor** (`plugins/tektos/tools/sandbox_provider.py`):
+  donor `SandboxProvider` port — the 7 built-in tool handlers (bash,
+  file_read, file_write, file_delete, directory_list, directory_create,
+  search) + `_safe_path` escape guard. Donor recovery behaviors kept:
+  permission-denied `sudo -n` auto-retry (with the no-root note) + PEP 668
+  hint. Dropped: Terminal-Bench Docker proxying (eval harness, not Tektos
+  functionality) and web/rag/delegate handlers (separate subsystems).
+- **T5c — built-in defs** (`plugins/tektos/tools/builtin_defs.py`): the 7
+  donor `ToolDefinition`s verbatim + `register_donor_builtins(registry,
+  sandbox)`. The donor's per-instance `load_built_in` gate is replicated
+  per registry instance (`_loaded_in` module global) — a double boot on
+  the same registry is a no-op, a fresh registry loads again.
+- **T5d — routes + boot** (`kernel/app.py`): the 5 donor routes at the
+  donor paths (main.py:2843-2935) — `GET /api/tools/schema`, `POST
+  /api/tools/register` (the donor's 501 stub, verbatim detail text),
+  `POST /api/tools/{name}/enable|disable|execute` — plus the boot block:
+  `_tool_sandbox = SandboxProvider()`, `_tool_registry =
+  ToolRegistry(event_bus)`, `register_donor_builtins(...)` (composition
+  root; ADR-007 — the substrate never imports plugins). The ADR-126
+  `GET /api/tools` read-side (ADR-107 router truth) is untouched; its
+  `execution` field now honestly reports the wired ToolRegistry.
+- **Verification:** 13/13 live donor-vs-kernel registry diffs (separate
+  tmp sandboxes, root paths normalized: list_tools ×2, schema, file_write,
+  file_read, directory_list, bash echo, search, bad-cmd, unknown-tool,
+  disabled-execute, re-enabled-execute, file_delete) + live :8000 smoke
+  (all 5 routes: schema 7 tools, 501 register, file_write→search
+  round-trip, bash disable→execute→enable, unknown-tool 200-string).
+  20 tests in `tests/kernel/test_adr141_t5_tools_surface.py` (ADR-132
+  isolation: bare TestClient, monkeypatched `_tool_registry`/
+  `_tool_sandbox` globals, tmp sandbox root; plus one full-lifespan boot
+  test). One ADR-126 test updated for the new `execution` wire. Full
+  `tests/kernel/`: **566 passed, 0 failed** (was 546).
+- **PORTING_LEDGER / ADR updated:** ADR-141 T5 row → **P (2026-09-25)**.
+- **Gate progress (ADR-141):** T1 ✓, T2 ✓, T3 ✓, T4 ✓, T5 ✓. Remaining
+  before `main.py` deletion: T6 (memory actions), T7 (embedder), T8
+  (misc), D-route Stage 13 subsystem ports, `/health` probe removal ×3,
+  ADR-140 WS, ADR-109 gateway deletion + :8020 retirement.
+- **Stop-condition status:** met — T5 complete; next T6 (memory actions,
+  2 routes — pairs with ADR-135 memory read-side).
