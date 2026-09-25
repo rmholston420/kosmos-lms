@@ -4720,6 +4720,55 @@ async def tektos_immune_memory_entries(limit: int = 50) -> dict[str, Any]:
     return await get_memory_entries(registry.event_bus, limit=min(max(limit, 1), 100))
 
 
+# ---------------------------------------------------------------------------
+# ADR-134 — kernel-native Hindsight endpoints (panels HindsightTab)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/hindsight/status")
+async def tektos_hindsight_status() -> dict[str, Any]:
+    """Hindsight daemon status — donor wire shape.
+
+    Reuses the ADR-117 data-services probe (pure ``GET /health`` against
+    ``KOSMOS_HINDSIGHT_URL``) and adds the bank/profile identity the
+    donor endpoint reported. Always 200 (``status: unreachable`` when
+    the daemon is down — same degrade contract as the probe).
+    """
+    from kernel.tektos_data_services import _probe_hindsight
+    from kernel.tektos_hindsight import _bank_id, _profile
+
+    probe = await _probe_hindsight()
+    probe["bank_id"] = _bank_id()
+    probe["profile"] = _profile()
+    return probe
+
+
+@app.get("/api/hindsight/experiences")
+async def tektos_hindsight_experiences(
+    context: str = "", limit: int = 10
+) -> list[dict[str, Any]]:
+    """Recent experiences — donor ``get_experiences`` shape (raw list).
+
+    503 + detail when the daemon is unreachable (the donor's
+    ``not_initialized`` degrade); other HTTP errors from the daemon → 500.
+    """
+    import httpx
+
+    from kernel.tektos_hindsight import get_experiences
+
+    limit = max(1, min(limit, 100))
+    try:
+        return await get_experiences(context=context, limit=limit)
+    except httpx.ConnectError as exc:
+        raise HTTPException(
+            503, f"hindsight daemon unreachable: {type(exc).__name__}"
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            500, f"hindsight error: {type(exc).__name__}: {exc}"[:200]
+        )
+
+
 @app.post("/api/prompt/sse")
 async def tektos_prompt_sse(payload: dict[str, Any]) -> StreamingResponse:
     """Run a prompt as a Tektos turn and stream OpenAI chunk frames (ADR-132 slice G).
