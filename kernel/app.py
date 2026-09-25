@@ -3851,6 +3851,98 @@ def tools_stats() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# /api/plugins — ADR-127 (v2 Stage 11.11, plugins family)
+#
+# The old card proxied :8020/api/plugins — the standalone engine's functional
+# search-provider plugins (searxng/duckduckgo/farfalle/tavily). Two
+# corrections make that envelope wrong for the kernel:
+#
+#  1. The kernel's ``plugins/`` packages (phrouros, praxis, zetesis, tektos)
+#     are SUBSYSTEMS, not plugins — wired kernel components with registry
+#     slots (user clarification 2026-09-25).
+#  2. The kernel's genuine plugin mechanism is the FrontendContractPort
+#     descriptor registry (routes/panels/design-tokens) — what the dashboard
+#     itself renders from.
+#
+# The functional plugin registry (loadable units usable Kosmos-wide) is a
+# real gap: Tektos's search providers live only in the standalone engine.
+# This endpoint reports the kernel truth and marks that seam explicitly —
+# a dedicated follow-up step builds the kernel functional registry.
+# ---------------------------------------------------------------------------
+
+# The four kernel packages under plugins/ — subsystems, per ADR-127. The
+# flag is "wired in this kernel process", read the same way /health does
+# (registry slot non-None). praxis has no direct slot: its apex engine is
+# the approval subsystem (KernelChangeApprovalAdapter).
+_PLUGINS_SUBSYSTEM_SLOTS: dict[str, str] = {
+    "phrouros": "phrouros",
+    "praxis": "approval",
+    "zetesis": "zetesis",
+    "tektos": "tektos",
+}
+
+
+def _plugins_descriptor_dict(d: Any) -> dict[str, Any]:
+    """Serialize one FrontendContract PluginDescriptor (duck-typed, ADR-007)."""
+    return {
+        "name": getattr(d, "name", None),
+        "version": getattr(d, "version", None),
+        "kernel_compat": getattr(d, "kernel_compat", None),
+        "routes": [getattr(r, "path", None) for r in (getattr(d, "routes", ()) or ())],
+        "panels": [
+            getattr(p, "id", None) for p in (getattr(d, "panels", ()) or ())
+        ],
+    }
+
+
+@app.get("/api/plugins")
+async def plugins_stats() -> dict[str, Any]:
+    """Kernel plugin truth: subsystems + frontend_contract descriptors.
+
+    Always 200. The four kernel ``plugins/`` packages are reported as
+    *subsystems* (wired or not) — never as plugins. ``ui_plugins`` is the
+    kernel's real plugin mechanism (descriptor registry); when the
+    frontend_contract failed to boot it degrades to an empty list + error
+    entry, never a fabricated count. ``functional`` marks the kernel
+    functional-registry gap explicitly (Tektos's search providers remain on
+    the standalone engine until the follow-up ADR lands).
+    """
+    errors: list[str] = []
+
+    subsystems = {
+        name: getattr(registry, slot, None) is not None
+        for name, slot in _PLUGINS_SUBSYSTEM_SLOTS.items()
+    }
+
+    fc = getattr(registry, "frontend_contract", None)
+    ui_plugins: list[dict[str, Any]] = []
+    if fc is not None:
+        try:
+            ui_plugins = [
+                _plugins_descriptor_dict(d) for d in await fc.list_plugins()
+            ]
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"descriptor registry query failed: {type(exc).__name__}: {exc}")
+
+    return {
+        "status": "initialized" if fc is not None else "degraded",
+        "healthy": fc is not None,
+        "note": "kernel plugins/ packages are subsystems; plugin mechanism = frontend_contract descriptors",
+        "subsystems": subsystems,
+        "ui_plugins": {
+            "count": len(ui_plugins),
+            "plugins": ui_plugins,
+        },
+        "functional": {
+            "kernel_registry": "pending (follow-up ADR — loadable functional plugins usable Kosmos-wide)",
+            "tektos_search_providers": "standalone engine (:8020/api/plugins)",
+        },
+        "errors": errors,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Praxis constitution (ADR-068 D2) — read-only integrity anchor for the
 # GOVERNANCE panel. Lazily loads + verifies the constitution on first hit,
 # then caches on ``registry.praxis_constitution``. A tamper failure at read

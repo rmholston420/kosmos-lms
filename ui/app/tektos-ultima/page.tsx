@@ -64,7 +64,7 @@ const SUBSYSTEMS: Subsystem[] = [
   { id: "skills", title: "Skills", icon: "⚡", endpoint: "/api/skills/stats", base: "" },
   { id: "tools", title: "Tools", icon: "🔧", endpoint: "/api/tools", base: "" },
   { id: "models", title: "Models", icon: "🎛️", endpoint: "/api/llm/status" },
-  { id: "plugins", title: "Plugins", icon: "🧩", endpoint: "/api/plugins" },
+  { id: "plugins", title: "Plugins", icon: "🧩", endpoint: "/api/plugins", base: "" },
   { id: "neo4j", title: "Neo4j", icon: "🌐", endpoint: "/neo4j/status", base: DATA_SERVICES },
   { id: "postgres", title: "Postgres", icon: "🐘", endpoint: "/postgres/status", base: DATA_SERVICES },
   { id: "redis", title: "Redis", icon: "⚡", endpoint: "/redis/status", base: DATA_SERVICES },
@@ -288,11 +288,29 @@ function parseCard(sub: Subsystem, data: unknown): CardData {
       };
     }
     case "plugins": {
-      const count = num(o?.count) ?? 0;
-      const names = Array.isArray(o?.plugins) ? (o.plugins as unknown[]).slice(0, 4).map((p) => str(isObj(p) ? (p as Record<string, unknown>).name : null) ?? "?") : [];
+      // ADR-127 (Stage 11.11): kernel-native — the old card proxied :8020's
+      // functional search plugins (searxng/ddg/farfalle/tavily), which have
+      // no kernel referent. Two corrections: the kernel's plugins/ packages
+      // are SUBSYSTEMS (wired components), and the kernel's real plugin
+      // mechanism is the frontend_contract descriptor registry. Tektos's
+      // functional search providers remain on the standalone engine.
+      const subs = isObj(o?.subsystems) ? (o.subsystems as Record<string, unknown>) : {};
+      const wiredSubs = Object.values(subs).filter((v) => v === true).length;
+      const totalSubs = Object.keys(subs).length;
+      const up = isObj(o?.ui_plugins) ? (o.ui_plugins as Record<string, unknown>) : null;
+      const uiCount = num(up?.count) ?? 0;
+      const uiList = Array.isArray(up?.plugins) ? (up.plugins as Array<Record<string, unknown>>) : [];
+      const uiNames = uiList.slice(0, 4).map((p) => str(p?.name) ?? "?");
+      const errs = Array.isArray(o?.errors) ? (o.errors as unknown[]) : [];
       return {
-        status: count > 0 ? "healthy" : "degraded",
-        lines: [`${count} loaded`, names.join(" · ") || "none"],
+        status: o?.healthy === true ? "healthy" : "degraded",
+        lines: [
+          `${wiredSubs}/${totalSubs} subsystems · ${uiCount} ui plugins`,
+          uiNames.join(" · ") || (o?.healthy === true ? "no descriptor plugins" : str(errs[0]) ?? "contract offline"),
+        ],
+        detail: o?.healthy === true
+          ? "functional registry pending · Tektos search providers on :8020"
+          : "frontend contract failed to boot",
       };
     }
     case "neo4j":
