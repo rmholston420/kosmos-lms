@@ -381,6 +381,13 @@ export default function TektosUltimaDashboard() {
             Sessions →
           </Link>
           <Link
+            data-testid="tektos-ultima-ops-link"
+            href="/tektos-ultima/ops"
+            style={{ fontSize: "var(--font-sm, 0.8125rem)", color: "var(--color-akshobhya, #6a9eff)" }}
+          >
+            Ops →
+          </Link>
+          <Link
             data-testid="tektos-ultima-legacy-link"
             href="/tektos-ultima/legacy"
             style={{ fontSize: "var(--font-sm, 0.8125rem)", color: "var(--color-akshobhya, #6a9eff)" }}
