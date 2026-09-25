@@ -2,32 +2,34 @@
 #
 # Install:
 #   sudo cp ops/systemd/kosmos-kernel.service /etc/systemd/system/kosmos-kernel.service
-#   sudo cp ops/systemd/kosmos-kernel.env     /etc/kosmos/kernel.env
-#   sudo chmod 600 /etc/kosmos/kernel.env
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now kosmos-kernel.service
+#
+# Secrets (Postgres URI, LLM lane vars — ADR-116) live in the gitignored
+# ops/systemd/kosmos-kernel.local.env (repo-local, never /etc/kosmos).
 #
 # Logs: journalctl -u kosmos-kernel -f
 # Restart: sudo systemctl restart kosmos-kernel
 
 [Unit]
 Description=Kosmos kernel (FastAPI + Uvicorn) on Colossus
-Documentation=https://github.com/rmholston420/kosmos
-After=docker.service network-online.target
-Wants=docker.service network-online.target
-Requires=docker.service
+Documentation=https://github.com/rmholston420/kosmos-lms
+After=network-online.target
+# Note: the DozerDB-era `Requires=docker.service` was dropped 2026-09-25 —
+# docker.service is masked on Colossus (Stage 10 cleanup); the kernel has
+# had no DozerDB dependency since the ADR-102 Postgres reland (Stage 7.4+2).
 
 [Service]
 Type=simple
 User=rmholston
 Group=rmholston
-WorkingDirectory=/home/rmholston/dev/kosmos
-EnvironmentFile=/etc/kosmos/kernel.env
+WorkingDirectory=/home/rmholston/dev/kosmos-lms
+EnvironmentFile=/home/rmholston/dev/kosmos-lms/ops/systemd/kosmos-kernel.local.env
 
 # Wait for DozerDB bolt port (7687) before starting; retries up to ~60s.
 ExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do (echo > /dev/tcp/127.0.0.1/7687) >/dev/null 2>&1 && exit 0; sleep 2; done; echo "DozerDB not reachable on 7687"; exit 1'
 
-ExecStart=/home/rmholston/dev/kosmos/.venv/bin/uvicorn kernel.app:app --host 127.0.0.1 --port 8000
+ExecStart=/home/rmholston/dev/kosmos-lms/.venv/bin/uvicorn kernel.app:app --host 127.0.0.1 --port 8000
 
 Restart=on-failure
 RestartSec=3
@@ -38,7 +40,7 @@ TimeoutStopSec=10
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/home/rmholston/dev/kosmos /tmp
+ReadWritePaths=/home/rmholston/dev/kosmos-lms /tmp
 ProtectHome=read-only
 
 [Install]
