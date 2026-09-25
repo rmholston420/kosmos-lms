@@ -4,10 +4,10 @@
  * /tektos-ultima/ops — Tektos subsystem operations page (Tektos integration
  * Stage 9.4, ADR-112).
  *
- * Seven tabs: db/memory/skills/tools are kernel-native (same-origin
- * kernel endpoints, ADR-135/136/137); logs/telemetry/repair still drive
- * the standalone Tektos API (:8020) through the kernel gateway
- * (ADR-109 D1), same-origin:
+ * Seven tabs: db/memory/skills/tools/telemetry are kernel-native
+ * (same-origin kernel endpoints, ADR-135/136/137/138); logs/repair
+ * still drive the standalone Tektos API (:8020) through the kernel
+ * gateway (ADR-109 D1), same-origin:
  *
  *   db        (kernel-native, ADR-137) GET /api/db — persistence lane
  *             booted state (postgres/dozerdb/qdrant/valkey, registry
@@ -24,7 +24,9 @@
  *             table + routing-only Tool Router; enable/disable stay on the
  *             standalone Tektos registry (ADR-126 D9)
  *   logs      GET  /api/logs (polled 10 s)
- *   telemetry GET  /api/telemetry (polled 5 s)
+ *   telemetry (kernel-native, ADR-138) GET /api/telemetry (polled 5 s) —
+ *             donor {gpu, system} envelope re-implemented in
+ *             kernel.tektos_telemetry (nvidia-smi + /proc)
  *   repair    GET  /api/self_repair/status · /api/self_repair/history
  *             POST /api/self_repair/repair
  *
@@ -724,16 +726,37 @@ function LogsTab() {
 // Tab: Telemetry
 // ---------------------------------------------------------------------------
 
-type TelemetrySample = {
-  timestamp?: string;
-  temperature_gpu?: number;
-  power_draw?: number;
-  power_limit?: number;
+// ADR-138 (Stage 11.22): kernel-native GET /api/telemetry (base "") —
+// the donor's canonical {gpu, system, timestamp} envelope re-implemented
+// in kernel.tektos_telemetry (nvidia-smi + /proc, separate sampler from
+// the ADR-121 watchdog that serves /api/thermal/status). The old flat
+// shape (temperature_gpu/thermal_zone/power_state) matched nothing any
+// backend served, so this tab rendered all "—" before the split.
+type TelGpu = {
+  temperature?: number;
   utilization?: number;
-  memory?: { used_mb?: number; total_mb?: number };
-  thermal_zone?: string;
-  power_state?: string;
-  clocks?: { graphics_mhz?: number; memory_mhz?: number };
+  memory_used?: number; // MiB (raw nvidia-smi, donor fidelity)
+  memory_total?: number; // MiB (raw nvidia-smi, donor fidelity)
+  power_draw?: number; // W
+  power_limit?: number; // W
+  fan_speed?: number; // %
+  clocks_graphics?: number; // MHz
+  clocks_memory?: number; // MHz
+  memory_utilization?: number; // %
+};
+type TelSystem = {
+  cpu_util?: number;
+  mem_used_gb?: number;
+  mem_total_gb?: number;
+  mem_percent?: number;
+  disk_used_gb?: number;
+  disk_total_gb?: number;
+  disk_percent?: number;
+};
+type TelemetrySample = {
+  timestamp?: number; // epoch seconds
+  gpu?: TelGpu;
+  system?: TelSystem;
 };
 
 const TEL_POLL_MS = 5_000;
@@ -757,7 +780,7 @@ function TelemetryTab() {
   const [hist, setHist] = useState<TelemetrySample[]>([]);
 
   const load = useCallback(async () => {
-    const t = await g<TelemetrySample>("/api/telemetry");
+    const t = await g<TelemetrySample>("/api/telemetry", "");
     if (isObj(t)) {
       setTel(t as TelemetrySample);
       setHist((h) => [...h.slice(-(TEL_HISTORY - 1)), t as TelemetrySample]);
@@ -770,48 +793,68 @@ function TelemetryTab() {
     return () => clearInterval(t);
   }, [load]);
 
-  const temps = hist.map((h) => h.temperature_gpu ?? 0).filter((v) => v > 0);
-  const util = hist.map((h) => h.utilization ?? 0).filter((v) => v > 0);
-  const power = hist.map((h) => h.power_draw ?? 0).filter((v) => v > 0);
-  const vram = hist.map((h) => h.memory?.used_mb ?? 0).filter((v) => v > 0);
+  const gpu = tel?.gpu;
+  const sys = tel?.system;
+  const temps = hist.map((h) => h.gpu?.temperature ?? 0).filter((v) => v > 0);
+  const util = hist.map((h) => h.gpu?.utilization ?? 0).filter((v) => v > 0);
+  const power = hist.map((h) => h.gpu?.power_draw ?? 0).filter((v) => v > 0);
+  const vram = hist.map((h) => h.gpu?.memory_used ?? 0).filter((v) => v > 0);
 
-  const zone = tel?.thermal_zone ?? "";
-  const zoneColor =
-    zone === "RED" ? "var(--color-amitabha, #e07070)" : zone === "AMBER" ? "#e0c060" : "var(--color-amoghasiddhi, #6ad08a)";
+  const gbytes = (b?: number): string =>
+    b === undefined ? "—" : `${(b / 1024 ** 3).toFixed(1)} GiB`;
+
+  const clockStr =
+    gpu?.clocks_graphics !== undefined
+      ? `${gpu.clocks_graphics} / ${gpu.clocks_memory ?? 0} MHz`
+      : "—";
+  const fanStr = gpu?.fan_speed !== undefined ? `${gpu.fan_speed} %` : "—";
+  const memUtilStr =
+    gpu?.memory_utilization !== undefined
+      ? `${gpu.memory_utilization.toFixed(0)} %`
+      : "—";
 
   return (
     <div data-testid="tektos-ops-telemetry">
       <div style={{ ...panelStyle, display: "flex", gap: 24, flexWrap: "wrap", alignItems: "center" }}>
         <div>
-          <Metric label="GPU temp" value={tel?.temperature_gpu !== undefined ? `${tel.temperature_gpu.toFixed(0)} °C` : "—"} />
+          <Metric label="GPU temp" value={gpu?.temperature !== undefined && gpu.temperature > 0 ? `${gpu.temperature.toFixed(0)} °C` : "—"} />
           <Sparkline values={temps} stroke="#e07070" />
         </div>
         <div>
-          <Metric label="Utilization" value={tel?.utilization !== undefined ? `${tel.utilization.toFixed(0)} %` : "—"} />
+          <Metric label="Utilization" value={gpu?.utilization !== undefined && gpu.utilization > 0 ? `${gpu.utilization.toFixed(0)} %` : "—"} />
           <Sparkline values={util} />
         </div>
         <div>
-          <Metric label="Power" value={tel?.power_draw !== undefined ? `${tel.power_draw.toFixed(0)} / ${tel.power_limit?.toFixed(0) ?? "?"} W` : "—"} />
+          <Metric label="Power" value={gpu?.power_draw !== undefined && gpu.power_draw > 0 ? `${gpu.power_draw.toFixed(0)} / ${gpu.power_limit ?? 0} W` : "—"} />
           <Sparkline values={power} stroke="#e0c060" />
         </div>
         <div>
           <Metric
             label="VRAM"
-            value={tel?.memory?.used_mb !== undefined ? `${(tel.memory.used_mb / 1024).toFixed(1)} / ${((tel.memory.total_mb ?? 0) / 1024).toFixed(1)} GiB` : "—"}
+            value={gpu?.memory_used !== undefined && gpu.memory_used > 0 ? `${gbytes(gpu.memory_used)} / ${gbytes(gpu.memory_total)}` : "—"}
           />
           <Sparkline values={vram} stroke="#6ad08a" />
         </div>
         <div>
-          <Metric label="Thermal zone" value={zone || "—"} />
-          <div style={{ fontSize: "var(--font-sm, 0.8125rem)", color: zoneColor, fontWeight: 700 }}>{zone || "—"}</div>
+          <Metric label="GPU mem util" value={memUtilStr} />
+          <Metric label="Fan" value={fanStr} />
         </div>
         <div>
-          <Metric label="Power state" value={tel?.power_state ?? "—"} />
-          <Metric label="Cores" value={tel?.clocks?.graphics_mhz ? `${tel.clocks.graphics_mhz} MHz` : "—"} />
+          <Metric label="Clocks (gfx/mem)" value={clockStr} />
+          <Metric label="CPU" value={sys?.cpu_util !== undefined ? `${sys.cpu_util.toFixed(1)} %` : "—"} />
+        </div>
+        <div>
+          <Metric label="RAM" value={sys?.mem_used_gb !== undefined ? `${sys.mem_used_gb.toFixed(1)} / ${sys.mem_total_gb ?? 0} GiB` : "—"} />
+          <Metric label="Disk" value={sys?.disk_used_gb !== undefined ? `${sys.disk_used_gb.toFixed(0)} / ${sys.disk_total_gb ?? 0} GiB` : "—"} />
         </div>
       </div>
       <div style={{ fontSize: "var(--font-xs, 0.75rem)", color: "var(--color-text-dim, #888)" }}>
-        {tel?.timestamp ? `sample ${tel.timestamp.slice(11, 19)} · ` : ""}history: last {Math.min(hist.length, TEL_HISTORY)} samples @ {TEL_POLL_MS / 1000}s
+        {tel?.timestamp
+          ? `sample ${new Date(tel.timestamp * 1000).toISOString().slice(11, 19)} · `
+          : ""}
+        history: last {Math.min(hist.length, TEL_HISTORY)} samples @ {TEL_POLL_MS / 1000}s ·
+        kernel-native (ADR-138) — separate sampler from the dashboard
+        thermal card (/api/thermal/status, ADR-121)
       </div>
     </div>
   );
