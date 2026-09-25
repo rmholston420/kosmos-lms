@@ -163,6 +163,14 @@ class _BootRegistry:
         # degrade to ``None`` with a WARN log. Downstream call sites
         # MUST tolerate ``None``.
         self.tektos_manager: Any = None
+        # Stage 11.12 (ADR-128): propose-only SelfRepairProposer (ADR-095 D2).
+        # Env-gated via ``KOSMOS_TEKTOS_SELF_REPAIR={off,on}`` (default
+        # ``off``). ``on`` requires ``registry.approval``,
+        # ``registry.memory`` and ``registry.event_bus`` non-None. Missing
+        # hard requirement → ADR-101 degrade to ``None`` with a WARN log.
+        # Proposals are HUMAN_REQUIRED (never auto-applied); execution
+        # (repair execution) stays on the standalone engine.
+        self.tektos_self_repair: Any = None
         # Stage 8.7 (ADR-114): kernel-owned Tektos multi-agent
         # orchestration engine family (TektosOrchestrator +
         # TektosHierarchicalAgent + TektosLongRunningAgent). Env-gated via
@@ -1323,6 +1331,49 @@ async def lifespan(app: FastAPI):
         registry.tektos_long_running = long_running
         return bundle
 
+    @_try("tektos_self_repair")
+    def _boot_tektos_self_repair():
+        import logging as _kl
+        import os as _os
+
+        from plugins.tektos.self_repair import SelfRepairProposer
+
+        _log = _kl.getLogger(__name__)
+        _env = "KOSMOS_TEKTOS_SELF_REPAIR"
+        _mode = _os.environ.get(_env, "off").lower().strip()
+        _ALLOWED = ("off", "on")
+        if _mode not in _ALLOWED:
+            raise RuntimeError(
+                "%s=%r is not one of %s (ADR-095 D2)."
+                % (_env, _mode, _ALLOWED)
+            )
+        if _mode == "off":
+            return None
+
+        approval = getattr(registry, "approval", None)
+        mem = getattr(registry, "memory", None)
+        ebus = getattr(registry, "event_bus", None)
+        if approval is None or mem is None or ebus is None:
+            _log.warning(
+                "kosmos.tektos_self_repair: requires approval+memory+event_bus; "
+                "approval=%s memory=%s event_bus=%s (ADR-101 degrade pattern)",
+                "on" if approval is not None else "off",
+                "on" if mem is not None else "off",
+                "on" if ebus is not None else "off",
+            )
+            return None
+
+        proposer = SelfRepairProposer(
+            approval_gateway=approval,
+            memory=mem,
+            event_bus=ebus,
+        )
+        _log.info(
+            "kosmos.tektos_self_repair: wired (ADR-095 D2); propose-only, "
+            "HUMAN_REQUIRED (execution stays on standalone engine)"
+        )
+        return proposer
+
     registry.tektos_reflection = _boot_tektos_reflection
     registry.tektos_synthesis = _boot_tektos_synthesis
     registry.tektos_experience = _boot_tektos_experience
@@ -1331,6 +1382,7 @@ async def lifespan(app: FastAPI):
     registry.tektos_tool_router = _boot_tektos_tool_router
     registry.tektos_executor = _boot_tektos_executor
     registry.tektos_manager = _boot_tektos_manager
+    registry.tektos_self_repair = _boot_tektos_self_repair
     registry.tektos_orchestrator = _boot_tektos_orchestrator
 
     # --- Gnosis boot seeder (ADR-064) ----------------------------------------
@@ -3937,6 +3989,145 @@ async def plugins_stats() -> dict[str, Any]:
             "kernel_registry": "pending (follow-up ADR — loadable functional plugins usable Kosmos-wide)",
             "tektos_search_providers": "standalone engine (:8020/api/plugins)",
         },
+        "errors": errors,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# /api/self_repair/status — ADR-128 (v2 Stage 11.12, self_repair family)
+#
+# The old card proxied :8020/api/self_repair/status — the standalone
+# engine's *executing* repair daemon (uptime, completed_repairs,
+# effectiveness rates, 8 registered strategies). Two corrections make
+# that envelope wrong for the kernel:
+#
+#  1. The kernel's self-repair surface is the propose-only
+#     ``SelfRepairProposer`` (Stage 5.6, ADR-095 D2): it builds a
+#     ``SelfRepairProposal``, routes it through ApprovalPort at tier
+#     HUMAN_REQUIRED (never auto-applied), writes a MemoryPort triple
+#     (provenance ``tektos_self_modification``, confidence 0.85), and
+#     publishes ``tektos.self_modification.proposed`` on the event bus.
+#     ``apply()`` physically raises NotImplementedError (ADR-090).
+#  2. Execution (the repair loop, strategies, effectiveness) stays on the
+#     standalone engine — the kernel must report that honestly, not
+#     fabricate ``completed_repairs``.
+#
+# The strategy catalog is static data (the vendored donor
+# ``RepairStrategy`` enum, 19 labels), reported even when the proposer is
+# off — the card is never empty.
+# ---------------------------------------------------------------------------
+
+# Strategy catalog: every vendored RepairStrategy label grouped into the
+# donor's own category comments. Static data — no kernel referent needed.
+_SELF_REPAIR_STRATEGY_CATEGORIES: dict[str, tuple[str, ...]] = {
+    "infrastructure": (
+        "restart_service",
+        "reload_config",
+        "clear_cache",
+        "switch_model",
+        "switch_port",
+    ),
+    "context": (
+        "compress_context",
+        "truncate_messages",
+        "reset_session",
+        "reduce_context",
+    ),
+    "workload": (
+        "throttle_workload",
+        "free_vram",
+        "reset_strategy",
+    ),
+    "code": (
+        "change_approach",
+        "apply_patch",
+        "rollback_code",
+        "update_prompt",
+    ),
+    "recovery": (
+        "recover_session",
+        "restore_state",
+    ),
+    "escalation": (
+        "escalate_to_user",
+    ),
+}
+
+
+def _self_repair_strategy_catalog() -> dict[str, Any]:
+    """Derive the strategy catalog from the vendored RepairStrategy enum.
+
+    The enum is the source of truth (ADR-095 D2: donor vocabulary, so a
+    future post-ADR-090 SelfRepairEngine consumes the same labels).
+    Categories come from ``_SELF_REPAIR_STRATEGY_CATEGORIES``; an enum
+    member missing from the map would be an inconsistency — surfaced as
+    an error, never silently dropped.
+    """
+    from adapters.tektos.vendor.self_repair_models_donor import RepairStrategy
+
+    known = {s.value for s in RepairStrategy}
+    mapped = {
+        value for values in _SELF_REPAIR_STRATEGY_CATEGORIES.values() for value in values
+    }
+    errors: list[str] = []
+    if known - mapped:
+        errors.append(
+            "RepairStrategy members missing from catalog: "
+            + ", ".join(sorted(known - mapped))
+        )
+    if mapped - known:
+        errors.append(
+            "catalog names not in RepairStrategy: "
+            + ", ".join(sorted(mapped - known))
+        )
+    counts = {
+        cat: len([v for v in values if v in known])
+        for cat, values in _SELF_REPAIR_STRATEGY_CATEGORIES.items()
+    }
+    return {
+        "strategies_registered": len(known & mapped),
+        "categories": dict(sorted(counts.items())),
+        "strategy_names": sorted(known & mapped),
+        "errors": errors,
+    }
+
+
+@app.get("/api/self_repair/status")
+async def self_repair_status() -> dict[str, Any]:
+    """Kernel self-repair truth: propose-only proposer + strategy catalog.
+
+    Always 200. ``proposer.wired`` = the SelfRepairProposer is booted
+    (``KOSMOS_TEKTOS_SELF_REPAIR=on`` + approval/memory/event_bus
+    present); ``wired: false`` (the default) is a valid degraded state.
+    ``strategies`` is static data (the vendored RepairStrategy enum),
+    reported even when the proposer is off. ``execution`` explicitly says
+    the repair loop stays on the standalone engine — no fabricated
+    ``completed_repairs`` / effectiveness counters.
+    """
+    errors: list[str] = []
+    catalog = _self_repair_strategy_catalog()
+    errors.extend(catalog["errors"])
+
+    proposer = getattr(registry, "tektos_self_repair", None)
+    wired = proposer is not None
+
+    return {
+        "status": "initialized" if wired else "degraded",
+        "healthy": wired,
+        "note": "propose-only (ADR-095 D2): HUMAN_REQUIRED approval, no execution in kernel",
+        "proposer": {
+            "wired": wired,
+            "tier": "HUMAN_REQUIRED",
+            "confidence": getattr(proposer, "_confidence", None) if wired else None,
+            "provenance": getattr(proposer, "provenance", None) if wired else None,
+        },
+        "strategies": {
+            "strategies_registered": catalog["strategies_registered"],
+            "categories": catalog["categories"],
+            "strategy_names": catalog["strategy_names"],
+        },
+        "execution": "not wired in kernel (standalone Tektos repair engine, :8020/api/self_repair/status)",
         "errors": errors,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }

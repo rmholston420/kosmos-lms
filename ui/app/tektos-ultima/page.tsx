@@ -70,7 +70,7 @@ const SUBSYSTEMS: Subsystem[] = [
   { id: "redis", title: "Redis", icon: "⚡", endpoint: "/redis/status", base: DATA_SERVICES },
   { id: "hindsight", title: "Hindsight", icon: "🔮", endpoint: "/hindsight/status", base: DATA_SERVICES },
   { id: "qdrant", title: "Qdrant", icon: "📐", endpoint: "/qdrant/status", base: DATA_SERVICES },
-  { id: "self_repair", title: "Self-Repair", icon: "🔁", endpoint: "/api/self_repair/status" },
+  { id: "self_repair", title: "Self-Repair", icon: "🔁", endpoint: "/api/self_repair/status", base: "" },
 ];
 
 interface CardData {
@@ -353,13 +353,25 @@ function parseCard(sub: Subsystem, data: unknown): CardData {
       };
     }
     case "self_repair": {
-      const running = o?.running === true;
-      const repairs = num(o?.completed_repairs) ?? 0;
-      const strategies = num(o?.strategies_registered) ?? 0;
+      // ADR-128 (Stage 11.12): kernel-native — the old card proxied :8020's
+      // *executing* repair daemon (uptime, completed_repairs, effectiveness).
+      // The kernel's surface is the propose-only SelfRepairProposer (ADR-095 D2):
+      // HUMAN_REQUIRED approval, no execution. Strategies are static data.
+      const p = isObj(o?.proposer) ? (o.proposer as Record<string, unknown>) : {};
+      const wired = p.wired === true;
+      const s = isObj(o?.strategies) ? (o.strategies as Record<string, unknown>) : {};
+      const strategies = num(s.strategies_registered) ?? 0;
+      const cats = isObj(s.categories) ? (s.categories as Record<string, unknown>) : {};
+      const catLine = Object.entries(cats)
+        .map(([c, n]) => `${c} ${num(n) ?? 0}`)
+        .join(" · ");
       return {
-        status: running ? "healthy" : "down",
-        lines: [running ? "watching" : "not running", `${repairs} repairs · ${strategies} strategies`],
-        detail: running ? `${Math.round((num(o?.uptime_seconds) ?? 0) / 3600)} h uptime` : undefined,
+        status: wired ? "healthy" : "degraded",
+        lines: [
+          wired ? "proposer live · HUMAN_REQUIRED" : "proposer offline",
+          `${strategies} strategies · ${catLine || "catalog unavailable"}`,
+        ],
+        detail: "propose-only (ADR-095 D2) · execution on standalone repair engine (:8020)",
       };
     }
     default:
