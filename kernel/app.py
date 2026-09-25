@@ -408,22 +408,38 @@ def _build_llm_adapter():
     """Construct the kernel's LLMPort: FailoverLLMAdapter (ADR-116 D2).
 
     primary  = LlamaSwapAdapter()   — OpenAI /v1 transport to the shared
-                 llama.cpp server (:8090 on Colossus via
+                 llama.cpp GPU server (:8090 on Colossus via
                  KOSMOS_LLAMA_SWAP_*; :8080 sidecar defaults otherwise).
-    fallback = OllamaAdapter()      — native Ollama protocol (:11434 via
-                 KOSMOS_OLLAMA_*; qwen3-vl:4b on Colossus).
+    fallback = LlamaSwapAdapter()   — CPU llama.cpp (:8092,
+                 granite4.1-8b-instruct on Colossus via
+                 KOSMOS_LLM_FALLBACK_*), used only when the GPU primary is
+                 down. (ADR-132, 2026-09-25: the Ollama lane (:11434) is
+                 retired from the failover path; it still runs as a system
+                 service but is not the Tektos fallback.)
 
-    Both adapters read their own env vars when constructor args are
-    omitted, so this builder passes no kwargs — one env file configures
-    both lanes. Module-level (not a lifespan closure) so the ADR-116 D4
-    kernel test can drive it directly with monkeypatched env, no live
-    servers, no full-lifespan boot.
+    The fallback adapter is constructed with explicit base_url/default_model
+    from the KOSMOS_LLM_FALLBACK_* vars (falling back to the Collosus
+    defaults) so it does not inherit the primary's KOSMOS_LLAMA_SWAP_*.
+    Module-level (not a lifespan closure) so the ADR-116 D4 kernel test can
+    drive it directly with monkeypatched env, no live servers, no
+    full-lifespan boot.
     """
+    import os
+
     from adapters.llm.failover import FailoverLLMAdapter
     from adapters.llm.llama_swap import LlamaSwapAdapter
-    from adapters.llm.ollama.adapter import OllamaAdapter
 
-    return FailoverLLMAdapter(LlamaSwapAdapter(), OllamaAdapter())
+    fallback_base = (
+        os.environ.get("KOSMOS_LLM_FALLBACK_BASE_URL")
+        or "http://127.0.0.1:8092"
+    ).rstrip("/")
+    fallback_model = (
+        os.environ.get("KOSMOS_LLM_FALLBACK_MODEL") or "granite4.1-8b-instruct"
+    )
+    return FailoverLLMAdapter(
+        LlamaSwapAdapter(),
+        LlamaSwapAdapter(base_url=fallback_base, default_model=fallback_model),
+    )
 
 
 @asynccontextmanager
@@ -576,15 +592,16 @@ async def lifespan(app: FastAPI):
             registry.errors["phrouros"] = f"{type(exc).__name__}: {exc}"
 
     # --- LLM (FailoverLLMAdapter: llama.cpp :8090 primary, Ollama fallback) --
-    # Stage 6.5.6 addition (ADR-063), repointed per ADR-116 (2026-09-25):
+    # Stage 6.5.6 addition (ADR-063), repointed per ADR-116 (2026-09-25)
+    # and ADR-132 (2026-09-25):
     # primary = LlamaSwapAdapter (OpenAI /v1 transport) pointed at the shared
-    # llama.cpp server — same lane Hermes Agent uses. On Colossus the
+    # llama.cpp GPU server — same lane Hermes Agent uses. On Colossus the
     # KOSMOS_LLAMA_SWAP_* env vars select :8090 + qwen3.8-27b-code; without
-    # them the adapter defaults to the llama-swap sidecar (:8080), and every
-    # call then fails over to Ollama — i.e. the pre-ADR-116 behavior.
-    # fallback = OllamaAdapter (native protocol, KOSMOS_OLLAMA_* env; model
-    # pinned to qwen3-vl:4b on Colossus since that is the only resident
-    # model on :11434). Failure surfaces under ``registry.errors['llm']``
+    # them the adapter defaults to the llama-swap sidecar (:8080).
+    # fallback = LlamaSwapAdapter on the CPU llama.cpp server (:8092,
+    # granite4.1-8b-instruct on Colossus, KOSMOS_LLM_FALLBACK_*), used only
+    # when the GPU primary is down. (The Ollama lane is no longer in the
+    # failover path.) Failure surfaces under ``registry.errors['llm']``
     # and cascades to Tektos boot below. Construction lives in
     # ``_build_llm_adapter`` (module-level, ADR-116 D4 kernel test drives it
     # directly with monkeypatched env).
@@ -4611,14 +4628,18 @@ async def tektos_delete_session(session_id: str) -> dict[str, Any]:
 # Tektos engine, which reads TEKTOS_LLM_* env and lists its four llama-server
 # lanes). ADR-132 makes the conversation surface kernel-native. This
 # endpoint builds the picker list from the **kernel's own** ADR-116 LLM
-# adapter config (KOSMOS_LLAMA_SWAP_* primary, KOSMOS_OLLAMA_* fallback,
-# KOSMOS_EMBEDDER_* embedder) — the exact env the adapters read at boot —
-# so the UI never advertises a model the kernel can't actually reach.
+# adapter config (KOSMOS_LLAMA_SWAP_* primary, KOSMOS_LLM_FALLBACK_* CPU
+# fallback, KOSMOS_EMBEDDER_* embedder, KOSMOS_VISION_* vision) — the
+# exact env the adapters read at boot — so the UI never advertises a
+# model the kernel can't actually reach.
 #
 # Element shape is the donor's ModelInfo: {id, name, role, description,
-# endpoint, capabilities, recommended}. The kernel has three lanes, not
-# the donor's four — there is no separate vision lane; the Ollama fallback
-# *is* the vision model (qwen3-vl:4b). The page reads id/name/role/
+# endpoint, capabilities, recommended}. The kernel mirrors the donor's
+# four lanes from its own config: coder (KOSMOS_LLAMA_SWAP_* — GPU
+# :8090), fallback (KOSMOS_LLM_FALLBACK_* — CPU llama.cpp :8092, used
+# only when the GPU primary is down), embedder (KOSMOS_EMBEDDER_* —
+# CPU :8091), and a dedicated vision lane (KOSMOS_VISION_* — llama.cpp
+# Qwen3-VL on :8094, live-verified). The page reads id/name/role/
 # description/recommended.
 # ---------------------------------------------------------------------------
 
@@ -4641,11 +4662,11 @@ async def tektos_list_models() -> list[dict[str, Any]]:
         or "qwen3:14b-q8_0"
     )
     fallback_url = (
-        os.environ.get("KOSMOS_OLLAMA_BASE_URL")
-        or "http://127.0.0.1:11434"
+        os.environ.get("KOSMOS_LLM_FALLBACK_BASE_URL")
+        or "http://127.0.0.1:8092"
     ).rstrip("/")
     fallback_model = (
-        os.environ.get("KOSMOS_OLLAMA_DEFAULT_MODEL") or "llama3.1:latest"
+        os.environ.get("KOSMOS_LLM_FALLBACK_MODEL") or "granite4.1-8b-instruct"
     )
     embedder_url = (
         os.environ.get("KOSMOS_EMBEDDER_BASE_URL")
@@ -4653,6 +4674,13 @@ async def tektos_list_models() -> list[dict[str, Any]]:
     ).rstrip("/")
     embedder_model = (
         os.environ.get("KOSMOS_EMBEDDER_MODEL") or "qwen3-embedding-0.6b"
+    )
+    vision_url = (
+        os.environ.get("KOSMOS_VISION_BASE_URL")
+        or "http://127.0.0.1:8094"
+    ).rstrip("/")
+    vision_model = (
+        os.environ.get("KOSMOS_VISION_MODEL") or "qwen3-vl-4b"
     )
     return [
         {
@@ -4672,12 +4700,11 @@ async def tektos_list_models() -> list[dict[str, Any]]:
             "name": fallback_model,
             "role": "fallback",
             "description": (
-                "Fallback + vision model \u2014 Ollama. Used automatically "
-                "when the primary endpoint is unavailable; also handles "
-                "diagrams, screenshots, and multimodal input."
+                "CPU fallback coder \u2014 used automatically when the "
+                "primary GPU endpoint (:8090) is down."
             ),
             "endpoint": fallback_url,
-            "capabilities": ["vision", "completion"],
+            "capabilities": ["completion"],
         },
         {
             "id": embedder_model,
@@ -4689,6 +4716,17 @@ async def tektos_list_models() -> list[dict[str, Any]]:
             ),
             "endpoint": embedder_url,
             "capabilities": ["embeddings"],
+        },
+        {
+            "id": vision_model,
+            "name": vision_model,
+            "role": "vision",
+            "description": (
+                "Vision-language model \u2014 diagrams, screenshots, and "
+                "multimodal input (llama.cpp)."
+            ),
+            "endpoint": vision_url,
+            "capabilities": ["vision", "completion"],
         },
     ]
 
