@@ -38,6 +38,13 @@ substrate, so completed cycles populate the ledger and the read routes
 return real data.
 """
 
+from kernel.learning.driver import (
+    ENABLED_ENV,
+    INTERVAL_ENV,
+    LearningDriver,
+    get_learning_driver,
+    reset_learning_driver,
+)
 from kernel.learning.engine import (
     LearningEngine,
     get_learning_engine,
@@ -50,4 +57,9 @@ __all__ = [
     "LearningEngine",
     "get_learning_engine",
     "reset_learning_engine",
+    "LearningDriver",
+    "get_learning_driver",
+    "reset_learning_driver",
+    "ENABLED_ENV",
+    "INTERVAL_ENV",
 ]
