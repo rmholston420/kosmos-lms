@@ -372,17 +372,22 @@ export default function TektosUltimaDashboard() {
             updated {lastUpdated.toLocaleTimeString()}
           </span>
         )}
-        <Link
-          data-testid="tektos-ultima-legacy-link"
-          href="/tektos-ultima/legacy"
-          style={{
-            marginLeft: "auto",
-            fontSize: "var(--font-sm, 0.8125rem)",
-            color: "var(--color-akshobhya, #6a9eff)",
-          }}
-        >
-          Legacy UI →
-        </Link>
+        <div style={{ marginLeft: "auto", display: "flex", gap: "14px" }}>
+          <Link
+            data-testid="tektos-ultima-sessions-link"
+            href="/tektos-ultima/sessions"
+            style={{ fontSize: "var(--font-sm, 0.8125rem)", color: "var(--color-akshobhya, #6a9eff)" }}
+          >
+            Sessions →
+          </Link>
+          <Link
+            data-testid="tektos-ultima-legacy-link"
+            href="/tektos-ultima/legacy"
+            style={{ fontSize: "var(--font-sm, 0.8125rem)", color: "var(--color-akshobhya, #6a9eff)" }}
+          >
+            Legacy UI →
+          </Link>
+        </div>
       </header>
 
       {!state.reachable && (
