@@ -4261,3 +4261,32 @@ Use the `kosmos-log-maintenance` Perplexity Computer skill.
   NEW test_stage9_12_detectors_each_fire_on_malicious_payload (12/12
   fire) + benign-allow regression. All 9 green.
 - Live kernel: health immune:True, orchestrator wired_memory:true.
+
+## 2026-09-25 — Stages 9.2+9.3: built-in tools bash/directory_create/search (ADR-115)
+
+- `plugins/tektos/tools/builtin.py` (new): `register_builtin_tools()` +
+  `invoke_bash` / `invoke_directory_create` / `invoke_search` argv wrappers,
+  all executing through the existing SandboxPort path (no shell=True).
+  Ports the three canonical donor tools (tektos-ultima-v1
+  `src/tektos/tools/registry.py` L160-305) that Stage 3.13/4.8 trimmed.
+- Tiers: bash=HUMAN_REQUIRED, directory_create/search=AUTONOMOUS (ADR-115 D4).
+- Path safety: `PathTraversalDetector.FILESYSTEM_TOOL_NAMES` extended with
+  `directory_create` + `search`; both resolve under namespace_root via
+  `resolve_within_root` (defense in depth: detector scan + resolver raise).
+- `plugins/tektos/tools/test_builtin.py` (new, 11 tests): registration +
+  idempotence, per-tool invocation through the REAL TektosSandboxAdapter
+  (argv-shape proof), bash timeout/exit-code propagation, nested mkdir,
+  search match+line-number shape, traversal blocking (detector + resolver),
+  7-tool exit-gate test (read_file/write_file/patch/bash/directory_create/
+  search all invocable on one registry).
+- Verification: `pytest plugins/tektos/tools/ adapters/immune/ + tool-router
+  engine` = 64 passed. Live argv-shape proof on the real sandbox
+  (network=full): bash exit 0 stdout correct, mkdir dir created, rg match
+  returned, traversal blocked (reason=dotdot_component).
+- Environment finding (ADR-115 D6, ops task): Collosus denies
+  `unshare --user` uid_map writes even from a bare shell
+  (kernel.unprivileged_userns_clone=1 but AppArmor-level block) —
+  network="none" sandbox isolation is unavailable host-wide; fails closed
+  to exit 126 by design. Pre-existing; affects Stage 8.7 terminal path too.
+- ADR-115 authored + README index row. Stage 9 exit-gate DoD now met:
+  12 detectors green (9.1) + 7 tools invocable (9.2+9.3).

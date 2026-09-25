@@ -40,7 +40,19 @@ __all__ = [
 
 
 FILESYSTEM_TOOL_NAMES: Final[frozenset[str]] = frozenset(
-    {"file_read", "file_list", "file_write", "file_delete"}
+    {
+        "file_read",
+        "file_list",
+        "file_write",
+        "file_delete",
+        # Stage 9.2 (plan-v2 §9.2): path-bearing built-in tools —
+        # ``directory_create`` and ``search`` resolve their ``path``
+        # argument against the same namespace root and carry the same
+        # ``tektos.tool.filesystem`` scan_kind, so they get the same
+        # pre-approval guard.
+        "directory_create",
+        "search",
+    }
 )
 """Tool names guarded by the path-traversal detector.
 
