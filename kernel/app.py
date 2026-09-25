@@ -3677,6 +3677,95 @@ async def rag_status() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# /api/skills/stats — ADR-125 (v2 Stage 11.9, skills family)
+#
+# The old card proxied :8020/api/skills/stats — the standalone engine's own
+# skill manager (24 vendored skills with usage counters) that the kernel has
+# no referent for. The kernel's real skills-adjacent surface is the Tektos
+# Manager's archetype tracker (ADR-108): it watches Tektos task outcomes and
+# flags recurring patterns as *skill candidates* (archetypes at threshold).
+# The full donor skill registry (830 LOC) stays deferred per ADR-108 D9 —
+# this endpoint reports the tracker live when the manager is wired
+# (KOSMOS_TEKTOS_MANAGER=on) and says so honestly when it is not.
+# ---------------------------------------------------------------------------
+
+
+def _skills_archetype_dict(a: Any) -> dict[str, Any]:
+    """Serialize one Archetype (duck-typed — plugin internals, ADR-007).
+
+    ``at_threshold`` mirrors the tracker's skill-candidate semantics
+    (``should_create_structure``): count hit threshold AND no permanent
+    structure exists yet — consistent with ``get_archetypes_at_threshold``.
+    """
+    count = getattr(a, "occurrence_count", 0) or 0
+    thr = getattr(a, "threshold", 0) or 0
+    return {
+        "category": getattr(a, "category", None),
+        "occurrence_count": count,
+        "threshold": thr,
+        "at_threshold": bool(count >= thr)
+        and getattr(a, "permanent_structure_id", None) is None,
+        "permanent_structure_id": getattr(a, "permanent_structure_id", None),
+        "first_seen": getattr(a, "first_seen", None),
+        "last_seen": getattr(a, "last_seen", None),
+    }
+
+
+@app.get("/api/skills/stats")
+def skills_stats() -> dict[str, Any]:
+    """Tektos skill-candidate status from the Manager archetype tracker.
+
+    Always 200. ``manager.wired: false`` (default — the ADR-108 engine is
+    off unless KOSMOS_TEKTOS_MANAGER=on) is a valid degraded state, not an
+    error: the skill registry is explicitly deferred (ADR-108 D9), and the
+    card says so instead of fabricating a count.
+    """
+    errors: list[str] = []
+    manager = getattr(registry, "tektos_manager", None)
+    wired = manager is not None
+
+    archetypes: list[dict[str, Any]] = []
+    at_threshold: list[dict[str, Any]] = []
+    threshold: int | None = None
+    total_events: int | None = None
+
+    if wired:
+        try:
+            tracker = getattr(manager, "archetypes", None)
+            if tracker is not None:
+                threshold = getattr(tracker, "threshold", None)
+                total_events = len(getattr(tracker, "events", []) or [])
+                archetypes = [
+                    _skills_archetype_dict(a)
+                    for a in tracker.get_active_archetypes()
+                ]
+                at_threshold = [
+                    _skills_archetype_dict(a)
+                    for a in tracker.get_archetypes_at_threshold()
+                ]
+            else:
+                errors.append("manager has no archetype tracker")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"tracker query failed: {type(exc).__name__}: {exc}")
+
+    return {
+        "status": "initialized" if wired else "degraded",
+        "healthy": wired,
+        "skills": {
+            "registry": "deferred (ADR-108 D9)",
+            "wired": wired,
+            "archetypes": len(archetypes),
+            "at_threshold": len(at_threshold),
+            "threshold": threshold,
+            "total_events": total_events,
+            "archetype_list": archetypes[:20],
+        },
+        "errors": errors,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Praxis constitution (ADR-068 D2) — read-only integrity anchor for the
 # GOVERNANCE panel. Lazily loads + verifies the constitution on first hit,
 # then caches on ``registry.praxis_constitution``. A tamper failure at read

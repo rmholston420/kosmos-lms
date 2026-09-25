@@ -61,7 +61,7 @@ const SUBSYSTEMS: Subsystem[] = [
   { id: "inference", title: "Inference", icon: "🧠", endpoint: "/api/inference/status", base: "" },
   { id: "memory", title: "Memory", icon: "🧩", endpoint: "/api/memory/stats", base: "" },
   { id: "rag", title: "RAG", icon: "📚", endpoint: "/api/rag/status", base: "" },
-  { id: "skills", title: "Skills", icon: "⚡", endpoint: "/api/skills/stats" },
+  { id: "skills", title: "Skills", icon: "⚡", endpoint: "/api/skills/stats", base: "" },
   { id: "tools", title: "Tools", icon: "🔧", endpoint: "/api/tools" },
   { id: "models", title: "Models", icon: "🎛️", endpoint: "/api/llm/status" },
   { id: "plugins", title: "Plugins", icon: "🧩", endpoint: "/api/plugins" },
@@ -212,13 +212,34 @@ function parseCard(sub: Subsystem, data: unknown): CardData {
       };
     }
     case "skills": {
-      const total = num(o?.total_skills) ?? 0;
-      const active = num(o?.active_skills) ?? 0;
-      const top = Array.isArray(o?.top_skills) && isObj(o.top_skills[0]) ? o.top_skills[0] : null;
+      // ADR-125 (Stage 11.9): kernel-native — the old card proxied :8020's
+      // standalone skill manager (24 vendored skills) which the kernel has no
+      // referent for. The kernel's real skills-adjacent surface is the Tektos
+      // Manager archetype tracker (ADR-108): recurring task patterns flagged
+      // as skill candidates at threshold. Full skill registry deferred.
+      const sk = isObj(o?.skills) ? (o.skills as Record<string, unknown>) : null;
+      const wired = sk?.wired === true;
+      const archetypes = num(sk?.archetypes) ?? 0;
+      const atThreshold = num(sk?.at_threshold) ?? 0;
+      const threshold = num(sk?.threshold);
+      const events = num(sk?.total_events);
+      const list = Array.isArray(sk?.archetype_list)
+        ? (sk.archetype_list as Array<Record<string, unknown>>)
+        : [];
+      const top = list.find((a) => isObj(a) && a.at_threshold === true)
+        ?? list[0] ?? null;
+      const errs = Array.isArray(o?.errors) ? (o.errors as unknown[]) : [];
       return {
-        status: total > 0 && active === total ? "healthy" : "degraded",
-        lines: [`${active}/${total} active`, str(top?.name) ?? "no usage yet"],
-        detail: `${Array.isArray(o?.categories) ? (o.categories as unknown[]).length : 0} categories`,
+        status: wired ? "healthy" : "degraded",
+        lines: [
+          `${archetypes} archetypes · ${atThreshold} at threshold`,
+          wired
+            ? str(top?.category) ?? "no patterns yet (fills as Tektos runs)"
+            : "manager offline (KOSMOS_TEKTOS_MANAGER=off)",
+        ],
+        detail: wired
+          ? `threshold ${threshold ?? "?"} · ${events ?? "?"} events · registry deferred (ADR-108 D9)`
+          : str(errs[0]) ?? "skill registry deferred (ADR-108 D9)",
       };
     }
     case "tools": {
