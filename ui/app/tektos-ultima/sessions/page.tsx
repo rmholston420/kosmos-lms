@@ -258,7 +258,7 @@ export default function TektosSessionsPage() {
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch(`${GATEWAY}/api/models`, { cache: "no-store" });
+        const r = await fetch(`${KERNEL}/api/models`, { cache: "no-store" });
         if (!r.ok) return;
         const body: unknown = await r.json();
         if (Array.isArray(body)) {

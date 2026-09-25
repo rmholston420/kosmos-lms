@@ -4605,6 +4605,95 @@ async def tektos_delete_session(session_id: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Tektos conversation — models picker (ADR-132, Stage 11.16 slice D)
+#
+# The sessions page previously proxied :8020/api/models (the *standalone*
+# Tektos engine, which reads TEKTOS_LLM_* env and lists its four llama-server
+# lanes). ADR-132 makes the conversation surface kernel-native. This
+# endpoint builds the picker list from the **kernel's own** ADR-116 LLM
+# adapter config (KOSMOS_LLAMA_SWAP_* primary, KOSMOS_OLLAMA_* fallback,
+# KOSMOS_EMBEDDER_* embedder) — the exact env the adapters read at boot —
+# so the UI never advertises a model the kernel can't actually reach.
+#
+# Element shape is the donor's ModelInfo: {id, name, role, description,
+# endpoint, capabilities, recommended}. The kernel has three lanes, not
+# the donor's four — there is no separate vision lane; the Ollama fallback
+# *is* the vision model (qwen3-vl:4b). The page reads id/name/role/
+# description/recommended.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/models")
+async def tektos_list_models() -> list[dict[str, Any]]:
+    """List the kernel's own LLM lanes (ADR-132 slice D).
+
+    Replaces the :8020/api/models proxy. The list is built from the
+    kernel's ADR-116 adapter env, not the donor's TEKTOS_* env.
+    """
+    import os
+
+    primary_url = (
+        os.environ.get("KOSMOS_LLAMA_SWAP_BASE_URL")
+        or "http://127.0.0.1:8080"
+    ).rstrip("/")
+    primary_model = (
+        os.environ.get("KOSMOS_LLAMA_SWAP_DEFAULT_MODEL")
+        or "qwen3:14b-q8_0"
+    )
+    fallback_url = (
+        os.environ.get("KOSMOS_OLLAMA_BASE_URL")
+        or "http://127.0.0.1:11434"
+    ).rstrip("/")
+    fallback_model = (
+        os.environ.get("KOSMOS_OLLAMA_DEFAULT_MODEL") or "llama3.1:latest"
+    )
+    embedder_url = (
+        os.environ.get("KOSMOS_EMBEDDER_BASE_URL")
+        or "http://127.0.0.1:8091"
+    ).rstrip("/")
+    embedder_model = (
+        os.environ.get("KOSMOS_EMBEDDER_MODEL") or "qwen3-embedding-0.6b"
+    )
+    return [
+        {
+            "id": primary_model,
+            "name": primary_model,
+            "role": "coder",
+            "description": (
+                "Primary coding model \u2014 GPU (llama.cpp). Long-context "
+                "agentic coding."
+            ),
+            "endpoint": primary_url,
+            "capabilities": ["tools", "completion", "thinking"],
+            "recommended": True,
+        },
+        {
+            "id": fallback_model,
+            "name": fallback_model,
+            "role": "fallback",
+            "description": (
+                "Fallback + vision model \u2014 Ollama. Used automatically "
+                "when the primary endpoint is unavailable; also handles "
+                "diagrams, screenshots, and multimodal input."
+            ),
+            "endpoint": fallback_url,
+            "capabilities": ["vision", "completion"],
+        },
+        {
+            "id": embedder_model,
+            "name": embedder_model,
+            "role": "embedder",
+            "description": (
+                "Embedding model for vector search and RAG "
+                "(CPU-only by design)."
+            ),
+            "endpoint": embedder_url,
+            "capabilities": ["embeddings"],
+        },
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Praxis constitution (ADR-068 D2) — read-only integrity anchor for the
 # GOVERNANCE panel. Lazily loads + verifies the constitution on first hit,
 # then caches on ``registry.praxis_constitution``. A tamper failure at read
