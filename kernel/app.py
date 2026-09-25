@@ -4645,6 +4645,78 @@ async def tektos_replay_session(session_id: str) -> list[dict[str, Any]]:
     return await get_replay(registry.event_bus, session_id)
 
 
+def _immune_offline() -> NoReturn:
+    """503 when the immune adapter is not booted (ADR-133)."""
+    raise HTTPException(503, "immune adapter offline")
+
+
+@app.get("/api/immune/detectors")
+async def tektos_immune_detectors() -> dict[str, Any]:
+    """List kernel immune detectors (ADR-133).
+
+    Donor shape ``{detectors: [{name, type, …}], count}`` from
+    ``registry.immune.list_detectors()`` — the kernel's own
+    TektosImmuneAdapter (ADR-079), not the standalone engine.
+    Replaces the :8020/api/immune/detectors proxy.
+    """
+    immune = registry.immune
+    if immune is None:
+        _immune_offline()
+    from kernel.tektos_immune import get_detectors
+
+    return await get_detectors(immune)
+
+
+@app.get("/api/immune/threats")
+async def tektos_immune_threats(resolved: bool = False) -> dict[str, Any]:
+    """Threats derived from immune verdict events on the bus (ADR-133).
+
+    Donor shape ``{threats: […], count}``. ADR-079 rule 1: every scan
+    publishes ``immune.verdict.<decision>``; non-allow verdicts are
+    threats, ``?resolved=true`` adds the allow partition.
+    """
+    if registry.event_bus is None:
+        raise HTTPException(503, "event bus offline")
+    from kernel.tektos_immune import get_threats
+
+    return await get_threats(registry.event_bus, resolved=resolved)
+
+
+@app.get("/api/immune/responses")
+async def tektos_immune_responses(limit: int = 20) -> dict[str, Any]:
+    """Response history (verdict rows, newest first) — donor shape."""
+    if registry.event_bus is None:
+        raise HTTPException(503, "event bus offline")
+    from kernel.tektos_immune import get_responses
+
+    return await get_responses(registry.event_bus, limit=min(max(limit, 1), 100))
+
+
+@app.get("/api/immune/memory")
+async def tektos_immune_memory() -> dict[str, Any]:
+    """Memory summary: observed/active/resolved counts + kernel uptime."""
+    if registry.event_bus is None:
+        raise HTTPException(503, "event bus offline")
+    from datetime import datetime, timezone
+
+    from kernel.tektos_immune import get_memory_summary
+
+    started_at = datetime.fromtimestamp(
+        time.monotonic() - _KERNEL_BOOT_TS, tz=timezone.utc
+    )
+    return await get_memory_summary(registry.event_bus, started_at=started_at)
+
+
+@app.get("/api/immune/memory/entries")
+async def tektos_immune_memory_entries(limit: int = 50) -> dict[str, Any]:
+    """Memory entries (verdict rows, newest first) — donor shape."""
+    if registry.event_bus is None:
+        raise HTTPException(503, "event bus offline")
+    from kernel.tektos_immune import get_memory_entries
+
+    return await get_memory_entries(registry.event_bus, limit=min(max(limit, 1), 100))
+
+
 @app.post("/api/prompt/sse")
 async def tektos_prompt_sse(payload: dict[str, Any]) -> StreamingResponse:
     """Run a prompt as a Tektos turn and stream OpenAI chunk frames (ADR-132 slice G).
