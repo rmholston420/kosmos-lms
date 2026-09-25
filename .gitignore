@@ -67,3 +67,7 @@ node_modules/
 
 # Playwright output (root-level run artifacts)
 test-results/
+
+# kosmos DB credentials (gitignored; never commit)
+ops/systemd/kosmos.pg.password
+ops/systemd/kosmos-kernel.local.env

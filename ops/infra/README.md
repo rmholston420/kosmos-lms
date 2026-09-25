@@ -8,7 +8,7 @@ them may run a private copy.
 
 | Store | Endpoint | Owner service | Scope |
 |---|---|---|---|
-| Postgres 18 (+pgvector) | `127.0.0.1:5432` | `postgresql.service` (system, native) | shared — kosmos memory, hindsight_kosmos, tektos hindsight, rigpa |
+| Postgres 18 (+pgvector) | `127.0.0.1:5432` | `postgresql.service` (system, native) | shared — kosmos (DB `kosmos`, role `kosmos`), hindsight_kosmos, tektos hindsight, rigpa |
 | Redis 7 | `127.0.0.1:6379` | `redis-server.service` (system, native) | shared — kosmos event bus + co-tenants |
 | Neo4j Community | `127.0.0.1:7474` (http) / `:7687` (bolt) | `neo4j.service` (system, native) | shared — kosmos MemoryPort (dozerdb-style), tektos procedural memory |
 | Qdrant 1.19 | `127.0.0.1:6333` (REST) / `:6334` (gRPC) | `kosmos-qdrant.service` (user) | shared vector store |
@@ -53,6 +53,24 @@ sudo systemctl status postgresql redis-server neo4j
 - Memory Port / DozerDB — `bolt://127.0.0.1:7687`
   (`ops/systemd/kosmos-kernel.env`).
 - Relational memory — `KOSMOS_POSTGRES_URI` (ADR-102) on `:5432`.
+
+## Postgres ownership (Kosmos app-level home)
+
+Kosmos owns the shared Postgres as its **app-level home**: role `kosmos`,
+database `kosmos`, `vector` extension installed.
+
+- Password: `ops/systemd/kosmos.pg.password` (gitignored, chmod 600).
+- Ready-to-source URI: `ops/systemd/kosmos-kernel.local.env` (gitignored,
+  chmod 600) — contains `KOSMOS_POSTGRES_URI` for the `kosmos` DB.
+- To wire the orchestrator (Stage 8 exit gate) end-to-end:
+  `KOSMOS_RELATIONAL_MEMORY=postgres` + source
+  `kosmos-kernel.local.env`. Until then the orchestrator soft-degrades
+  per ADR-101 (engine family offline, kernel stays up).
+
+> Note: `ops/systemd/kosmos-kernel.env` is tracked and already carries a
+> Neo4j password (pre-existing). Do **not** add new secrets to tracked
+> files; keep credentials in the gitignored local files above or the
+> age-encrypted store (`KOSMOS_AGE_IDENTITY_PATH`).
 
 ## Historical notes
 
