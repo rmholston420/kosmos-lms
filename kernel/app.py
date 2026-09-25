@@ -1459,55 +1459,24 @@ app = FastAPI(title="Kosmos Kernel", version="6.12.0", lifespan=lifespan)
 
 
 # ---------------------------------------------------------------------------
-# Tektos-Ultima microfrontend shell integration (ADR-091)
-#
-# Mounts:
-#   • GET/POST /tektos-ultima/frontend/{path:path} — same-origin reverse
-#     proxy to the Tektos-Ultima Next.js dev server (default :5556,
-#     override with KOSMOS_TEKTOS_ULTIMA_UPSTREAM).
-#   • POST /api/tektos-ultima/bridge — postMessage relay that validates
-#     the ADR-086 ``tektos.*`` namespace and publishes to ``EventBusPort``.
-#   • KosmosIframeCSPMiddleware — appends ``frame-ancestors 'self'`` to
-#     every HTTP response so the iframe cannot be nested inside a
-#     third-party origin.
-#
-# The router is included eagerly (registry.event_bus is read lazily per
-# request, so a boot-failed bus surfaces as 503 rather than an import
-# error at startup). CSP middleware is added at app construction so it
-# wraps every downstream route including the static-export mount and
-# the /tektos-ultima/frontend proxy.
+# Tektos-Ultima API gateway (ADR-109, Stage 9.1) + kernel-wide CSP
 # ---------------------------------------------------------------------------
-
-try:
-    from kernel.tektos_ultima_bridge import (
-        KosmosIframeCSPMiddleware as _KosmosIframeCSPMiddleware,
-        build_tektos_ultima_bridge_router as _build_tektos_ultima_bridge_router,
-    )
-
-    app.include_router(_build_tektos_ultima_bridge_router(registry))
-    app.add_middleware(_KosmosIframeCSPMiddleware)
-except Exception as _tektos_ultima_bridge_exc:  # noqa: BLE001
-    import logging as _tektos_ultima_bridge_logging
-
-    _tektos_ultima_bridge_logging.getLogger(__name__).warning(
-        "Tektos-Ultima bridge/CSP not mounted: %s", _tektos_ultima_bridge_exc
-    )
-    registry.errors["tektos_ultima_bridge"] = (
-        f"{type(_tektos_ultima_bridge_exc).__name__}: "
-        f"{_tektos_ultima_bridge_exc}"
-    )
-
-# --- Tektos-Ultima API gateway (ADR-109, Stage 9.1) ------------------------
 # Pure kernel-side proxy to the standalone Tektos API (TEKTOS_ULTIMA_API_URL,
 # default http://127.0.0.1:8020). No registry coupling: it degrades to 503
-# envelopes per-request, never at boot (ADR-109 D2). The /tektos-ultima
-# iframe proxy (ADR-091) stays mounted until Stage 9.5 parity retires it.
+# envelopes per-request, never at boot (ADR-109 D2).
+#
+# The ADR-091 iframe proxy / postMessage bridge was retired in Stage 9.5
+# (ADR-113) once native parity was verified. The frame-ancestors CSP
+# middleware survived the retirement as a kernel-wide hardening measure
+# (moved into kernel/tektos_ultima_gateway.py).
 try:
     from kernel.tektos_ultima_gateway import (
+        KosmosCSPMiddleware as _KosmosCSPMiddleware,
         build_tektos_ultima_gateway_router as _build_tektos_ultima_gateway_router,
     )
 
     app.include_router(_build_tektos_ultima_gateway_router())
+    app.add_middleware(_KosmosCSPMiddleware)
 except Exception as _tektos_ultima_gateway_exc:  # noqa: BLE001
     import logging as _tektos_ultima_gateway_logging
 

@@ -6,9 +6,11 @@
  *
  * Replaces the ADR-091 single-iframe page with a real Kosmos page that
  * drives the standalone Tektos API (:8020) through the kernel gateway
- * (`/api/tektos-ultima/gateway/*`, ADR-109 D1). The legacy microfrontend
- * is preserved at `/tektos-ultima/legacy` until Stage 9.5 parity
- * verification retires it (ADR-091 surface unchanged until then).
+ * (`/api/tektos-ultima/gateway/*`, ADR-109 D1). The ADR-091 legacy
+ * microfrontend (iframe + postMessage bridge + `/tektos-ultima/frontend`
+ * proxy) was retired in Stage 9.5 (ADR-113) after native parity
+ * verification; its `frame-ancestors` CSP middleware survives
+ * kernel-wide.
  *
  * The page renders a subsystem status grid — one card per Tektos
  * subsystem — polled every 10 s. Every card degrades independently:
@@ -388,11 +390,11 @@ export default function TektosUltimaDashboard() {
             Ops →
           </Link>
           <Link
-            data-testid="tektos-ultima-legacy-link"
-            href="/tektos-ultima/legacy"
+            data-testid="tektos-ultima-panels-link"
+            href="/tektos-ultima/panels"
             style={{ fontSize: "var(--font-sm, 0.8125rem)", color: "var(--color-akshobhya, #6a9eff)" }}
           >
-            Legacy UI →
+            Panels →
           </Link>
         </div>
       </header>
