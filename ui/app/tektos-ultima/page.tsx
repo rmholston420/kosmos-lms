@@ -57,7 +57,7 @@ interface Subsystem {
 
 const SUBSYSTEMS: Subsystem[] = [
   { id: "immune", title: "Immune System", icon: "🛡️", endpoint: "/api/immune/health" },
-  { id: "thermal", title: "Thermal", icon: "🌡️", endpoint: "/api/thermal/status" },
+  { id: "thermal", title: "Thermal", icon: "🌡️", endpoint: "/api/thermal/status", base: "" },
   { id: "inference", title: "Inference", icon: "🧠", endpoint: "/api/inference/status", base: "" },
   { id: "memory", title: "Memory", icon: "🧩", endpoint: "/api/memory/stats" },
   { id: "rag", title: "RAG", icon: "📚", endpoint: "/api/rag/status" },
@@ -131,15 +131,29 @@ function parseCard(sub: Subsystem, data: unknown): CardData {
     case "thermal": {
       const gpu = isObj(o?.gpu) ? o.gpu : null;
       const cpu = isObj(o?.cpu) ? o.cpu : null;
+      const cd = isObj(gpu?.cooldown) ? gpu.cooldown : null;
       const temp = num(gpu?.temperature);
       const action = str(gpu?.action);
       const healthy = action === "relax" || action === "hold";
+      const lines: string[] = [
+        temp !== null ? `${temp.toFixed(0)}°C GPU` : "no GPU data",
+        `${num(cpu?.temperature) ?? "?"}°C CPU · ${action ?? "?"}`,
+      ];
+      // ADR-121 cooldown line: only when armed/active so the card stays
+      // quiet at <75°C.
+      if (cd && ((cd.active as boolean) || (cd.arming as boolean))) {
+        const over = num(cd?.seconds_over) ?? 0;
+        const thr = num(cd?.threshold_c) ?? 75;
+        const sustain = num(cd?.sustain_s) ?? 60;
+        lines.push(
+          cd.active
+            ? `❄ cooldown · ${over.toFixed(0)}s ≥ ${thr.toFixed(0)}°C`
+            : `❄ arming ${over.toFixed(0)}/${sustain.toFixed(0)}s at ≥${thr.toFixed(0)}°C`,
+        );
+      }
       return {
         status: healthy ? "healthy" : "degraded",
-        lines: [
-          temp !== null ? `${temp.toFixed(0)}°C GPU` : "no GPU data",
-          `${num(cpu?.temperature) ?? "?"}°C CPU · ${action ?? "?"}`,
-        ],
+        lines,
         detail: str(gpu?.reason) ?? undefined,
       };
     }

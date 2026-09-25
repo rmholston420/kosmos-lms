@@ -30,7 +30,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Protocol
+from typing import Callable, Protocol
 
 from ports.event_envelope import EventEnvelope
 from ports.thermal import ThermalLevel, ThermalPressure, ThermalSample
@@ -77,6 +77,12 @@ class ColossusThermalThresholds:
     cap_c: float = 80.0
     red_c: float = 88.0
     default_power_cap_w: int = 400
+    # ADR-121 (Stage 11.5): sustained-temperature cooldown rule. Instant
+    # excursions above cooldown_c are fine (bursts happen); the GPU must
+    # NOT *sustain* >= cooldown_c for longer than cooldown_sustain_s.
+    # User policy: ">75°C for more than 1 minute".
+    cooldown_c: float = 75.0
+    cooldown_sustain_s: float = 60.0
 
 
 class _NoOpCollector:
@@ -117,6 +123,104 @@ def _level_from_temp(
     if temp_c >= thresholds.yellow_c:
         return "yellow"
     return "green"
+
+
+# ── Sustained-temperature cooldown rule (ADR-121 §"Cooldown") ────────────
+@dataclass(frozen=True, slots=True)
+class CooldownDecision:
+    """Outcome of evaluating one sample against the sustained rule.
+
+    * ``active`` — the GPU has been >= ``threshold_c`` continuously for
+      >= ``sustain_s``; the regulator must cool down (action "cooldown").
+    * ``arming`` — the GPU is >= threshold and the sustained clock is
+      running (progress 0..1), but has not yet hit the sustain window.
+    * ``clear`` — below threshold, so the running clock resets to 0.
+    """
+
+    active: bool
+    arm_progress: float  # 0.0..1.0 fraction of the sustain window elapsed
+    seconds_over: float  # continuous seconds at/above threshold (post-eval)
+    reason: str
+
+
+class SustainedCooldownRule:
+    """Fire when the GPU sustains >= ``threshold_c`` for >= ``sustain_s``.
+
+    A *sustained* rule, deliberately separate from the ADR-081 instant
+    bands: a short burst over 75°C is fine (heavy renders spike), but
+    holding >=75°C for a minute+ means the liquid loop can't shed load,
+    so the regulator must cool down. Call ``evaluate`` once per sample
+    with the sample's timestamp; the rule tracks the continuous
+    at/above-threshold window and auto-clears when temp drops below
+    threshold (the clock restarts on the next crossing).
+
+    Pure + stateless about the world (only a monotonic clock is
+    injected), so it unit-tests without a GPU.
+    """
+
+    def __init__(
+        self,
+        threshold_c: float = 75.0,
+        sustain_s: float = 60.0,
+        *,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        self.threshold_c = float(threshold_c)
+        self.sustain_s = float(sustain_s)
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        # Continuous at/above-threshold window.
+        self._over_since: datetime | None = None
+
+    def evaluate(self, temp_c: float, *, at: datetime | None = None) -> CooldownDecision:
+        ts = at or self._clock()
+        if temp_c >= self.threshold_c:
+            if self._over_since is None:
+                self._over_since = ts
+            seconds_over = max(0.0, (ts - self._over_since).total_seconds())
+        else:
+            self._over_since = None
+            seconds_over = 0.0
+
+        if seconds_over >= self.sustain_s and self._over_since is not None:
+            return CooldownDecision(
+                active=True,
+                arm_progress=1.0,
+                seconds_over=seconds_over,
+                reason=(
+                    f"GPU sustained {temp_c:.0f}°C ≥ "
+                    f"{self.threshold_c:.0f}°C for {seconds_over:.0f}s "
+                    f"(> {self.sustain_s:.0f}s) — cooldown required"
+                ),
+            )
+        if self._over_since is not None:
+            return CooldownDecision(
+                active=False,
+                arm_progress=min(1.0, seconds_over / self.sustain_s),
+                seconds_over=seconds_over,
+                reason=(
+                    f"GPU {temp_c:.0f}°C ≥ "
+                    f"{self.threshold_c:.0f}°C for {seconds_over:.0f}s "
+                    f"(under {self.sustain_s:.0f}s sustain window)"
+                ),
+            )
+        return CooldownDecision(
+            active=False,
+            arm_progress=0.0,
+            seconds_over=0.0,
+            reason=f"GPU {temp_c:.0f}°C < {self.threshold_c:.0f}°C cooldown threshold",
+        )
+
+    @property
+    def armed(self) -> bool:
+        return self._over_since is not None
+
+    def reset(self) -> None:
+        """Clear the continuous window (e.g. after a failed sensor read).
+
+        Called when we cannot confirm the temperature — we must not let a
+        stale at/above-threshold clock from before the gap survive it.
+        """
+        self._over_since = None
 
 
 class TektosThermalAdapter:

@@ -4426,3 +4426,12 @@ Hermes Agent uses) is now the primary LLM lane; Ollama is fallback-only.
 - **Fix:** kernel-native `GET /api/inference/status` in `kernel/app.py` probes the ACTIVE lane of the live `FailoverLLMAdapter`: llama.cpp → `GET /v1/models`, Ollama → `GET /api/version` (≤3 s bound). Envelope mirrors the old standalone shape so the card parses it unchanged; a down lane reports `degraded` while still naming the lane. Always 200.
 - **UI:** `page.tsx` SUBSYSTEMS inference → `base: ""` (kernel-native root). `parseCard` unchanged (verified `??` in fetchJson, so `""` is authoritative, not coerced to the gateway).
 - **Verified live:** endpoint returns `active / qwen3.8-27b-code / http://127.0.0.1:8090 / ok / true`; kernel healthy, `boot_errors: {}`; `next build` clean + served chunk verified; 4/4 tests (`tests/kernel/test_stage_11_4_adr_120_inference_status.py`: primary probe path, fallback probe path, lane-down degraded-with-identity, no-registry).
+
+## 2026-09-25 — Stage 11.5 · ADR-121: sustained-thermal cooldown rule + kernel-native /api/thermal/status
+
+- **Policy (user, 2026-09-25):** the RTX 5090 must not sustain >75°C for more than 1 minute. ADR-081's instant bands had no sustained-duration concept, so this is an additive rule, not a band change.
+- **D1** `SustainedCooldownRule` + `CooldownDecision` in `adapters/thermal/tektos/adapter.py`; `ColossusThermalThresholds` gains `cooldown_c=75.0`, `cooldown_sustain_s=60.0`; `reset()` clears the window on failed reads. Pure + injected-clock testable.
+- **D2** `kernel/tektos_thermal_watchdog.py` — 5 s background sampler (nvidia-smi in a worker thread; CPU via /sys hwmon k10temp with /sys/class/thermal fallback — kernel venv has no pynvml/psutil), classifies to the card's action vocabulary, and applies a REAL cooldown: 350 W cap on fire (`sudo nvidia-smi -pl 350`, NOPASSWD entry), 400 W restore on clear, `thermal.cooldown[_cleared]` events. Degraded reads hold + reason, never fabricate. Env-gated `KOSMOS_THERMAL_WATCHDOG` (default on).
+- **D3** kernel-native `GET /api/thermal/status` — :8020-shaped envelope the card already parses + new `gpu.cooldown` block; one-shot read degrade when the watchdog is off; always 200.
+- **D4** `page.tsx`: thermal card `base: ""` + `❄ arming X/60s` / `❄ cooldown` line (quiet below 75°C).
+- **Verified:** 17/17 tests (8 rule + 9 watchdog, all GPU-free); live endpoint after restart: 47°C GPU / 60°C CPU / relax / 400 W / cooldown inactive, history accumulating at 5 s; `boot_errors: {}`; `next build` clean + served chunk verified.

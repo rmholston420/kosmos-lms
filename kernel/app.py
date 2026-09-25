@@ -65,6 +65,7 @@ import json
 import os
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, AsyncIterator
 
@@ -92,6 +93,7 @@ class _BootRegistry:
         self.resource: Any = None
         self.approval: Any = None
         self.notification: Any = None
+        self.thermal_watchdog: Any = None
         self.phrouros: Any = None
         self.event_bus: Any = None
         self.zetesis: Any = None
@@ -303,6 +305,23 @@ async def lifespan(app: FastAPI):
         return KernelNotificationAdapter()
 
     registry.notification = _boot_notification
+
+    # --- ADR-121 (Stage 11.5): sustained-thermal watchdog -----------------
+    # Background sampler (5 s) + the >75°C-for-60s cooldown rule. Env-gated
+    # off for CI sandboxes (no GPU); default on. Never blocks boot.
+    @_try("thermal_watchdog")
+    def _boot_thermal_watchdog():
+        import os as _os
+
+        if _os.environ.get("KOSMOS_THERMAL_WATCHDOG", "on").lower() not in ("on", "true", "1"):
+            return None
+        from kernel.tektos_thermal_watchdog import ThermalWatchdog
+
+        watchdog = ThermalWatchdog(event_bus=registry.event_bus)
+        watchdog.start()
+        return watchdog
+
+    registry.thermal_watchdog = _boot_thermal_watchdog
 
     # --- FrontendContract (no required args) ----------------------------------
     @_try("frontend_contract")
@@ -1604,6 +1623,14 @@ async def lifespan(app: FastAPI):
         )
 
     yield
+
+    # ADR-121 (Stage 11.5): stop the sustained-thermal watchdog before
+    # anything else so it can't race the event-bus teardown.
+    if getattr(registry, "thermal_watchdog", None) is not None:
+        try:
+            await registry.thermal_watchdog.stop()
+        except Exception:  # noqa: BLE001
+            pass
 
     # Shutdown — stop plugins/engines then close the event bus.
     if registry.tektos is not None:
@@ -3346,6 +3373,56 @@ async def inference_status() -> dict[str, Any]:
     except Exception:  # noqa: BLE001 — lane down is a degraded reading, not a 500
         pass
     return out
+
+
+@app.get("/api/thermal/status")
+async def thermal_status() -> dict[str, Any]:
+    """ADR-121 (Stage 11.5): kernel-native thermal snapshot.
+
+    Replaces the ADR-109 gateway proxy to :8020. Serves the watchdog's
+    in-memory snapshot (the :8020-shaped envelope the card already
+    parses). If the watchdog is off (CI / env-gated) we degrade to a
+    one-shot ``nvidia-smi`` read so the card still shows real temps.
+    """
+    watchdog = registry.thermal_watchdog
+    if watchdog is not None:
+        return watchdog.snapshot()
+    # Degrade path: no watchdog — one-shot read, no rule enforcement.
+    import asyncio as _asyncio
+
+    from kernel.tektos_thermal_watchdog import _read_cpu, _read_gpu
+
+    gpu_temp, gpu_power, gpu_clock = await _asyncio.to_thread(_read_gpu)
+    cpu_temp = await _asyncio.to_thread(_read_cpu)
+    action = "relax" if (gpu_temp is None or gpu_temp < 75.0) else "hold"
+    reason = (
+        f"temp {gpu_temp:.0f}°C" if gpu_temp is not None else "no GPU data"
+    )
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "gpu": {
+            "temperature": gpu_temp,
+            "power_limit": 400,
+            "clock_mhz": gpu_clock,
+            "power_draw_w": gpu_power,
+            "action": action,
+            "reason": reason,
+            "cooldown": {
+                "active": False,
+                "threshold_c": 75.0,
+                "sustain_s": 60.0,
+                "seconds_over": 0.0,
+                "arming": False,
+            },
+        },
+        "cpu": {
+            "temperature": cpu_temp,
+            "status": "normal" if cpu_temp is None or cpu_temp < 70 else "elevated",
+            "action": "CPU within safe operating range",
+        },
+        "regulation_count": 0,
+        "history": [],
+    }
 
 
 # ---------------------------------------------------------------------------
