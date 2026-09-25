@@ -83,6 +83,8 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from kernel.plan_tracker import PlanTracker
+
 # ---------------------------------------------------------------------------
 # ADR-129 (Stage 11.13): kernel-native log ring buffer
 # ---------------------------------------------------------------------------
@@ -5451,6 +5453,136 @@ async def tektos_session_events(
         limit=limit,
         event_type=event_type,
     )
+
+
+# ---------------------------------------------------------------------------
+# /api/planner — ADR-141 T4a: planner pipeline read surface (donor wire)
+#
+# Donor main.py:3174 (templates), :3182 (language-games), :3195 (plan).
+# The pipeline is the donor's ``agents/planner/orchestrator.Planner`` — a
+# pure heuristic (no LLM): Language Game → Disambiguator → Translator →
+# Template Selector → Spec Generator. Kernel port:
+# ``plugins/tektos/planner/pipeline.py`` (the five leaf stages were already
+# ported at Stage 8.4 / ADR-106). ``POST /plan`` returns the donor's
+# ``PlannerOutput.model_dump()`` wire verbatim — the kernel models are
+# frozen dataclasses, so :func:`_planner_output_to_wire` serializes them
+# into the identical JSON structure (tuples → lists, enums → values).
+# ---------------------------------------------------------------------------
+
+
+def _planner_output_to_wire(output: Any) -> dict[str, Any]:
+    """Serialize a kernel ``PlannerOutput`` to the donor wire shape.
+
+    Donor-faithful (donor ``main.py:3220`` returns
+    ``output.model_dump()``): dataclasses → dicts (``asdict``), tuples →
+    lists, ``str``-enums → their ``.value`` — the exact JSON the donor's
+    pydantic ``model_dump()`` produces, verified field-for-field against
+    the donor models.
+    """
+    import dataclasses
+    from enum import Enum
+
+    def _v(x: Any) -> Any:
+        if dataclasses.is_dataclass(x) and not isinstance(x, type):
+            return {k: _v(val) for k, val in dataclasses.asdict(x).items()}
+        if isinstance(x, tuple):
+            return [_v(i) for i in x]
+        if isinstance(x, list):
+            return [_v(i) for i in x]
+        if isinstance(x, dict):
+            return {k: _v(val) for k, val in x.items()}
+        if isinstance(x, Enum):
+            return x.value
+        return x
+
+    return _v(output)
+
+
+@app.get("/api/planner/templates")
+async def get_planner_templates() -> dict[str, Any]:
+    """List available architecture templates the planner can select.
+
+    ADR-141 T4a — donor main.py:3174: ``{"templates": [t.model_dump() for
+    t in TEMPLATES]}``. Kernel referent: the Stage 8.4
+    ``ArchitectureTemplate`` port (identical fields — ``name/description/
+    pros/cons/use_cases/recommended_for``), so each entry serializes to
+    the same donor dict.
+    """
+    from plugins.tektos.planner.template_selector import TEMPLATES
+
+    return {"templates": [_planner_output_to_wire(t) for t in TEMPLATES]}
+
+
+@app.get("/api/planner/language-games")
+async def get_planner_language_games() -> dict[str, Any]:
+    """List available language games (domain classifiers).
+
+    ADR-141 T4a — donor main.py:3182: ``{"language_games":
+    [{"name": g.value, "description": g.value.replace("_", " ").title()}
+    for g in LanguageGame]}``. The kernel ``LanguageGame`` enum (ADR-106
+    D9) has the same four members as the donor.
+    """
+    from plugins.tektos.planner.spec_models import LanguageGame
+
+    return {
+        "language_games": [
+            {"name": g.value, "description": g.value.replace("_", " ").title()}
+            for g in LanguageGame
+        ]
+    }
+
+
+@app.post("/api/planner/plan")
+async def run_planner(body: dict[str, Any]) -> dict[str, Any]:
+    """Run the full planning pipeline on a natural language prompt.
+
+    ADR-141 T4a — donor main.py:3195: builds the donor ``Planner``
+    (``context_budget`` default 128000, ``max_clarifying_questions``
+    default 3) and returns ``output.model_dump()`` — the structured
+    BuildSpec with phases, requirements, and pipeline metadata. 400 when
+    the prompt is empty (donor ``_HTTPException``).
+    """
+    from plugins.tektos.planner.pipeline import Planner
+
+    prompt = body.get("prompt", "")
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+
+    planner = Planner(
+        context_budget=body.get("context_budget", 128000),
+        max_clarifying_questions=body.get("max_clarifying_questions", 3),
+    )
+
+    output = planner.plan(
+        prompt=prompt,
+        context=body.get("context"),
+        user_preference=body.get("user_preference"),
+        synthesis_guidance=body.get("synthesis_guidance", ""),
+    )
+
+    return _planner_output_to_wire(output)
+
+
+# Donor main.py:82/1455 boots the runtime PlannerOrchestrator unconditionally
+# (it is pure in-memory tracking — see kernel/plan_tracker.py). Same here:
+# one process-wide tracker, so /api/planner/status is always "initialized".
+_plan_tracker: PlanTracker = PlanTracker()
+
+
+@app.get("/api/planner/status")
+async def planner_status() -> dict[str, Any]:
+    """Planner orchestrator status.
+
+    ADR-141 T4b — donor main.py:4650: ``{"status": "initialized",
+    "stats": get_plan_stats()}`` (or ``{"status": "not_initialized"}`` when
+    the orchestrator never booted). The donor always boots it at startup,
+    so the kernel returns ``initialized`` + ``get_plan_stats()`` wire
+    verbatim (``total_plans/active/completed/failed/active_plan_id``).
+    """
+    return {
+        "status": "initialized",
+        "stats": _plan_tracker.get_plan_stats(),
+    }
 
 
 def _immune_offline() -> NoReturn:
