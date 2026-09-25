@@ -96,12 +96,16 @@ def build_orchestrator_router(
     *,
     hierarchical: TektosHierarchicalAgent | None = None,
     long_running: TektosLongRunningAgent | None = None,
+    coding: Any | None = None,
 ) -> APIRouter:
     """Build the orchestrator router (ADR-114 D8).
 
     ``bundle`` is the orchestrator engine family bundle (may be ``None``
     when the kernel gate is off); the sibling singletons may also be
-    ``None`` when only the orchestrator sub-engine is wired.
+    ``None`` when only the orchestrator sub-engine is wired. ``coding``
+    is the ADR-107 spec-executor (donor coding-agent referent; ADR-141
+    T1) — consumed only by the donor-fidelity ``/status`` + ``/agents``
+    routes.
     """
     router = APIRouter(tags=["tektos.orchestrator"])
 
@@ -127,6 +131,67 @@ def build_orchestrator_router(
         return long_running
 
     # ── Orchestrator ───────────────────────────────────────────────────────
+
+    @router.get("/status")
+    async def status() -> dict[str, Any]:
+        """Wiring report (ADR-141 T1 — donor-fidelity port of the donor's
+        ``GET /api/multi-agent-orchestrator/status`` on :8020).
+
+        Donor shape: ``{status, hierarchical_agent, long_running_agent,
+        coding_executor}`` booleans. Kernel deviation (honest degrade): when
+        NO engine family is wired the ``status`` field reports ``"unwired"``
+        instead of the donor's unconditional ``"initialized"`` — a status
+        endpoint must report reality, not 503 (the 503 degrade shape in this
+        file applies to action endpoints). The kernel's coding referent is the
+        ADR-107 spec-executor (``registry.tektos_executor``), which this
+        router receives as the ``coding`` kwarg.
+        """
+        wired = [bundle is not None, hierarchical is not None, coding is not None]
+        return {
+            "status": "initialized" if any(wired) else "unwired",
+            "hierarchical_agent": hierarchical is not None,
+            "long_running_agent": long_running is not None,
+            "coding_executor": coding is not None,
+        }
+
+    @router.get("/agents")
+    async def agents() -> list[dict[str, Any]]:
+        """Registered sub-agents with live state (ADR-141 T1 — donor-fidelity
+        port of the donor's ``GET /api/multi-agent-orchestrator/agents``).
+
+        Donor shape: list of ``{id, name, role, status, active_tasks}`` —
+        display strings preserved verbatim for UI fidelity. ``active_tasks``
+        reads the engine's active-task/sessions bookkeeping via defensive
+        getattr (kernel engines do not expose ``_active_tasks``; falls back
+        to 0 rather than fabricating a count). Only WIRED agents are listed
+        (donor semantics — an agent that was never booted is not listed).
+        """
+        out: list[dict[str, Any]] = []
+        if hierarchical is not None:
+            out.append({
+                "id": "hierarchical",
+                "name": "Hierarchical Planner",
+                "role": "planner",
+                "status": "ready",
+                "active_tasks": len(getattr(hierarchical, "_active_tasks", []) or []),
+            })
+        if long_running is not None:
+            out.append({
+                "id": "long_running",
+                "name": "Long-Running Executor",
+                "role": "executor",
+                "status": "ready",
+                "active_tasks": len(getattr(long_running, "_active_tasks", []) or []),
+            })
+        if coding is not None:
+            out.append({
+                "id": "coding",
+                "name": "Coding Agent",
+                "role": "executor",
+                "status": "ready",
+                "active_tasks": len(getattr(coding, "_active_sessions", []) or []),
+            })
+        return out
 
     @router.post("/tasks")
     async def create_task(body: _TaskCreateRequest) -> dict[str, Any]:

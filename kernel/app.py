@@ -1795,6 +1795,7 @@ async def lifespan(app: FastAPI):
                     _orch_bundle,
                     hierarchical=getattr(registry, "tektos_hierarchical", None),
                     long_running=getattr(registry, "tektos_long_running", None),
+                    coding=getattr(registry, "tektos_executor", None),  # ADR-141 T1
                 ),
                 prefix="/tektos/api/orchestrator",
             )

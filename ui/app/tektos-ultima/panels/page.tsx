@@ -27,7 +27,7 @@
  *            /api/immune/responses /api/immune/memory /api/immune/memory/entries
  *   dreamtime /api/dreamtime/summary /api/dreamtime/history
  *   metabolism /api/metabolism /api/metabolism/context /api/metabolism/history
- *   agents   /api/multi-agent-orchestrator/status /api/multi-agent-orchestrator/agents
+ *   agents   (kernel-native, ADR-141 T1) /tektos/api/orchestrator/status /tektos/api/orchestrator/agents
  *   selfimp  /api/self_improvement/status /api/self_improvement/metrics
  *            /api/self_improvement/report /api/self_improvement/experiences
  *   schema   /api/schema /api/schema/patterns /api/skills/dedup/groups
@@ -756,9 +756,12 @@ function AgentsTab() {
   const [agents, setAgents] = useState<Record<string, unknown>[]>([]);
 
   const load = useCallback(async () => {
+    // ADR-141 T1: re-pointed from the ADR-109 gateway (:8020/api/multi-agent-
+    // orchestrator/*) to the kernel-native /tektos/api/orchestrator routes
+    // (ADR-114 mount, ADR-141 donor-fidelity /status + /agents port).
     const [s, a] = await Promise.all([
-      g<Record<string, unknown>>("/api/multi-agent-orchestrator/status"),
-      g<unknown[]>("/api/multi-agent-orchestrator/agents"),
+      g<Record<string, unknown>>("/tektos/api/orchestrator/status", ""),
+      g<unknown[]>("/tektos/api/orchestrator/agents", ""),
     ]);
     setStatus(s);
     setAgents(asList(a) as Record<string, unknown>[]);
@@ -806,16 +809,25 @@ function AgentsTab() {
         )}
       </div>
 
-      {status && (isObj(status["hierarchical_agent"]) || isObj(status["long_running_agent"]) || isObj(status["coding_executor"])) && (
-        <JsonPre
-          data={{
-            hierarchical: status["hierarchical_agent"],
-            long_running: status["long_running_agent"],
-            coding_executor: status["coding_executor"],
-          }}
-          label="Executor detail"
-          maxH={200}
-        />
+      {/* ADR-141 T1: status fields are booleans (donor-fidelity port) — render
+          the wiring flags as a compact table instead of an object dump. */}
+      {status && ("hierarchical_agent" in status) && (
+        <div style={panelStyle}>
+          <h2 style={{ margin: "0 0 10px", fontSize: "var(--font-md, 0.9375rem)" }}>Executor wiring</h2>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr><Th>Executor</Th><Th>Wired</Th></tr>
+            </thead>
+            <tbody>
+              {(["hierarchical_agent", "long_running_agent", "coding_executor"] as const).map((k) => (
+                <tr key={k}>
+                  <Td mono>{k.replace(/_/g, " ")}</Td>
+                  <Td>{String(status[k]) === "true" ? "yes" : "no"}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
