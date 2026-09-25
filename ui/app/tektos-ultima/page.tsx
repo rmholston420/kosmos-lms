@@ -22,6 +22,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
 const GATEWAY = "/api/tektos-ultima/gateway";
+/** ADR-117 (Stage 11.1): data-service cards hit kernel-native probes
+ * directly instead of the ADR-109 gateway proxy to the retired :8020. */
+const DATA_SERVICES = "/api/tektos/data-services";
 const POLL_MS = 10_000;
 const FRAME_HEIGHT = "calc(100vh - var(--top-bar-h, 48px))";
 
@@ -41,12 +44,15 @@ const STATUS_LABEL: Record<CardStatus, string> = {
   pending: "…",
 };
 
-/** One subsystem card: endpoint + display rules. */
+/** One subsystem card: endpoint + display rules. `base` defaults to the
+ * ADR-109 gateway; ADR-117 data-service cards point at the kernel-native
+ * probes instead. */
 interface Subsystem {
   id: string;
   title: string;
   icon: string;
   endpoint: string;
+  base?: string;
 }
 
 const SUBSYSTEMS: Subsystem[] = [
@@ -59,10 +65,11 @@ const SUBSYSTEMS: Subsystem[] = [
   { id: "tools", title: "Tools", icon: "🔧", endpoint: "/api/tools" },
   { id: "models", title: "Models", icon: "🎛️", endpoint: "/api/models" },
   { id: "plugins", title: "Plugins", icon: "🧩", endpoint: "/api/plugins" },
-  { id: "neo4j", title: "Neo4j", icon: "🌐", endpoint: "/api/neo4j/status" },
-  { id: "postgres", title: "Postgres", icon: "🐘", endpoint: "/api/postgres/status" },
-  { id: "redis", title: "Redis", icon: "⚡", endpoint: "/api/redis/status" },
-  { id: "hindsight", title: "Hindsight", icon: "🔮", endpoint: "/api/hindsight/status" },
+  { id: "neo4j", title: "Neo4j", icon: "🌐", endpoint: "/neo4j/status", base: DATA_SERVICES },
+  { id: "postgres", title: "Postgres", icon: "🐘", endpoint: "/postgres/status", base: DATA_SERVICES },
+  { id: "redis", title: "Redis", icon: "⚡", endpoint: "/redis/status", base: DATA_SERVICES },
+  { id: "hindsight", title: "Hindsight", icon: "🔮", endpoint: "/hindsight/status", base: DATA_SERVICES },
+  { id: "qdrant", title: "Qdrant", icon: "📐", endpoint: "/qdrant/status", base: DATA_SERVICES },
   { id: "self_repair", title: "Self-Repair", icon: "🔁", endpoint: "/api/self_repair/status" },
 ];
 
@@ -210,30 +217,42 @@ function parseCard(sub: Subsystem, data: unknown): CardData {
       };
     }
     case "neo4j":
-    case "hindsight": {
+    case "hindsight":
+    case "qdrant": {
+      // ADR-117 kernel-native probe: `healthy` is authoritative; `status`
+      // distinguishes unreachable / auth_failed / unconfigured.
+      const healthy = o?.healthy === true;
       const status = str(o?.status);
-      const healthy = o?.healthy === true && status === "connected";
+      const target =
+        str(o?.uri ?? o?.base_url) ??
+        `${str(o?.host) ?? "?"}:${num(o?.port) ?? "?"}`;
+      const lines = [status ?? "unknown", target];
+      if (o?.service === "qdrant") {
+        lines.push(`${num(o?.collections) ?? 0} collections`);
+      }
       return {
         status: healthy ? "healthy" : "down",
-        lines: [status ?? "unknown", str(o?.base_url ?? o?.uri) ?? "unconfigured"],
-        detail: str(o?.error) ?? undefined,
+        lines: lines.slice(0, 2),
+        detail:
+          str(o?.detail) ??
+          (o?.service === "qdrant" ? `${num(o?.collections) ?? 0} collections` : undefined),
       };
     }
     case "postgres": {
-      const connected = o?.connected === true;
+      const healthy = o?.healthy === true;
       const status = str(o?.status);
       return {
-        status: connected ? "healthy" : "down",
+        status: healthy ? "healthy" : "down",
         lines: [status ?? "unknown", `${str(o?.host) ?? "?"}:${num(o?.port) ?? "?"}/${str(o?.database_name) ?? "?"}`],
-        detail: str(o?.error) ?? undefined,
+        detail: str(o?.detail) ?? undefined,
       };
     }
     case "redis": {
-      const ok = o?.ping_ok === true && o?.connected === true;
+      const healthy = o?.healthy === true;
       return {
-        status: ok ? "healthy" : "down",
+        status: healthy ? "healthy" : "down",
         lines: [str(o?.status) ?? "unknown", `${str(o?.host) ?? "?"}:${num(o?.port) ?? "?"}`],
-        detail: str(o?.error) ?? undefined,
+        detail: str(o?.detail) ?? undefined,
       };
     }
     case "self_repair": {
@@ -280,9 +299,9 @@ async function fetchHealth(): Promise<{ reachable: boolean; upstream: string | n
   };
 }
 
-async function fetchJson(endpoint: string): Promise<{ ok: boolean; data: unknown }> {
+async function fetchJson(sub: Subsystem): Promise<{ ok: boolean; data: unknown }> {
   try {
-    const res = await fetch(`${GATEWAY}${endpoint}`, { cache: "no-store" });
+    const res = await fetch(`${sub.base ?? GATEWAY}${sub.endpoint}`, { cache: "no-store" });
     if (!res.ok) return { ok: false, data: null };
     return { ok: true, data: await res.json() };
   } catch {
@@ -301,13 +320,15 @@ export default function TektosUltimaDashboard() {
     try {
       const [health, ...results] = await Promise.all([
         fetchHealth(),
-        ...SUBSYSTEMS.map((s) => fetchJson(s.endpoint)),
+        ...SUBSYSTEMS.map((s) => fetchJson(s)),
       ]);
       const healthBody = isObj(health.body) ? health.body : null;
       const cards: Record<string, CardData> = {};
       SUBSYSTEMS.forEach((s, i) => {
         const r = results[i];
-        cards[s.id] = r.ok ? parseCard(s, r.data) : { status: "degraded", lines: ["unreachable"], detail: "gateway request failed" };
+        cards[s.id] = r.ok
+          ? parseCard(s, r.data)
+          : { status: "down", lines: ["unreachable"], detail: "request failed" };
       });
       setState({
         upstream: health.upstream ?? "http://127.0.0.1:8020",

@@ -4351,3 +4351,49 @@ Hermes Agent uses) is now the primary LLM lane; Ollama is fallback-only.
   on the compound command, leaving Ollama holding the GPU until the operator killed it and
   restarted :8090 manually. Lesson: service stop→test→restart belongs in ONE auto-approved
   command, or restart in a separate call before the failover test.
+
+## 2026-09-25 03:53 EDT — Stage 11.1 · ADR-117: kernel-native data-service status endpoints (endpoint split, first slice)
+
+- **Change**: `kernel/tektos_data_services.py` (new) — ADR-109 factory
+  `build_tektos_data_services_router()`, five read-only routes under
+  `/api/tektos/data-services/{neo4j,postgres,redis,hindsight,qdrant}/status`.
+  Mounted in `kernel/app.py` immediately after the ADR-109 gateway mount
+  (same degrade-to-WARN wrapper; `registry.errors["tektos_data_services"]`
+  on import failure). No registry coupling: env-driven, short-lived clients
+  per request, ≤3 s probe bound each (ADR-117 D1/D3).
+- **Probes** (D2, each mirrors the boot path's env): Neo4j = Bolt
+  `verify_connectivity` on `KOSMOS_DOZERDB_URI/_USER/_PASSWORD`; Postgres =
+  `asyncpg SELECT 1` on `KOSMOS_POSTGRES_URI` (creds stripped from reported
+  URL); Redis = `PING` on `KOSMOS_VALKEY_URL` (default :6379); Hindsight =
+  `GET /health` on `KOSMOS_HINDSIGHT_URL` (default :9178, standalone daemon);
+  Qdrant = `GET /healthz` + `GET /collections` count on `KOSMOS_QDRANT_URL`
+  (default :6333; `/health` 404s — probed live).
+- **Envelope** (D3): always HTTP 200 with
+  `{service, healthy, status: connected|unreachable|auth_failed|unconfigured,
+  detail≤200ch}`. The 502/503 proxy envelope was unsatisfiable for the
+  ADR-101 honesty rule — it collapsed all three failure modes into one
+  "down".
+- **UI** (D4): `ui/app/tektos-ultima/page.tsx` — `Subsystem.base` added
+  (default GATEWAY); the 4 data cards repointed to
+  `/api/tektos/data-services/*`; **new Qdrant card** (📐) added; `parseCard`
+  treats `healthy` as authoritative and reads `detail` (old code read the
+  retired API's `error` field, which never matches).
+- **Docs**: ADR-117 (Ratified) + README index row.
+- **Live verification (D6)**: `sudo systemctl restart kosmos-kernel` →
+  12/12 subsystems, `boot_errors: {}`. curl: Postgres `connected`
+  (127.0.0.1:5432/kosmos), Redis `connected` (:6379 ping_ok), Hindsight
+  `connected` (:9178), Qdrant `connected` (:6333, 0 collections), Neo4j
+  honestly `unconfigured` (kernel env carries no DOZERDB lane — memory runs
+  in_memory; previously a dead card proxying misconfigured :8020).
+  `next build` clean (only pre-existing error in
+  tests/03-tektos-plan-workflow.spec.ts); served prod bundle
+  `2agndj-of1ger.js` confirmed carrying all 5 cards with the new base +
+  Qdrant card.
+- **Ops note**: to make the Neo4j card green, the operator must supply the
+  live Neo4j credentials (repo dev credential is stale vs `auth.ini`) into
+  `KOSMOS_DOZERDB_*` in `ops/systemd/kosmos-kernel.local.env` — then the
+  card and the memory lane share one source of truth.
+- **Next (Stage 11 continues)**: remaining endpoint-split families
+  (non-health: logs, directory, sessions, skills, tools, models, plugins,
+  immune, thermal, inference, rag, self_repair) move kernel-native per the
+  same pattern once this slice is confirmed in the UI.

@@ -1707,6 +1707,33 @@ except Exception as _tektos_ultima_gateway_exc:  # noqa: BLE001
         f"{_tektos_ultima_gateway_exc}"
     )
 
+# ---------------------------------------------------------------------------
+# Tektos-Ultima data-service status endpoints (ADR-117, Stage 11.1)
+# ---------------------------------------------------------------------------
+# Kernel-native probes for the five data-service dashboard cards (Neo4j,
+# Postgres, Redis/Valkey, Hindsight, Qdrant). They probe the services
+# directly (env-driven, ADR-109 D2 pattern — no registry coupling),
+# replacing the ADR-109 gateway proxy to the retired :8020 standalone
+# Tektos API. Always HTTP 200 with a ``healthy`` flag so the card can
+# distinguish unreachable / auth_failed / unconfigured.
+try:
+    from kernel.tektos_data_services import (
+        build_tektos_data_services_router as _build_tektos_data_services_router,
+    )
+
+    app.include_router(_build_tektos_data_services_router())
+except Exception as _tektos_data_services_exc:  # noqa: BLE001
+    import logging as _tektos_data_services_logging
+
+    _tektos_data_services_logging.getLogger(__name__).warning(
+        "Tektos data-services router not mounted: %s",
+        _tektos_data_services_exc,
+    )
+    registry.errors["tektos_data_services"] = (
+        f"{type(_tektos_data_services_exc).__name__}: "
+        f"{_tektos_data_services_exc}"
+    )
+
 
 # ---------------------------------------------------------------------------
 # Kill-switch middleware — ADR-069 (Stage 1.5 Wave C)
