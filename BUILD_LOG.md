@@ -4308,3 +4308,46 @@ Use the `kosmos-log-maintenance` Perplexity Computer skill.
 - **Ops note**: kernel `registry.llm` (OllamaAdapter) still defaults to `:11434`
   (`KOSMOS_OLLAMA_BASE_URL` unset) — separate from the :8090 shared server; left unchanged
   here, flagged for a follow-up decision.
+
+## 2026-09-25 — Stage 9.4 · ADR-116: LLM primary/failover (llama.cpp :8090 primary, Ollama :11434 fallback)
+
+Discharges the ops note at the tail of the 2026-09-25 GPU-share entry: kernel `registry.llm`
+no longer defaults to Ollama :11434 — the shared llama.cpp server :8090 (Qwen3.8-27B, same lane
+Hermes Agent uses) is now the primary LLM lane; Ollama is fallback-only.
+
+- **New**: `adapters/llm/failover/adapter.py` — `FailoverLLMAdapter(primary, fallback, *, failback=True)`.
+  Composite LLMPort: primary-first, transparent failover on transport/HTTP errors
+  (httpx.HTTPError / OSError family), pre-first-delta-only streaming failover (no token
+  duplication), sticky failback (every failing call retries primary first — self-healing when
+  llama-server restarts), telemetry (`active_backend`, `failover_count`), non-throwing
+  `is_healthy()` (either-up), `NotImplementedError` passthrough on `pull_model`/`delete_model`.
+  Sub-adapters remain dumb transports; the composite is the only failover-policy code.
+- **kernel/app.py**: `_boot_llm` now delegates to module-level `_build_llm_adapter()` →
+  `FailoverLLMAdapter(LlamaSwapAdapter(), OllamaAdapter())`. `LlamaSwapAdapter` (OpenAI /v1
+  transport) is the primary lane — renamed-in-spirit per ADR-116 (llama.cpp, not the
+  llama-swap sidecar) but the class name is kept for ADR-022/Stage-1.3 continuity.
+  `ollama_status()` fixed to read the fallback lane's base URL via `registry.llm._fallback`
+  (pre-ADR-116 OllamaAdapter shape still works via the getattr fallback).
+- **ops/systemd/kosmos-kernel.local.env** (gitignored): +3 ADR-116 D2 vars —
+  `KOSMOS_LLAMA_SWAP_BASE_URL=http://127.0.0.1:8090`,
+  `KOSMOS_LLAMA_SWAP_DEFAULT_MODEL=qwen3.8-27b-code`, `KOSMOS_OLLAMA_DEFAULT_MODEL=qwen3-vl:4b`
+  (fallback model pinned: the Ollama default `qwen3:14b` is not resident on :11434;
+  `qwen3-vl:4b` is the only resident 4B — degraded-but-functional fallback lane).
+- **Tests** (no live GPU): `adapters/llm/failover/test_contract.py` — 19 tests covering all 12
+  ADR-116 D4 scenarios (Protocol conformance, happy path, ConnectError failover, failback
+  call-order, both-down propagation, pre-yield vs post-yield streaming, either-up health,
+  NotImplementedError passthrough, close-once, keyword-only discipline, 4xx model-not-found
+  failover, pinned-fallback mode) + 3 supplementary. `tests/kernel/test_stage_9_4_llm_failover_boot.py`
+  — 4 tests driving `_build_llm_adapter` with monkeypatched env (Colossus values, pre-ADR-116
+  degrade with unset env, Ollama base override, builder determinism).
+- **Live verification (D5, operator-visible)**: kernel booted from kosmos-lms with the ADR-116
+  env, all 12 subsystems green. (1) Primary: `/api/tektos/turn` → `PRIMARY-LANE-OK`, llama-server
+  :8090 slot log confirms the request (92k-token context, `truncated = 0`). (2) Failover:
+  `systemctl stop llama-server-8090` → same endpoint → `FALLBACK-LANE-OK` served by Ollama :11434
+  (qwen3-vl:4b), zero kernel changes. (3) Failback: after :8090 came back, next turn →
+  `FAIlBACK-LANE-OK` served by :8090 (slot release `n_tokens = 39`) with **no kernel restart** —
+  sticky failback confirmed. `/health` `llm: true` throughout.
+- **Note**: during D5 step 2 the stop/restart chain was interrupted by a security-approval flag
+  on the compound command, leaving Ollama holding the GPU until the operator killed it and
+  restarted :8090 manually. Lesson: service stop→test→restart belongs in ONE auto-approved
+  command, or restart in a separate call before the failover test.

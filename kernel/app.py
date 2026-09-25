@@ -271,6 +271,28 @@ KERNEL_RESOURCE_SEED: dict[str, Decimal] = {
 # ---------------------------------------------------------------------------
 
 
+def _build_llm_adapter():
+    """Construct the kernel's LLMPort: FailoverLLMAdapter (ADR-116 D2).
+
+    primary  = LlamaSwapAdapter()   — OpenAI /v1 transport to the shared
+                 llama.cpp server (:8090 on Colossus via
+                 KOSMOS_LLAMA_SWAP_*; :8080 sidecar defaults otherwise).
+    fallback = OllamaAdapter()      — native Ollama protocol (:11434 via
+                 KOSMOS_OLLAMA_*; qwen3-vl:4b on Colossus).
+
+    Both adapters read their own env vars when constructor args are
+    omitted, so this builder passes no kwargs — one env file configures
+    both lanes. Module-level (not a lifespan closure) so the ADR-116 D4
+    kernel test can drive it directly with monkeypatched env, no live
+    servers, no full-lifespan boot.
+    """
+    from adapters.llm.failover import FailoverLLMAdapter
+    from adapters.llm.llama_swap import LlamaSwapAdapter
+    from adapters.llm.ollama.adapter import OllamaAdapter
+
+    return FailoverLLMAdapter(LlamaSwapAdapter(), OllamaAdapter())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # --- Notification (no args) ------------------------------------------------
@@ -403,22 +425,22 @@ async def lifespan(app: FastAPI):
         except Exception as exc:  # noqa: BLE001
             registry.errors["phrouros"] = f"{type(exc).__name__}: {exc}"
 
-    # --- LLM (OllamaAdapter) --------------------------------------------------
-    # Stage 6.5.6 addition (ADR-063): kernel-owned LLMPort shared by Tektos
-    # and future plugins. Ollama endpoint + model overridable via env vars
-    # ``KOSMOS_OLLAMA_BASE_URL`` (native Ollama HTTP API root, *not* the
-    # ``/v1`` OpenAI-compat prefix — adapter posts to ``/api/generate``,
-    # ``/api/chat``, ``/api/embed``, etc.) and ``KOSMOS_OLLAMA_DEFAULT_MODEL``.
-    # Failure surfaces under ``registry.errors['llm']`` and cascades to
-    # Tektos boot below.
+    # --- LLM (FailoverLLMAdapter: llama.cpp :8090 primary, Ollama fallback) --
+    # Stage 6.5.6 addition (ADR-063), repointed per ADR-116 (2026-09-25):
+    # primary = LlamaSwapAdapter (OpenAI /v1 transport) pointed at the shared
+    # llama.cpp server — same lane Hermes Agent uses. On Colossus the
+    # KOSMOS_LLAMA_SWAP_* env vars select :8090 + qwen3.8-27b-code; without
+    # them the adapter defaults to the llama-swap sidecar (:8080), and every
+    # call then fails over to Ollama — i.e. the pre-ADR-116 behavior.
+    # fallback = OllamaAdapter (native protocol, KOSMOS_OLLAMA_* env; model
+    # pinned to qwen3-vl:4b on Colossus since that is the only resident
+    # model on :11434). Failure surfaces under ``registry.errors['llm']``
+    # and cascades to Tektos boot below. Construction lives in
+    # ``_build_llm_adapter`` (module-level, ADR-116 D4 kernel test drives it
+    # directly with monkeypatched env).
     @_try("llm")
     def _boot_llm():
-        from adapters.llm.ollama.adapter import OllamaAdapter
-
-        # OllamaAdapter reads ``KOSMOS_OLLAMA_BASE_URL`` and
-        # ``KOSMOS_OLLAMA_DEFAULT_MODEL`` itself when constructor args
-        # are omitted, so pass through with no kwargs.
-        return OllamaAdapter()
+        return _build_llm_adapter()
 
     registry.llm = _boot_llm
 
@@ -3097,7 +3119,11 @@ async def ollama_status() -> dict[str, Any]:
 
     import httpx
 
-    base_url = getattr(registry.llm, "_base_url", "http://127.0.0.1:11434")
+    # ADR-116: registry.llm is a FailoverLLMAdapter — the Ollama lane is its
+    # _fallback sub-adapter. Read its base URL; the getattr keeps a
+    # pre-ADR-116 OllamaAdapter working (which has _base_url itself).
+    ollama_lane = getattr(registry.llm, "_fallback", None) or registry.llm
+    base_url = getattr(ollama_lane, "_base_url", "http://127.0.0.1:11434")
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
             resp = await client.get(f"{base_url}/api/ps")
