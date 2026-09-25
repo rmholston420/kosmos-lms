@@ -4273,6 +4273,87 @@ async def kernel_logs() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Workspace directory listing (ADR-130) — the panels Knowledge tab's
+# referent. Replaces the :8020/api/directory_list proxy (which listed the
+# standalone repo root). Lists the kernel's own workspace root.
+# ---------------------------------------------------------------------------
+
+_DIRECTORY_DEFAULT_DEPTH = 1
+_DIRECTORY_MAX_DEPTH = 2
+_DIRECTORY_MAX_ENTRIES = 500
+
+
+@app.get("/api/directory_list")
+async def directory_list(
+    path: str = "",
+    depth: int = _DIRECTORY_DEFAULT_DEPTH,
+) -> dict[str, Any]:
+    """List the kernel workspace directory (non-recursive beyond ``depth``).
+
+    ``path`` defaults to the kernel workspace root (the directory the
+    kernel was launched from); ``depth`` 1 (default) or 2 — deeper trees
+    are truncated to ``_DIRECTORY_MAX_ENTRIES``. Element schema matches
+    :8020/api/directory_list (``name/path/parent/type/size/mtime/depth``)
+    plus ``is_dir`` (which the standalone engine omitted, so the tab's
+    Type column rendered "file" for directories).
+    """
+    root = os.getcwd()
+    target = os.path.realpath(path) if path else root
+    errors: list[str] = []
+
+    if target != root and not target.startswith(root + os.sep):
+        raise HTTPException(
+            400, "path must be within the kernel workspace root"
+        )
+    if not os.path.isdir(target):
+        raise HTTPException(404, f"not a directory: {target}")
+
+    depth = max(1, min(depth, _DIRECTORY_MAX_DEPTH))
+    entries: list[dict[str, Any]] = []
+
+    def _walk(d: str, dlevel: int) -> None:
+        if dlevel > depth or len(entries) >= _DIRECTORY_MAX_ENTRIES:
+            return
+        try:
+            names = sorted(os.listdir(d))
+        except OSError as e:
+            errors.append(f"{d}: {e.strerror or e}")
+            return
+        for name in names:
+            if len(entries) >= _DIRECTORY_MAX_ENTRIES:
+                break
+            full = os.path.join(d, name)
+            try:
+                st = os.lstat(full)
+            except OSError:
+                continue
+            is_dir = os.path.isdir(full)
+            entries.append({
+                "name": name,
+                "path": full,
+                "parent": d,
+                "type": "dir" if is_dir else "file",
+                "is_dir": is_dir,
+                "size": None if is_dir else st.st_size,
+                "mtime": st.st_mtime,
+                "depth": dlevel,
+            })
+            if is_dir:
+                _walk(full, dlevel + 1)
+
+    _walk(target, 1)
+    return {
+        "path": target,
+        "depth": depth,
+        "count": len(entries),
+        "truncated": len(entries) >= _DIRECTORY_MAX_ENTRIES,
+        "entries": entries,
+        "errors": errors,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Praxis constitution (ADR-068 D2) — read-only integrity anchor for the
 # GOVERNANCE panel. Lazily loads + verifies the constitution on first hit,
 # then caches on ``registry.praxis_constitution``. A tamper failure at read

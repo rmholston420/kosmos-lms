@@ -177,9 +177,9 @@ function EmptyNote({ children }: { children: ReactNode }) {
   );
 }
 
-async function g<T = unknown>(path: string): Promise<T | null> {
+async function g<T = unknown>(path: string, base: string = GATEWAY): Promise<T | null> {
   try {
-    const r = await fetch(`${GATEWAY}${path}`, { cache: "no-store" });
+    const r = await fetch(`${base}${path}`, { cache: "no-store" });
     if (!r.ok) return null;
     return (await r.json()) as T;
   } catch {
@@ -1178,7 +1178,7 @@ function KnowledgeTab() {
   const [dir, setDir] = useState<Record<string, unknown> | null>(null);
 
   const loadDir = useCallback(async () => {
-    const d = await g<Record<string, unknown>>("/api/directory_list");
+    const d = await g<Record<string, unknown>>("/api/directory_list", "");
     setDir(d);
   }, []);
 
