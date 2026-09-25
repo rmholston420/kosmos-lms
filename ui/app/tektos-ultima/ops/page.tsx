@@ -4,12 +4,15 @@
  * /tektos-ultima/ops — Tektos subsystem operations page (Tektos integration
  * Stage 9.4, ADR-112).
  *
- * Seven tabs driving the standalone Tektos API (:8020) through the kernel
- * gateway (ADR-109 D1), all same-origin:
+ * Seven tabs: db/memory/skills/tools are kernel-native (same-origin
+ * kernel endpoints, ADR-135/136/137); logs/telemetry/repair still drive
+ * the standalone Tektos API (:8020) through the kernel gateway
+ * (ADR-109 D1), same-origin:
  *
- *   db        GET  /api/db · /api/db/backups · /api/db/schema
- *             POST /api/db/backup · /api/db/restore · /api/db/optimize
- *             GET  /api/db/analyze
+ *   db        (kernel-native, ADR-137) GET /api/db — persistence lane
+ *             booted state (postgres/dozerdb/qdrant/valkey, registry
+ *             only); donor's tektos.db SQLite controls retired with
+ *             main.py deletion (stores are systemd-managed infra)
  *   memory    (kernel-native, ADR-135) GET /api/memory · /api/memory/stats
  *             POST /api/memory/decay → honest degrade (no kernel referent:
  *             kernel memory is a MemoryEvent graph, tier decay is Tektos
@@ -62,15 +65,6 @@ function num(v: unknown): number | null {
 
 function str(v: unknown): string {
   return typeof v === "string" ? v : "";
-}
-
-function fmtBytes(b: unknown): string {
-  const n = num(b);
-  if (n === null) return "—";
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
-  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
 async function g<T = unknown>(path: string, base: string = GATEWAY): Promise<T | null> {
@@ -164,33 +158,41 @@ function Td({ children, mono = false, style }: { children: ReactNode; mono?: boo
 
 // ---------------------------------------------------------------------------
 // Tab: Database
+//
+// ADR-137 (Stage 11.21): kernel-native GET /api/db (base ""). Reports
+// which of the kernel's four persistence lanes booted — postgres /
+// dozerdb / qdrant / valkey — from registry booted state only. The
+// donor's 7 :8020 calls (stats/backups/schema/analyze +
+// backup/optimize/restore) managed the standalone engine's OWN
+// tektos.db SQLite file; that file dies with main.py, and those
+// controls have no kernel referent (stores are systemd-managed infra;
+// per-store health/counts/backups are ops-level), so they are removed —
+// not disabled.
 // ---------------------------------------------------------------------------
 
-type BackupInfo = { path?: string; size_bytes?: number; created_at?: string; name?: string };
+type DbStoreRow = {
+  store?: string;
+  wired?: boolean;
+  boot_error?: string | null;
+  management?: string;
+};
 
 function DbTab() {
   const [status, setStatus] = useState<Record<string, unknown> | null>(null);
-  const [backups, setBackups] = useState<BackupInfo[]>([]);
-  const [schema, setSchema] = useState<unknown>(null);
-  const [analyze, setAnalyze] = useState<unknown>(null);
+  const [stores, setStores] = useState<DbStoreRow[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [restorePath, setRestorePath] = useState("");
-  const [compress, setCompress] = useState(true);
 
   const load = useCallback(async () => {
-    const [s, b, sc, a] = await Promise.all([
-      g<Record<string, unknown>>("/api/db"),
-      g<{ backups?: unknown } | unknown[]>("/api/db/backups"),
-      g("/api/db/schema"),
-      g("/api/db/analyze"),
-    ]);
+    const s = await g<Record<string, unknown> | null>("/api/db", "");
+    if (!isObj(s)) {
+      setStatus(null);
+      setStores([]);
+      setMsg("data layer status unavailable (kernel /api/db)");
+      return;
+    }
     setStatus(s);
-    if (Array.isArray(b)) setBackups(b as BackupInfo[]);
-    else if (isObj(b) && Array.isArray(b["backups"])) setBackups(b["backups"] as BackupInfo[]);
-    else setBackups([]);
-    setSchema(sc);
-    setAnalyze(a);
+    setStores(Array.isArray(s["stores"]) ? (s["stores"] as DbStoreRow[]) : []);
+    setMsg(null);
   }, []);
 
   useEffect(() => {
@@ -199,130 +201,78 @@ function DbTab() {
     return () => clearInterval(t);
   }, [load]);
 
-  const run = async (label: string, fn: () => Promise<{ ok: boolean; error?: string; data?: unknown }>) => {
-    setBusy(true);
-    setMsg(null);
-    const r = await fn();
-    setBusy(false);
-    if (r.ok) {
-      setMsg(`${label}: ok`);
-      void load();
-    } else {
-      setMsg(`${label} failed: ${r.error ?? "unknown error"}`);
-    }
-  };
-
-  const tables = isObj(status) ? num(status["table_count"]) ?? (Array.isArray(status["tables"]) ? (status["tables"] as unknown[]).length : null) : null;
-  const size = isObj(status) ? num(status["size_bytes"]) ?? num(status["database_size"]) ?? num(status["size"]) : null;
-  const journal = isObj(status) ? str(status["journal_mode"]) || str(status["journalMode"]) || "" : "";
-  const foreignKeys = isObj(status) ? status["foreign_keys_enabled"] ?? status["fk_enabled"] ?? null : null;
+  const healthy = isObj(status) ? status["healthy"] === true : null;
+  const note = isObj(status) ? str(status["note"]) || "" : "";
+  const wiredCount = stores.filter((s) => s.wired === true).length;
 
   return (
     <div data-testid="tektos-ops-db">
-      <div style={{ display: "flex", gap: 18, flexWrap: "wrap", ...panelStyle }}>
-        <Metric label="Size" value={size !== null ? fmtBytes(size) : "—"} />
-        <Metric label="Tables" value={tables !== null ? String(tables) : "—"} />
-        <Metric label="Journal" value={journal || "—"} />
-        {foreignKeys !== null && (
-          <Metric label="Foreign keys" value={String(foreignKeys)} />
-        )}
-      </div>
-
-      <div style={{ ...panelStyle, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <button
-          data-testid="tektos-ops-db-backup-btn"
-          style={btnStyle}
-          disabled={busy}
-          onClick={() => void run("backup", () => act("/api/db/backup", { compress }))}
-        >
-          Backup
-        </button>
-        <label style={{ fontSize: "var(--font-sm, 0.8125rem)", display: "flex", gap: 6, alignItems: "center" }}>
-          <input type="checkbox" checked={compress} onChange={(e) => setCompress(e.target.checked)} />
-          gzip
-        </label>
-        <button
-          style={btnStyle}
-          disabled={busy}
-          onClick={() => void run("optimize", () => act("/api/db/optimize"))}
-        >
-          Optimize
-        </button>
-        <span style={{ flex: 1 }} />
-        <input
-          data-testid="tektos-ops-db-restore-input"
-          style={{ ...inputStyle, width: 320, maxWidth: "60vw" }}
-          placeholder="backup file path"
-          value={restorePath}
-          onChange={(e) => setRestorePath(e.target.value)}
-        />
-        <button
-          style={btnStyle}
-          disabled={busy || !restorePath.trim()}
-          onClick={() => {
-            if (!window.confirm(`Restore DB from ${restorePath.trim()}? Current data will be replaced.`)) return;
-            void run("restore", () => act("/api/db/restore", { backup_path: restorePath.trim(), verify: true }));
-          }}
-        >
-          Restore
-        </button>
+      <div style={{ ...panelStyle, display: "flex", gap: 18, flexWrap: "wrap" }}>
+        <Metric label="status" value={isObj(status) ? String(status["status"] ?? "—") : "—"} />
+        <span style={healthy === false ? { color: "var(--color-amitabha, #e07070)" } : undefined}>
+          <Metric
+            label="healthy"
+            value={healthy === null ? "—" : String(healthy)}
+          />
+        </span>
+        <Metric label="stores" value={stores.length ? `${wiredCount}/${stores.length} wired` : "—"} />
       </div>
 
       {msg && (
         <div
           data-testid="tektos-ops-db-msg"
-          style={{ fontSize: "var(--font-sm, 0.8125rem)", marginBottom: 14, color: msg.includes("failed") ? "var(--color-amitabha, #e07070)" : "var(--color-amoghasiddhi, #6ad08a)" }}
+          style={{ fontSize: "var(--font-sm, 0.8125rem)", marginBottom: 14, color: "var(--color-amitabha, #e07070)" }}
         >
           {msg}
         </div>
       )}
 
       <div style={panelStyle}>
-        <h2 style={{ margin: "0 0 10px", fontSize: "var(--font-md, 0.9375rem)" }}>Backups ({backups.length})</h2>
-        {backups.length === 0 ? (
+        <div style={{ fontSize: "var(--font-sm, 0.8125rem)", color: "var(--color-text-dim, #888)", marginBottom: 10 }}>
+          Kernel persistence lanes (booted state from the kernel registry — no store is contacted):
+        </div>
+        {stores.length === 0 ? (
           <div style={{ fontSize: "var(--font-sm, 0.8125rem)", color: "var(--color-text-dim, #888)" }}>
-            no backups yet — run Backup
+            no data
           </div>
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>
-                <Th>Path</Th>
-                <Th>Size</Th>
-                <Th>Created</Th>
+                <Th>Store</Th>
+                <Th>Wired</Th>
+                <Th>Boot error</Th>
+                <Th>Management</Th>
               </tr>
             </thead>
             <tbody>
-              {backups.map((b, i) => (
-                <tr key={b.path ?? i}>
-                  <Td mono>{b.path || b.name || "—"}</Td>
-                  <Td>{fmtBytes(b.size_bytes)}</Td>
-                  <Td>{b.created_at ? String(b.created_at).slice(0, 19).replace("T", " ") : "—"}</Td>
+              {stores.map((s, i) => (
+                <tr key={s.store ?? i}>
+                  <Td mono>{s.store ?? "—"}</Td>
+                  <Td>
+                    {s.wired === false ? (
+                      <span style={{ color: "var(--color-amitabha, #e07070)" }}>degraded</span>
+                    ) : (
+                      "wired"
+                    )}
+                  </Td>
+                  <Td mono>{s.boot_error || "—"}</Td>
+                  <Td>{s.management ?? "—"}</Td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
-      </div>
-
-      <div style={panelStyle}>
-        <h2 style={{ margin: "0 0 10px", fontSize: "var(--font-md, 0.9375rem)" }}>Schema</h2>
-        <pre
-          data-testid="tektos-ops-db-schema"
-          style={{ margin: 0, maxHeight: 240, overflow: "auto", fontSize: "var(--font-xs, 0.75rem)", fontFamily: "var(--font-mono, ui-monospace, monospace)", whiteSpace: "pre-wrap" }}
-        >
-          {schema === null ? "loading…" : JSON.stringify(schema, null, 1)}
-        </pre>
-      </div>
-
-      <div style={panelStyle}>
-        <h2 style={{ margin: "0 0 10px", fontSize: "var(--font-md, 0.9375rem)" }}>Integrity / Analyze</h2>
-        <pre
-          data-testid="tektos-ops-db-analyze"
-          style={{ margin: 0, maxHeight: 160, overflow: "auto", fontSize: "var(--font-xs, 0.75rem)", fontFamily: "var(--font-mono, ui-monospace, monospace)", whiteSpace: "pre-wrap" }}
-        >
-          {analyze === null ? "n/a" : JSON.stringify(analyze, null, 1)}
-        </pre>
+        {note && (
+          <div style={{ fontSize: "var(--font-xs, 0.75rem)", color: "var(--color-text-dim, #888)", marginTop: 10 }}>
+            {note}
+          </div>
+        )}
+        <div style={{ fontSize: "var(--font-xs, 0.75rem)", color: "var(--color-text-dim, #888)", marginTop: 10 }}>
+          The donor&apos;s tektos.db SQLite controls (backup/optimize/restore, backups list, schema,
+          analyze) are retired with main.py deletion — those stores are systemd-managed
+          infrastructure and their backups are ops-level, not card-level (ADR-137).
+        </div>
       </div>
     </div>
   );
