@@ -3637,6 +3637,43 @@ async def thermal_status() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# /api/telemetry — ADR-138 (v2 Stage 11.22, telemetry family)
+#
+# The old ops Telemetry tab polled the ADR-109 gateway to :8020's
+# /api/telemetry — the standalone engine's live hardware collector
+# (NVML primary, nvidia-smi + /proc fallback) returning the canonical
+# {gpu, system, timestamp} envelope. Per user decision (2026-09-25)
+# the kernel re-implements that shape as its OWN sampler
+# (kernel.tektos_telemetry), deliberately separate from the ADR-121
+# ThermalWatchdog: the watchdog serves /api/thermal/status (temp/power/
+# clock + sustained-cooldown enforcement) for the dashboard card; this
+# serves the ops tab's broader sensor set (utilization, VRAM, fan,
+# CPU/mem/disk). Two samplers, two contracts — no shared mutable state.
+#
+# pynvml is NOT in the kernel venv (optional, uninstalled), so this is
+# the donor's fallback path verbatim: nvidia-smi CLI for GPU, /proc +
+# shutil for system. Never 500s — a failed read degrades to the donor's
+# zero defaults inside the collector.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/telemetry")
+async def telemetry() -> dict[str, Any]:
+    """Kernel-native hardware telemetry — donor {gpu, system, timestamp}.
+
+    One sample per request (the ops tab polls at 5 s). All reads are
+    blocking subprocess/proc I/O, so they run in a worker thread —
+    three nvidia-smi queries + /proc, bounded (10 s worst case per
+    query, zero-default degrade on failure).
+    """
+    import asyncio as _asyncio
+
+    from kernel.tektos_telemetry import collect
+
+    return await _asyncio.to_thread(collect)
+
+
+# ---------------------------------------------------------------------------
 # Immune status (ADR-122, Stage 11.6) — kernel-native, reads the LIVE
 # registry.immune (TektosImmuneAdapter, KOSMOS_IMMUNE=on). The old card
 # proxied :8020/api/immune/health — a system-health composite (gpu/context/
