@@ -149,6 +149,7 @@ class GraphBackend(Protocol):
         cypher: str,
         params: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]: ...
+    async def list_nodes(self, label: str, *, limit: int = 100) -> list[dict[str, Any]]: ...
     async def count_nodes(self, label: str) -> int: ...
     async def delete_node(self, node_id: str) -> None: ...
     def is_healthy(self) -> bool: ...
@@ -207,6 +208,11 @@ class InMemoryGraphBackend:
             frag = needle.split(":", 1)[1].strip().lower()
             return [n for n in self._nodes.values() if frag in str(n).lower()]
         return list(self._nodes.values())
+
+    async def list_nodes(self, label: str, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Test-only: nodes with this label (mirrors the backend)."""
+        nodes = [n for n in self._nodes.values() if n.get("label") == label]
+        return nodes[: max(limit, 0)]
 
     async def count_nodes(self, label: str) -> int:
         """Test-only: count nodes with this label (mirrors the backend)."""
@@ -840,6 +846,19 @@ class DozerDbMemoryAdapter:
         ]
 
     # ── observability (ADR-123, Stage 11.7) ───────────────────────────────
+
+    async def recent_memory_events(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Newest ``MemoryEvent`` node props (ADR-135 D1).
+
+        Reads through the ``GraphBackend`` (real Cypher on DozerDB,
+        label-filter on the in-memory backend) ordered by ``written_at``
+        DESC. Each row is a plain props dict (``id``, ``predicate``,
+        ``subject``, ``object``, ``provenance``, ``confidence``,
+        ``written_at``, …). A failed read raises — the caller
+        (endpoint layer) decides the degrade; this method never
+        fabricates rows.
+        """
+        return await self._graph.list_nodes("MemoryEvent", limit=limit)
 
     async def stats(self) -> dict[str, Any]:
         """Honest corpus counts for the dashboard (never raises).

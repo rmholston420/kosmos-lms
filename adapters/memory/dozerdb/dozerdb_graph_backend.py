@@ -163,6 +163,39 @@ class DozerDbGraphBackend:
     ) -> list[dict[str, Any]]:
         return await self._run(cypher, params or {})
 
+    async def list_nodes(self, label: str, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Nodes with this label, newest by ``written_at`` (ADR-135 D1).
+
+        ``written_at`` is an ISO-8601 string on every node this adapter
+        writes, so a lexicographic ``DESC`` sort is a correct temporal
+        sort (all values share the same UTC offset ``+00:00``). Nodes
+        without the property sort last.
+        """
+        _validate_identifier("label", label)
+        lim = max(int(limit), 0)
+        cypher = (
+            f"MATCH (n:{label}) "
+            "WHERE n.written_at IS NOT NULL "
+            "RETURN n ORDER BY n.written_at DESC LIMIT $lim"
+        )
+        rows = await self._run(cypher, {"lim": lim})
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            node = row.get("n")
+            if node is None:
+                continue
+            if isinstance(node, dict):
+                out.append(dict(node))
+            elif hasattr(node, "properties"):
+                # neo4j Node object: id + dict(properties).
+                node_id: Any = node.identity
+                if hasattr(node_id, "int_id"):  # IntegerIdentity (4.x)
+                    node_id = node_id.int_id
+                props = dict(node.properties)
+                props.setdefault("id", str(node_id))
+                out.append(props)
+        return out
+
     async def count_nodes(self, label: str) -> int:
         """Count nodes by label — real Cypher (ADR-123).
 
