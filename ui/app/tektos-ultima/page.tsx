@@ -63,7 +63,7 @@ const SUBSYSTEMS: Subsystem[] = [
   { id: "rag", title: "RAG", icon: "📚", endpoint: "/api/rag/status" },
   { id: "skills", title: "Skills", icon: "⚡", endpoint: "/api/skills/stats" },
   { id: "tools", title: "Tools", icon: "🔧", endpoint: "/api/tools" },
-  { id: "models", title: "Models", icon: "🎛️", endpoint: "/api/models" },
+  { id: "models", title: "Models", icon: "🎛️", endpoint: "/api/llm/status" },
   { id: "plugins", title: "Plugins", icon: "🧩", endpoint: "/api/plugins" },
   { id: "neo4j", title: "Neo4j", icon: "🌐", endpoint: "/neo4j/status", base: DATA_SERVICES },
   { id: "postgres", title: "Postgres", icon: "🐘", endpoint: "/postgres/status", base: DATA_SERVICES },
@@ -198,14 +198,21 @@ function parseCard(sub: Subsystem, data: unknown): CardData {
       };
     }
     case "models": {
-      if (!Array.isArray(data)) break;
-      const models = data as Array<Record<string, unknown> | null>;
-      const rec = models.find((m) => isObj(m) && m.recommended === true) ?? null;
+      // ADR-119 (Stage 11.3): kernel-native — /api/llm/status carries the
+      // lane catalog in `models` (primary llama.cpp / fallback Ollama).
+      const models = Array.isArray(o?.models)
+        ? (o.models as Array<Record<string, unknown> | null>)
+        : [];
+      const rec = models.find((m) => isObj(m) && m.active === true)
+        ?? models.find((m) => isObj(m) && m.recommended === true) ?? null;
       const first = models[0];
       return {
         status: models.length > 0 ? "healthy" : "down",
-        lines: [`${models.length} available`, str(rec?.id) ?? str(isObj(first) ? first.id : null) ?? ""],
-        detail: str(rec?.role) ?? "no recommended",
+        lines: [
+          `${models.length} lanes`,
+          str(rec?.id) ?? str(isObj(first) ? first.id : null) ?? "—",
+        ],
+        detail: str(rec?.backend) ?? "no model",
       };
     }
     case "plugins": {

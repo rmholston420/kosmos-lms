@@ -71,6 +71,42 @@ def test_llm_status_reports_primary_llama_lane(
     assert ":8090" in body["detail"]
 
 
+def test_llm_status_models_catalog_both_lanes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-119: the endpoint carries the kernel-native model catalog."""
+    monkeypatch.setattr(kernel_app_module.registry, "llm", _StubFailover())
+    _patch_gpu(monkeypatch, None)
+
+    body = client.get("/api/llm/status").json()
+    models = {m["lane"]: m for m in body["models"]}
+    assert set(models) == {"primary", "fallback"}
+    assert models["primary"] == {
+        "id": "qwen3.8-27b-code",
+        "name": "qwen3.8-27b-code",
+        "lane": "primary",
+        "backend": "llama.cpp",
+        "endpoint": "http://127.0.0.1:8090",
+        "active": True,
+        "recommended": True,
+    }
+    assert models["fallback"]["backend"] == "ollama"
+    assert models["fallback"]["active"] is False
+    assert models["fallback"]["recommended"] is False
+
+
+def test_llm_status_models_catalog_active_follows_failover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(kernel_app_module.registry, "llm", _StubFailover(active_backend="fallback"))
+    _patch_gpu(monkeypatch, None)
+
+    body = client.get("/api/llm/status").json()
+    models = {m["lane"]: m for m in body["models"]}
+    assert models["primary"]["active"] is False
+    assert models["fallback"]["active"] is True
+
+
 def test_llm_status_reports_fallback_ollama_lane(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

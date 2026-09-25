@@ -4412,3 +4412,10 @@ Hermes Agent uses) is now the primary LLM lane; Ollama is fallback-only.
 - **Fix:** kernel-native `GET /api/llm/status` in `kernel/app.py` reads the live `FailoverLLMAdapter` (`.active_backend`, `._primary`/`._fallback`): reports the actually-routing transport (`llama.cpp :8090` primary / `ollama :11434` fallback), its default model, and **real GPU VRAM** via `nvidia-smi` (async subprocess, 5 s cache; `null` when unavailable — never fabricated). Always-200 envelope.
 - **UI:** `ModelSwapIndicator` + `kernel-client.ts` repointed to `/api/llm/status` (new `LlmStatus` type); `(fallback)` suffix when the failover pin engages. `/api/ollama/status` retained for the Ollama panel.
 - **Verified live:** endpoint returns `llama.cpp / primary / qwen3.8-27b-code / :8090 / 29.0 of 32.0 GiB`; `next build` clean; served bundle references `api/llm/status`, zero `nomic` in `ui/out/`; `tests/kernel/test_stage_11_2_adr_118_llm_status.py` 4/4 pass; kernel healthy, `boot_errors: {}`.
+
+## 2026-09-25 — Stage 11.3 · ADR-119: kernel-native model catalog (Models card re-point)
+
+- **Problem:** the Models card fetched `/api/models` through the ADR-109 gateway proxy to the retired :8020 standalone API — a catalog describing standalone-only lanes (`granite4.1-8b-instruct @ :8092`), stale by design.
+- **Fix:** `models` array on ADR-118's `/api/llm/status`, built from the live `FailoverLLMAdapter` (primary llama.cpp `:8090` qwen3.8-27b-code, fallback Ollama `:11434` qwen3-vl:4b). `active` tracks the failover pin; `recommended` = primary. No new route — the card reuses the already-polled endpoint.
+- **UI:** `page.tsx` SUBSYSTEMS models → `/api/llm/status`; parseCard reads nested `models`, prefers active lane, shows `N lanes` + active model + backend.
+- **Verified live:** endpoint returns both lanes with correct active/recommended flags; `next build` clean; 6/6 tests (added both-lane catalog shape + active-follows-failover).

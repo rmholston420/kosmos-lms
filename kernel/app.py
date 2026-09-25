@@ -3257,6 +3257,33 @@ async def llm_status() -> dict[str, Any]:
     base_url = getattr(lane_adapter, "_base_url", None)
 
     vram = await _gpu_vram_bytes()
+
+    # ADR-119: the full lane catalog — the kernel's OWN model list, built
+    # from live adapter state (no :8020 proxy). The UI's Models card reads
+    # this instead of the retired standalone catalog.
+    models: list[dict[str, Any]] = []
+    for lane_name, adapter in (
+        ("primary", getattr(registry.llm, "_primary", None)),
+        ("fallback", getattr(registry.llm, "_fallback", None)),
+    ):
+        if adapter is None:
+            continue
+        m = getattr(adapter, "_default_model", None)
+        b = getattr(adapter, "_base_url", None)
+        models.append(
+            {
+                "id": m,
+                "name": m,
+                "lane": lane_name,
+                "backend": (
+                    "llama.cpp" if lane_name == "primary" else "ollama"
+                ),
+                "endpoint": b,
+                "active": (active == "primary") == (lane_name == "primary"),
+                "recommended": lane_name == "primary",
+            }
+        )
+
     return {
         "healthy": True,
         "backend": backend,
@@ -3268,6 +3295,7 @@ async def llm_status() -> dict[str, Any]:
             vram[1] if vram else _COLOSSUS_VRAM_CAPACITY_BYTES
         ),
         "detail": f"{backend} @ {base_url}" if base_url else backend,
+        "models": models,
     }
 
 
