@@ -24,9 +24,10 @@ Design invariants
    ``name``/``creation_time``/``location`` — we map those into the
    port's :class:`SnapshotHandle` shape.
 
-5. **Sync ``is_healthy``.** Qdrant's health check is HTTP; a fire-and-
-   forget check uses the client's collections listing to sidestep the
-   sync/async split. On error return ``False`` (ADR-023 rule 5).
+5. **Sync ``is_healthy``.** Qdrant's health check is a plain HTTP GET on
+   ``/healthz`` (urllib, no event loop — ADR-124 D6; a loop-spawning
+   async-client probe broke once the shared client bound to the kernel's
+   main loop). On error return ``False`` (ADR-023 rule 5).
 
 References:
     - ADR-026 (VectorPort — the port this backend serves)
@@ -37,7 +38,6 @@ References:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -76,6 +76,7 @@ class RealQdrantBackend:
         self._client = AsyncQdrantClient(url=url, api_key=api_key)
         self._rest = rest_models
         self._url = url
+        self._api_key = api_key
         self._closed = False
         self._known_collections: set[str] = set()
 
@@ -199,21 +200,27 @@ class RealQdrantBackend:
     def is_healthy(self) -> bool:
         """Non-throwing sync probe (ADR-023 rule 5).
 
-        Runs a short async ``get_collections`` call on a private loop
-        so the port stays sync-callable. Returns ``False`` on any
-        failure (server down, network error, event-loop conflict).
+        Plain synchronous HTTP GET on ``/healthz`` (urllib, no event loop).
+
+        ADR-124 D6 (bug fix): the previous implementation ran
+        ``self._client.get_collections()`` (AsyncQdrantClient) on a freshly
+        spawned event loop. But the async client's HTTP pool binds to the
+        FIRST loop it touches — after kernel boot (main loop) every sync
+        probe failed with "coroutine was never awaited" → permanent false
+        negative. A loop-free HTTP call sidesteps the whole class.
+        ``/healthz`` is the same endpoint the ADR-117 data-services probe
+        uses. Returns False on any failure (ADR-023 rule 5).
         """
         if self._closed:
             return False
         try:
-            loop = asyncio.new_event_loop()
-            try:
-                loop.run_until_complete(
-                    asyncio.wait_for(self._client.get_collections(), timeout=1.0)
-                )
-            finally:
-                loop.close()
-            return True
+            import urllib.request
+
+            req = urllib.request.Request(f"{self._url}/healthz", method="GET")
+            if self._api_key:
+                req.add_header("api-key", self._api_key)
+            with urllib.request.urlopen(req, timeout=1.0) as resp:
+                return 200 <= resp.status < 300
         except Exception as exc:  # noqa: BLE001
             log.debug("RealQdrantBackend.is_healthy: %s", exc)
             return False

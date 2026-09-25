@@ -124,6 +124,18 @@ class OllamaEmbeddingsAdapter:
                 )
         return embeddings
 
+    # ── observability (ADR-124, Stage 11.8) ────────────────────────────────
+
+    @property
+    def model(self) -> str:
+        """The configured embedder model name (e.g. ``nomic-embed-text``)."""
+        return self._default_model
+
+    @property
+    def base_url(self) -> str:
+        """The Ollama base URL this adapter embeds against."""
+        return self._base_url
+
     async def dimensions(self, *, model: str | None = None) -> int:
         resolved = model or self._default_model
         # Strip Ollama version tag if present (e.g. "nomic-embed-text:latest")

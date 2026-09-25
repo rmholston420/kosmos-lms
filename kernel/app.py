@@ -464,18 +464,21 @@ async def lifespan(app: FastAPI):
 
     registry.llm = _boot_llm
 
-    # --- Embeddings (OllamaEmbeddingsAdapter) --------------------------------
-    # Stage 1.6 Phase 0 addition (ADR-073): kernel-owned EmbeddingsPort split
-    # off from LLMPort. Uses Ollama's native ``/api/embed`` endpoint (NOT the
-    # ``/v1/embeddings`` OpenAI-compat path); default model ``nomic-embed-text``
-    # (768-dim). Env overrides: ``KOSMOS_OLLAMA_BASE_URL`` +
-    # ``KOSMOS_OLLAMA_EMBED_MODEL``. Failure surfaces under
+    # --- Embeddings (LlamaEmbeddingsAdapter) --------------------------------
+    # ADR-124 D1: kernel-owned EmbeddingsPort now points at the llama.cpp
+    # embedder (qwen3-embedding-0.6b on :8091, CPU-only by design — keeps
+    # the RTX 5090's 32 GB free for the 27B lane on :8090). Served via
+    # llama-server's OpenAI-compat ``/v1/embeddings``. 1024-dim.
+    # Env overrides: ``KOSMOS_EMBEDDER_BASE_URL`` +
+    # ``KOSMOS_EMBEDDER_MODEL``. Failure surfaces under
     # ``registry.errors['embeddings']``.
+    # (Supersedes the Stage 1.6 Ollama nomic lane — ADR-073 adapter stays
+    # in-tree for the Ollama panel but is no longer the RAG embedder.)
     @_try("embeddings")
     def _boot_embeddings():
-        from adapters.embeddings.ollama.adapter import OllamaEmbeddingsAdapter
+        from adapters.embeddings.llama.adapter import LlamaEmbeddingsAdapter
 
-        return OllamaEmbeddingsAdapter()
+        return LlamaEmbeddingsAdapter()
 
     registry.embeddings = _boot_embeddings
 
@@ -3535,6 +3538,140 @@ async def memory_stats() -> dict[str, Any]:
         "entities": s["entities"] if s else None,
         "quarantined": s["quarantined"] if s else None,
         "errors": (s or {}).get("errors", []),
+        "timestamp": now.isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# RAG status (ADR-124, Stage 11.8) — kernel-native.
+# The old card proxied :8020/api/rag/status, whose stats carried a
+# top_k/similarity_threshold/query_count the kernel does not track
+# (retrieval params are per-query, and the kernel keeps no query ledger).
+# The kernel's RAG pipeline is real and live: registry.embeddings
+# (ADR-124 D1: llama.cpp qwen3-embedding-0.6b on :8091 — CPU-only by
+# design, keeps the RTX 5090's 32 GB free for the 27B lane on :8090)
+# + registry.vector (Qdrant). Envelope keeps the
+# old card's top-level `status` + `stats.has_embedder/has_retriever` so the
+# health logic reads the same way, and replaces the fabricated counters with
+# REAL Qdrant collection/point counts. Always 200.
+# ---------------------------------------------------------------------------
+
+_RAG_QDRANT_DEFAULT_URL = "http://127.0.0.1:6333"
+
+
+async def _rag_qdrant_counts() -> dict[str, Any]:
+    """Collections + total points against KOSMOS_QDRANT_URL (default :6333).
+
+    Same env contract as the ADR-117 data-services Qdrant probe
+    (`/healthz` first, then `/collections`, then per-collection
+    `points_count`). A failed probe yields healthy=False with the existing
+    counters left at None — never a fabricated number.
+    """
+    import httpx
+
+    base_url = (
+        os.environ.get("KOSMOS_QDRANT_URL") or _RAG_QDRANT_DEFAULT_URL
+    ).rstrip("/")
+    out: dict[str, Any] = {
+        "url": base_url,
+        "healthy": False,
+        "collections": None,
+        "points": None,
+        "error": None,
+    }
+    api_key = os.environ.get("KOSMOS_QDRANT_API_KEY")
+    headers = {"api-key": api_key} if api_key else {}
+    try:
+        async with httpx.AsyncClient(timeout=2.0, headers=headers) as client:
+            resp = await client.get(f"{base_url}/healthz")
+            if resp.status_code != 200:
+                out["error"] = f"HTTP {resp.status_code} on /healthz"
+                return out
+            out["healthy"] = True
+            colls = await client.get(f"{base_url}/collections")
+            if colls.status_code != 200:
+                out["error"] = f"HTTP {colls.status_code} on /collections"
+                return out
+            names = [
+                c.get("name")
+                for c in (colls.json().get("result", {}).get("collections") or [])
+                if isinstance(c, dict) and c.get("name")
+            ]
+            out["collections"] = len(names)
+            total = 0
+            for name in names:
+                cresp = await client.get(f"{base_url}/collections/{name}")
+                if cresp.status_code == 200:
+                    total += int(
+                        cresp.json().get("result", {}).get("points_count") or 0
+                    )
+            out["points"] = total
+    except Exception as exc:  # noqa: BLE001 — probe MUST NOT raise
+        out["error"] = f"{type(exc).__name__}: {exc}"[:200]
+    return out
+
+
+@app.get("/api/rag/status")
+async def rag_status() -> dict[str, Any]:
+    """Kernel-native RAG pipeline status — real embedder + vector store."""
+    now = datetime.now(timezone.utc)
+    errors: list[str] = []
+
+    embedder = registry.embeddings
+    vector = registry.vector
+
+    emb_info: dict[str, Any] = {
+        "available": embedder is not None,
+        "healthy": False,
+        "model": None,
+        "base_url": None,
+    }
+    if embedder is not None:
+        emb_info["healthy"] = bool(embedder.is_healthy())
+        # ADR-124 D1: model/base_url properties on the adapter.
+        emb_info["model"] = getattr(embedder, "model", None)
+        emb_info["base_url"] = getattr(embedder, "base_url", None)
+        if not emb_info["healthy"]:
+            errors.append("embedder unhealthy")
+
+    vec_info: dict[str, Any] = {
+        "available": vector is not None,
+        "healthy": False,
+    }
+    if vector is not None:
+        try:
+            vec_info["healthy"] = bool(vector.is_healthy())
+        except Exception as exc:  # noqa: BLE001 — never 500
+            errors.append(f"vector is_healthy: {type(exc).__name__}")
+        if not vec_info["healthy"]:
+            errors.append("vector store unhealthy")
+
+    qdrant = await _rag_qdrant_counts()
+    if qdrant["error"]:
+        errors.append(f"qdrant: {qdrant['error']}")
+
+    has_embedder = emb_info["available"]
+    has_retriever = vec_info["available"]
+    healthy = (
+        has_embedder
+        and has_retriever
+        and emb_info["healthy"]
+        and vec_info["healthy"]
+        and qdrant["healthy"]
+    )
+
+    return {
+        "status": "initialized" if (has_embedder and has_retriever) else "degraded",
+        "healthy": healthy,
+        "embedder": emb_info,
+        "vector": vec_info,
+        "stats": {
+            "has_embedder": has_embedder,
+            "has_retriever": has_retriever,
+            "indexed_count": qdrant["points"],
+            "collections": qdrant["collections"],
+        },
+        "errors": errors,
         "timestamp": now.isoformat(),
     }
 

@@ -60,7 +60,7 @@ const SUBSYSTEMS: Subsystem[] = [
   { id: "thermal", title: "Thermal", icon: "🌡️", endpoint: "/api/thermal/status", base: "" },
   { id: "inference", title: "Inference", icon: "🧠", endpoint: "/api/inference/status", base: "" },
   { id: "memory", title: "Memory", icon: "🧩", endpoint: "/api/memory/stats", base: "" },
-  { id: "rag", title: "RAG", icon: "📚", endpoint: "/api/rag/status" },
+  { id: "rag", title: "RAG", icon: "📚", endpoint: "/api/rag/status", base: "" },
   { id: "skills", title: "Skills", icon: "⚡", endpoint: "/api/skills/stats" },
   { id: "tools", title: "Tools", icon: "🔧", endpoint: "/api/tools" },
   { id: "models", title: "Models", icon: "🎛️", endpoint: "/api/llm/status" },
@@ -188,15 +188,27 @@ function parseCard(sub: Subsystem, data: unknown): CardData {
       };
     }
     case "rag": {
+      // ADR-124 (Stage 11.8): kernel-native — /api/rag/status carries the
+      // live embedder (llama.cpp qwen3-embedding on :8091, CPU) + Qdrant
+      // vector store. `stats.indexed_count` is the REAL Qdrant point count;
+      // top-k/similarity_threshold/query_count were fabricated by :8020 and
+      // are gone. Nulls (None) mean "probe unavailable" — never 0.
       const stats = isObj(o?.stats) ? o.stats : null;
-      const indexed = num(stats?.indexed_count) ?? 0;
-      const embedder = stats?.has_embedder === true;
-      const retriever = stats?.has_retriever === true;
-      const ok = o?.status === "initialized" && embedder && retriever;
+      const emb = isObj(o?.embedder) ? o.embedder : null;
+      const vec = isObj(o?.vector) ? o.vector : null;
+      const indexed = num(stats?.indexed_count);
+      const colls = num(stats?.collections);
+      const model = str(emb?.model) ?? "?";
+      const ok = o?.healthy === true;
       return {
         status: ok ? "healthy" : "degraded",
-        lines: [`${indexed.toLocaleString()} indexed`, `top-k ${num(stats?.top_k) ?? "?"}`],
-        detail: `embedder ${embedder ? "on" : "off"} · retriever ${retriever ? "on" : "off"}`,
+        lines: [
+          indexed !== null ? `${indexed.toLocaleString()} points` : "index unavailable",
+          `embedder ${model}${colls !== null ? ` · ${colls} coll` : ""}`,
+        ],
+        detail: Array.isArray(o?.errors) && (o.errors as unknown[]).length > 0
+          ? (o.errors as Array<unknown>).map((e) => str(e)).filter(Boolean).join(" · ")
+          : `qwen :8091 (CPU) · vector ${vec?.healthy === true ? "up" : "down"}`,
       };
     }
     case "skills": {
