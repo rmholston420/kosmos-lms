@@ -3712,6 +3712,63 @@ async def immune_health() -> dict[str, Any]:
 # errors, timestamp}. Counts are real Cypher; a failed count is None (never
 # fabricated). Always 200.
 #
+# ---------------------------------------------------------------------------
+# /api/db — ADR-137 (v2 Stage 11.21, database family)
+#
+# The old ops DB tab proxied :8020/api/db{,/backups,/schema,/analyze} +
+# POST backup/optimize/restore — the standalone engine's OWN SQLite file
+# (data/tektos.db via DatabaseManager). That file dies with main.py; the
+# kernel has no single "the database". The kernel's persistence is
+# several systemd-managed stores, each behind a registry lane.
+#
+# User decision (2026-09-25): minimal — this endpoint reports ONLY what
+# /health already knows (which lanes booted) + an honest note that the
+# stores are systemd-managed infrastructure. NO probes, NO counts:
+# per-store health/counts belong to ops, not to a card. Backup/
+# optimize/restore have no kernel referent and are removed from the UI.
+# ---------------------------------------------------------------------------
+
+
+def _db_lane(slot: Any, store: str, subsystem: str) -> dict[str, Any]:
+    """One store row from a registry lane — booted state only, no I/O."""
+    booted = slot is not None
+    error = registry.errors.get(subsystem)
+    return {
+        "store": store,
+        "wired": booted,
+        "boot_error": error if not booted else None,
+        "management": "systemd-managed infrastructure (no in-kernel backup/restore)",
+    }
+
+
+@app.get("/api/db")
+def db_status() -> dict[str, Any]:
+    """Kernel data-layer status: which persistence lanes booted.
+
+    Always 200. Each lane's booted/degraded state is derived from the
+    same registry the /health endpoint reads — no store is contacted
+    (probes and counts are ops-level, not card-level, per the ADR-137
+    user decision). ``management`` names the honest referent: the
+    stores are systemd services; their backups are ops-level.
+    """
+    stores = [
+        _db_lane(registry.relational_memory, "postgres", "relational_memory"),
+        _db_lane(registry.memory, "dozerdb", "memory"),
+        _db_lane(registry.vector, "qdrant", "vector"),
+        _db_lane(registry.event_bus, "valkey", "event_bus"),
+    ]
+    return {
+        "status": "initialized",
+        "healthy": all(s["wired"] for s in stores),
+        "stores": stores,
+        "note": "Kernel persistence is systemd-managed infrastructure; "
+        "per-store health/counts are ops-level (not card-level). "
+        "The donor's tektos.db SQLite endpoints are retired with main.py "
+        "deletion (ADR-137).",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 # Memory entries (ADR-135, Stage 11.19) — sibling endpoint GET /api/memory:
 # the old ops MemoryTab also proxied :8020/api/memory (the same 4-tier
 # store's entry list). The kernel referent is the graph of MemoryEvent
