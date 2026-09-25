@@ -273,6 +273,10 @@ class TektosSessionAdapter:
     async def tag_session(self, session_id: str, tag: str) -> None:
         await self._manager.tag_session(session_id, tag)
 
+    async def set_session_model(self, session_id: str, new_model: str) -> str:
+        """Switch a session's model (ADR-132 slice E). Returns old model."""
+        return await self._manager.switch_model(session_id, new_model)
+
     async def delete_session(self, session_id: str) -> int:
         return await self._manager.delete_session(session_id)
 

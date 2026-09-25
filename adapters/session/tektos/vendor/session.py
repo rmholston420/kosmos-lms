@@ -420,6 +420,30 @@ class SessionManager:
             },
         )
 
+    async def switch_model(self, session_id: str, new_model: str) -> str:
+        """Switch the session's model. Returns the previous model.
+
+        Mirrors the donor :8020 POST /api/sessions/{id}/model: mutates the
+        session and appends ``session.updated`` with ``{"changes":
+        {"model": <new>, "from": <old>}}`` so replay shows the switch.
+        """
+        session = await self.get_session(session_id)
+        if not session:
+            raise KeyError(f"Session {session_id} not found")
+
+        _old_model = session.model
+        session.model = new_model
+        session.updated_at = _time.monotonic()
+
+        await append_event(
+            session_id,
+            "session.updated",
+            {
+                "changes": {"model": new_model, "from": _old_model},
+            },
+        )
+        return _old_model
+
     async def delete_session(self, session_id: str) -> int:
         """Delete a session and its events. Returns count of events deleted."""
         session = await self.get_session(session_id)

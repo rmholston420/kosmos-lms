@@ -31,8 +31,9 @@ import Link from "next/link";
 const GATEWAY = "/api/tektos-ultima/gateway";
 // ADR-131 (Stage 11.15): session *lifecycle* (list/create/get/fork/
 // archive/interrupt/rename) is now kernel-native — same origin, no proxy.
-// Conversation (models/prompt/sse/replay/model-switch) stays on the
-// gateway until ADR-132.
+// ADR-132 (Stage 11.16): models + model-switch also kernel-native.
+// Conversation (prompt/sse, replay) stays on the gateway until the
+// remaining ADR-132 slices land.
 const KERNEL = "";
 const POLL_MS = 10_000;
 const FRAME_HEIGHT = "calc(100vh - var(--top-bar-h, 48px))";
@@ -440,7 +441,7 @@ export default function TektosSessionsPage() {
     async (model: string) => {
       if (!selected || !model) return;
       try {
-        const r = await fetch(`${GATEWAY}/api/sessions/${selected}/model`, {
+        const r = await fetch(`${KERNEL}/api/sessions/${selected}/model`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model }),

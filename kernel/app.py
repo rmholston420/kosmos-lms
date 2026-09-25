@@ -4575,6 +4575,37 @@ async def tektos_interrupt_session(session_id: str) -> dict[str, Any]:
     return {"ok": True}
 
 
+@app.post("/api/sessions/{session_id}/model")
+async def tektos_switch_session_model(
+    session_id: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Switch a Tektos session's model mid-session (ADR-132 slice E).
+
+    Body: ``{model}`` (donor ModelRequest). Returns the donor shape
+    ``{ok:true, model, old_model}``. Mirrors :8020 POST /api/sessions/{id}/model:
+    the session's model is mutated (the UI refreshes the list) and a
+    ``session.updated`` event is appended so replay shows the switch.
+    Replaces the :8020 model-switch proxy.
+    """
+    port = registry.session
+    if port is None:
+        _session_port_offline()
+    if await port.get_session(session_id) is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    model = payload.get("model")
+    if not model or not isinstance(model, str):
+        raise HTTPException(422, "model is required")
+    # Tektos-adapter-specific mutation (same pattern as the ADR-131
+    # get_state/get_history introspection): model lineage lives on the
+    # Tektos referent, not the generic ADR-103 SessionPort.
+    from adapters.session.tektos.adapter import TektosSessionAdapter
+
+    if not isinstance(port, TektosSessionAdapter):
+        _session_port_offline()
+    old_model = await port.set_session_model(session_id, model)
+    return {"ok": True, "model": model, "old_model": old_model}
+
+
 @app.post("/api/sessions/{session_id}/fork")
 async def tektos_fork_session(
     session_id: str, payload: dict[str, Any]
