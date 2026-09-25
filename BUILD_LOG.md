@@ -4211,3 +4211,30 @@ Use the `kosmos-log-maintenance` Perplexity Computer skill.
 - Verified live: `GET /tektos/api/orchestrator/stats` 200 (4 agents,
   Postgres-backed); `POST /tasks` → `task_2` → `POST .../assign`
   → `{"assigned": true}`; `long-running/status` reports `wired_memory: true`.
+
+## 2026-09-25 — Stage 8 exit gate: e2e acceptance test PASSED
+
+- Fixture repo `~/.hermes/cache/scratch/fixture-repo` (mathlib + 4 pytest\
+  tests, seeded RED: `2 failed, 2 passed`).
+\
+- Live kernel `:8000` (Postgres-wired): submitted 2 orchestrator tasks through
+\
+  the new `/tektos/api/orchestrator/*` routes:
+\
+  - `task_3` → `file_agent` → `file_created` (wrote corrected `multiply` impl
+\
+    to `e2e_fix.txt`)
+\
+  - `task_4` → `reviewer_agent` → `review_result` (test file, 0 issues)
+\
+- Evidence rows verified in `kosmos` Postgres `ledger_events`:
+\
+  `tektos.orchestrator.task_completed` for both tasks (agent_id + result_type
+\
+  captured).
+\
+- Applied the produced fix to `src/mathlib.py` → `pytest`: **4 passed** (GREEN).
+\
+- Known scope: terminal_agent tasks fail-open (sandbox port unbound, ADR-114
+\
+  D2 — by design); Stage 9 detectors/tools are the next workstream.
