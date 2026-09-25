@@ -107,6 +107,15 @@ class _BootRegistry:
         # Downstream call sites MUST tolerate ``None`` (health-check pattern:
         # ``if registry.relational_memory is None: ...``).
         self.relational_memory: Any = None
+        # Stage 9.1 (KOSMOS_LMS_INTEGRATION_PLAN_v2): kernel-owned
+        # ImmunePort — the Tektos immune adapter with the full 12-detector
+        # set (3 ADR-092 seeds + 9 Stage 9.1 completions). Populated by
+        # ``_boot_immune``. Boots into the ``off`` state by default (returns
+        # None with no warning); explicit opt-in via ``KOSMOS_IMMUNE=on``.
+        # Optionally consumes ``registry.event_bus`` (verdict envelopes)
+        # and ``registry.relational_memory`` (block records). Downstream
+        # call sites MUST tolerate ``None`` (ADR-101 degrade pattern).
+        self.immune: Any = None
         # Stage 8.1 (ADR-103): kernel-owned SessionPort — the 24th formal
         # port + FSM substrate for Stages 8.2–8.7 (turn loop, reflection,
         # planner, executor, manager, multi-agent). Populated by
@@ -709,6 +718,66 @@ async def lifespan(app: FastAPI):
         return adapter
 
     registry.relational_memory = _boot_relational_memory
+
+    # --- Immune boot (Stage 9.1 / ADR-079 + ADR-092 + plan DoD) -------------
+    # Env contract: ``KOSMOS_IMMUNE = off | on`` (default ``off``).
+    #
+    # ``on`` → TektosImmuneAdapter with the full 12-detector set
+    # (3 ADR-092 seeds + 9 Stage 9.1 completions). Optionally consumes
+    # ``registry.event_bus`` (verdict envelopes) and
+    # ``registry.relational_memory`` (block records); both are optional —
+    # the adapter publishes/records only when wired (ADR-101 degrade).
+    # Unhealthy adapter → registry.immune stays None with a warning;
+    # downstream call sites treat None as offline.
+    @_try("immune")
+    def _boot_immune():
+        import logging as _kosmos_logging
+        import os
+
+        log = _kosmos_logging.getLogger(__name__)
+        mode = os.environ.get("KOSMOS_IMMUNE", "off").lower().strip()
+
+        if mode not in ("off", "on"):
+            raise RuntimeError(
+                "KOSMOS_IMMUNE=%r is not one of ('off', 'on') (Stage 9.1)."
+                % (mode,)
+            )
+
+        if mode == "off":
+            return None  # silent — the default
+
+        from adapters.immune.tektos.adapter import (
+            TektosImmuneAdapter,
+            build_seed_detectors,
+        )
+
+        detectors = build_seed_detectors()
+        adapter = TektosImmuneAdapter(
+            # _DetectorAdapter wraps a donor detector and structurally
+            # satisfies ports.immune.Detector (name + severity_ceiling +
+            # async evaluate) — Pyright can't see the private wrapper
+            # across modules, hence the ignore (contract test proves
+            # isinstance(adapter, ImmunePort)).
+            initial_detectors=detectors,  # type: ignore[arg-type]
+            event_bus=registry.event_bus,
+            memory=registry.relational_memory,
+        )
+        if not adapter.is_healthy():
+            log.warning(
+                "kosmos.immune: adapter unhealthy at boot; ImmunePort "
+                "offline (Stage 9.1)"
+            )
+            return None
+        log.info(
+            "kosmos.immune: wired (Stage 9.1); detectors=%d event_bus=%s "
+            "memory=%s",
+            len(detectors),
+            "on" if registry.event_bus is not None else "off",
+            "on" if registry.relational_memory is not None else "off",
+        )
+        return adapter
+
+    registry.immune = _boot_immune
 
     # --- Session boot (Stage 8.1 / ADR-103) ---------------------------------
     # Env contract (ADR-103 D4):
@@ -1712,6 +1781,7 @@ def health() -> dict[str, Any]:
             "memory": registry.memory is not None,
             "tektos": registry.tektos is not None,
             "tektos_ui": registry.tektos_ui is not None,
+            "immune": registry.immune is not None,
         },
     }
 

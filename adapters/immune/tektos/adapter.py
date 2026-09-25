@@ -41,10 +41,19 @@ from ports.immune import (
 )
 
 from .vendor.immune_donor import (
+    BodyProtectionDetector,
+    ContextCollapseDetector,
     DangerousCommandDetector,
     ImmuneContext,
+    InferenceEngineProtectionDetector,
+    LoopDetectionDetector,
+    ModelFailoverDetector,
+    PerformanceDegradationDetector,
     PromptInjectionDetector,
+    ResourceExhaustionDetector,
     SecretExposureDetector,
+    SelfDegradationDetector,
+    SelfModificationDetector,
     Threat,
     ThreatSeverity,
 )
@@ -140,6 +149,21 @@ class _DetectorAdapter:
             )
         return tuple(hits)
 
+    _TELEMETRY_KEYS = (
+        "context_tokens",
+        "context_max_tokens",
+        "gpu_temperature",
+        "gpu_vram_used",
+        "gpu_vram_total",
+        "loop_count",
+        "repetition_count",
+        "error_count",
+        "wall_time",
+        "tokens_used",
+        "model",
+        "outcome",
+    )
+
     def _request_to_context(self, request: ImmuneScanRequest) -> ImmuneContext:
         """Translate the port's payload dict into the donor's context shape.
 
@@ -148,13 +172,32 @@ class _DetectorAdapter:
         * ``payload["tool_name"]`` → ctx.tool_name
         * ``payload["tool_input"]`` → ctx.tool_input
         * ``payload["session_id"]`` → ctx.session_id
+        * telemetry keys (Stage 9.1: context_tokens, gpu_*, loop_count,
+          repetition_count, error_count, wall_time, tokens_used, model,
+          outcome) → their same-named ``ImmuneContext`` fields, so the
+          nine behavioral/resource detectors (context_collapse,
+          resource_exhaustion, loop_detection, performance_degradation,
+          self_degradation, …) can see them
         * anything else → ctx.metadata
 
         Unknown keys land in ``metadata`` so no information is dropped.
         """
         payload = request.payload
-        known_keys = {"prompt", "task_description", "tool_name", "tool_input", "session_id"}
+        known_keys = {
+            "prompt",
+            "task_description",
+            "tool_name",
+            "tool_input",
+            "session_id",
+            *self._TELEMETRY_KEYS,
+        }
         metadata = {k: v for k, v in payload.items() if k not in known_keys}
+        # A nested ``payload["metadata"]`` dict (donor-native shape) is
+        # merged into ctx.metadata so detectors reading
+        # ctx.metadata["performance_degradation"] etc. see flat keys.
+        if isinstance(metadata.get("metadata"), dict):
+            nested = metadata.pop("metadata")
+            metadata = {**nested, **metadata}
         metadata["kind"] = request.kind
         metadata["source_plugin"] = request.source_plugin
         return ImmuneContext(
@@ -162,17 +205,43 @@ class _DetectorAdapter:
             tool_name=payload.get("tool_name"),
             tool_input=payload.get("tool_input"),
             task_description=payload.get("prompt") or payload.get("task_description"),
+            model=payload.get("model"),
+            outcome=payload.get("outcome"),
+            wall_time=payload.get("wall_time", 0.0),
+            tokens_used=payload.get("tokens_used", 0),
+            gpu_temperature=payload.get("gpu_temperature", 0.0),
+            gpu_vram_used=payload.get("gpu_vram_used", 0.0),
+            gpu_vram_total=payload.get("gpu_vram_total", 0.0),
+            context_tokens=payload.get("context_tokens", 0),
+            context_max_tokens=payload.get("context_max_tokens", 128000),
+            loop_count=payload.get("loop_count", 0),
+            repetition_count=payload.get("repetition_count", 0),
+            error_count=payload.get("error_count", 0),
             metadata=metadata,
         )
 
 
 def build_seed_detectors() -> tuple[_DetectorAdapter, ...]:
-    """Return the three ADR-092 seed detectors ready to register.
+    """Return the full 12-detector set ready to register.
+
+    Stage 3.13 (ADR-092) seeded three; Stage 9.1 (KOSMOS_LMS_INTEGRATION_PLAN_v2
+    DoD "12 detectors registered green") completes the set with the nine
+    remaining donor detectors re-appended verbatim to
+    ``vendor/immune_donor.py``.
 
     Each ceiling reflects the donor's own maximum severity:
     * prompt_injection → ``block`` (HIGH severity for multi-match)
     * secret_exposure → ``block`` (CRITICAL for known keys)
     * dangerous_command → ``block`` (CRITICAL for rm -rf /)
+    * context_collapse → ``block`` (HIGH for >=90% context usage)
+    * resource_exhaustion → ``block`` (CRITICAL for VRAM OOM)
+    * loop_detection → ``block`` (HIGH for repeated tool calls)
+    * performance_degradation → ``block`` (HIGH for throughput drop)
+    * self_degradation → ``block`` (HIGH for degraded self-assessment)
+    * self_modification → ``block`` (HIGH for protected-path writes)
+    * inference_engine_protection → ``block`` (CRITICAL for engine kill)
+    * model_failover → ``block`` (HIGH for forced model switch)
+    * body_protection → ``block`` (CRITICAL for host-system harm)
     """
     return (
         _DetectorAdapter(
@@ -189,6 +258,51 @@ def build_seed_detectors() -> tuple[_DetectorAdapter, ...]:
             "dangerous_command",
             "block",
             DangerousCommandDetector(),
+        ),
+        _DetectorAdapter(
+            "context_collapse",
+            "block",
+            ContextCollapseDetector(),
+        ),
+        _DetectorAdapter(
+            "resource_exhaustion",
+            "block",
+            ResourceExhaustionDetector(),
+        ),
+        _DetectorAdapter(
+            "loop_detection",
+            "block",
+            LoopDetectionDetector(),
+        ),
+        _DetectorAdapter(
+            "performance_degradation",
+            "block",
+            PerformanceDegradationDetector(),
+        ),
+        _DetectorAdapter(
+            "self_degradation",
+            "block",
+            SelfDegradationDetector(),
+        ),
+        _DetectorAdapter(
+            "self_modification",
+            "block",
+            SelfModificationDetector(),
+        ),
+        _DetectorAdapter(
+            "inference_engine_protection",
+            "block",
+            InferenceEngineProtectionDetector(),
+        ),
+        _DetectorAdapter(
+            "model_failover",
+            "block",
+            ModelFailoverDetector(),
+        ),
+        _DetectorAdapter(
+            "body_protection",
+            "block",
+            BodyProtectionDetector(),
         ),
     )
 

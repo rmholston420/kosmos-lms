@@ -4238,3 +4238,26 @@ Use the `kosmos-log-maintenance` Perplexity Computer skill.
 - Known scope: terminal_agent tasks fail-open (sandbox port unbound, ADR-114
 \
   D2 — by design); Stage 9 detectors/tools are the next workstream.
+
+## 2026-09-25 — Stage 9.1: 12 immune detectors registered green
+
+- Re-appended the 9 donor detectors trimmed at Stage 3.13 (ADR-092)
+  verbatim to `adapters/immune/tektos/vendor/immune_donor.py`:
+  ContextCollapse, ResourceExhaustion, LoopDetection,
+  PerformanceDegradation, SelfDegradation, SelfModification,
+  InferenceEngineProtection, ModelFailover, BodyProtection.
+- `build_seed_detectors()` now returns the full 12-detector set
+  (each `block` ceiling, matching donor max severity).
+- Adapter `_request_to_context` extended: maps donor telemetry keys
+  (context_tokens, gpu_*, loop_count, repetition_count, error_count,
+  wall_time, tokens_used, model, outcome) onto ImmuneContext fields +
+  merges nested payload["metadata"], so the behavioral/resource
+  detectors can see their trigger data.
+- Kernel: new `registry.immune` slot + `_boot_immune()` gated by
+  `KOSMOS_IMMUNE={off,on}` (default off; ADR-101 degrade). Attaches
+  event_bus + relational_memory. `KOSMOS_IMMUNE=on` added to
+  gitignored kosmos-kernel.local.env. /health now reports `immune`.
+- Contract tests: metadata assertion -> 12 names; idempotence -> 12;
+  NEW test_stage9_12_detectors_each_fire_on_malicious_payload (12/12
+  fire) + benign-allow regression. All 9 green.
+- Live kernel: health immune:True, orchestrator wired_memory:true.
