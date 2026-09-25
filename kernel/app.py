@@ -3711,7 +3711,60 @@ async def immune_health() -> dict[str, Any]:
 # Neo4j. Envelope: {healthy, backend, memory_events, entities, quarantined,
 # errors, timestamp}. Counts are real Cypher; a failed count is None (never
 # fabricated). Always 200.
+#
+# Memory entries (ADR-135, Stage 11.19) — sibling endpoint GET /api/memory:
+# the old ops MemoryTab also proxied :8020/api/memory (the same 4-tier
+# store's entry list). The kernel referent is the graph of MemoryEvent
+# nodes: rows carry id/kind(predicate)/content(object)/score(confidence)
+# + written_at/provenance/subject — the ops table's four columns render
+# from exactly these. Newest-first sort is applied client-side so the
+# Bolt backend (Cypher ORDER BY) and the in-memory backend (insertion
+# order) render identically.
 # ---------------------------------------------------------------------------
+
+
+@app.get("/api/memory")
+async def memory_entries(limit: int = 50) -> dict[str, Any]:
+    """Kernel-native recent MemoryEvent rows (ADR-135)."""
+    adapter = registry.memory
+    if adapter is None:
+        raise HTTPException(
+            503,
+            detail="memory lane offline (registry.memory is None — check boot errors / KOSMOS_MEMORY_BACKEND)",
+        )
+
+    lim = min(max(limit, 1), 100)
+    try:
+        rows = await adapter.recent_memory_events(limit=lim)
+    except Exception as exc:  # noqa: BLE001 — never 500 without detail
+        raise HTTPException(500, detail=f"{type(exc).__name__}: {exc}") from exc
+
+    # Client-side newest-first: the Bolt backend already orders by
+    # written_at DESC; the in-memory backend returns insertion order.
+    # ISO-8601 UTC strings sort temporally.
+    rows.sort(key=lambda r: str(r.get("written_at") or ""), reverse=True)
+
+    entries = [
+        {
+            "id": r.get("id"),
+            "kind": r.get("predicate"),
+            "content": r.get("object"),
+            "score": r.get("confidence"),
+            "written_at": r.get("written_at"),
+            "provenance": r.get("provenance"),
+            "subject": r.get("subject"),
+            "pii_tier": r.get("pii_tier"),
+        }
+        for r in rows
+    ]
+
+    return {
+        "entries": entries,
+        "count": len(entries),
+        "limit": lim,
+        "backend": "dozerdb" if adapter.is_healthy() else "dozerdb (unhealthy)",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @app.get("/api/memory/stats")
