@@ -4660,3 +4660,51 @@ UI-only minimal with history as honest empty state + trigger removed.
 - **Stage 11 endpoint split is now at the exit-gate boundary.** Next
   in plan order: WebSockets (11.7) or the `main.py` deletion exit
   gate (Stage 14.5).
+
+---
+
+## Stage 11.7 — WebSockets: DEFERRED to the 14.5 deletion gate (ADR-140) — 2026-09-25
+
+### Context
+
+Plan v2 Stage 11.7: `/ws/{session_id}` → kernel `/api/events/ws`;
+`/ws/pty` → new SandboxPort adapter.
+
+### Recon
+
+- **Donor :8020 `/ws/{session_id}`** = prompt-submission + event fanout
+  (`WebSocketManager`, streamed LLM events, approve/reject handlers).
+  **Donor :8020 `/ws/pty`** = sandbox PTY channel.
+- **Kernel** already carries the functional surface: `POST
+  /api/prompt/sse` (kernel-native prompt stream, ADR-documented as
+  replacing the :8020 prompt/sse proxy) + `/api/events/ws` (ADR-061
+  event-bus bridge, `?types=` filtering) + ADR-066 algedonic WS push.
+- **ADR-109 gateway bridge** never proxied WebSocket upgrades
+  (HTTP/SSE only). **Kosmos UI** has ZERO WebSocket consumers (no
+  `new WebSocket`, no `wss://` under `ui/`).
+- Consequence: **no UI call to re-point** — 11.7 is backend parity,
+  not a tab re-point. `/ws/{session_id}` parity = publish prompt-WS
+  event types onto the event bus so `/api/events/ws?types=...` delivers
+  the live session. `/ws/pty` = a distinct SandboxPort capability
+  (Stage 13 sandbox work).
+
+### Decision (user-chosen)
+
+**Defer 11.7 entirely to the Stage 14.5 `main.py` deletion gate** —
+treat the WS question as part of the retirement cleanup. Rationale:
+nothing in the surviving surface consumes a prompt-WS (the donor's WS
+clients were its own frontend, retired at Stage 9.5, and CLI tooling);
+the bridge never proxied WS; the kernel's SSE + ADR-061 bus bridge
+already cover the functional surface. The deferral leaves NO gap at
+14.5: ADR-140 is the exit-gate map — publish prompt event types onto
+the bus (parity, ADR-061 exists) or close as SSE-sufficient; `/ws/pty`
+→ SandboxPort defers with Stage 13 either way.
+
+### Result
+
+- No code, no UI change, no build. ADR-140 + README row + this entry.
+- **Stage 11 endpoint split: 11.1–11.6, 11.13–11.23 complete; 11.7
+  deferred-to-14.5.** The `main.py` deletion checklist (Stage 14.5)
+  gains an explicit item: "resolve 11.7 per ADR-140".
+- **Stage 11 is at the exit-gate boundary.** Next: Stage 14.5 `main.py`
+  deletion recon, or Stage 12 deployment surface per plan order.
