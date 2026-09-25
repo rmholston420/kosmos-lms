@@ -130,19 +130,18 @@ def _map_envelope(envelope: EventEnvelope) -> dict[str, Any] | None:
     return None
 
 
-async def get_replay(
+async def _collect_mapped(
     event_bus: Any,
     session_id: str,
     *,
     count: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Full replay for one session, donor shape, oldest first.
+    """Collect + map all replay rows for one session, donor shape, oldest first.
 
-    ``event_bus`` is anything with ``async read_recent(event_type=...,
-    count=...) -> list[tuple[entry_id, EventEnvelope]]`` (the Valkey
-    adapter satisfies this). Rows missing ``session_id`` in the payload
-    are dropped; ``seq`` is renumbered 1..N over the surviving rows so the
-    shape matches the donor store regardless of bus retention.
+    Shared core for :func:`get_replay` and :func:`get_events` — reads the
+    known Tektos event types from the bus, filters to ``session_id``,
+    sorts by backend entry id, and maps to donor rows with ``seq``
+    renumbered 1..N over the surviving rows.
     """
     collected: list[tuple[str, EventEnvelope]] = []
     for et in REPLAY_EVENT_TYPES:
@@ -175,3 +174,54 @@ async def get_replay(
             }
         )
     return rows
+
+
+async def get_replay(
+    event_bus: Any,
+    session_id: str,
+    *,
+    count: int | None = None,
+) -> list[dict[str, Any]]:
+    """Full replay for one session, donor shape, oldest first.
+
+    ``event_bus`` is anything with ``async read_recent(event_type=...,
+    count=...) -> list[tuple[entry_id, EventEnvelope]]`` (the Valkey
+    adapter satisfies this). Rows missing ``session_id`` in the payload
+    are dropped; ``seq`` is renumbered 1..N over the surviving rows so the
+    shape matches the donor store regardless of bus retention.
+    """
+    return await _collect_mapped(event_bus, session_id, count=count)
+
+
+async def get_events(
+    event_bus: Any,
+    session_id: str,
+    *,
+    since_seq: int = 0,
+    limit: int = 1000,
+    event_type: str | None = None,
+    count: int | None = None,
+) -> list[dict[str, Any]]:
+    """Filtered session events, donor shape (ADR-141 T2b).
+
+    Kernel referent for the donor ``event_store.get_events``
+    (tektos-ultima-v1 src/tektos/store/event_store.py:148) — the
+    ``/api/sessions/{id}/events`` surface with ``since_seq`` /
+    ``limit`` / ``event_type`` filters. Reads the same bus rows as
+    :func:`get_replay` and applies the donor's query semantics:
+
+    - ``since_seq`` → keep rows with ``seq > since_seq`` (the renumbered
+      ascending seq the client last saw — ``0`` means "everything"),
+    - ``event_type`` → keep rows whose (mapped, donor) type matches,
+    - ``limit`` → cap at ``min(limit, 10000)`` rows (donor hard cap),
+      applied after the filters, in ascending ``seq`` order.
+
+    ``count`` bounds the upstream bus read (``None`` = backend default).
+    """
+    rows = await _collect_mapped(event_bus, session_id, count=count)
+    if event_type:
+        rows = [r for r in rows if r["type"] == event_type]
+    if since_seq:
+        rows = [r for r in rows if r["seq"] > since_seq]
+    cap = min(limit, 10000)
+    return rows[:cap]

@@ -5279,6 +5279,129 @@ async def tektos_switch_session_model(
     return {"ok": True, "model": model, "old_model": old_model}
 
 
+# ---------------------------------------------------------------------------
+# /api/archive — ADR-141 T2c: archived-session surfaces (donor wire)
+#
+# Donor main.py:4141-4201: the archive tab's list/detail/messages/rename/tag.
+# The referent is the same ``registry.session`` port the /api/sessions routes
+# use — search_sessions already carries the donor query (query/sort/order);
+# rename/tag already raise KeyError on unknown ids, so the donor routes'
+# try/except → 404 maps 1:1.
+# ---------------------------------------------------------------------------
+
+
+class _ArchiveRenameBody(BaseModel):
+    """``POST /api/archive/sessions/{id}/rename`` (donor RenameRequest)."""
+
+    title: str
+
+
+class _ArchiveTagBody(BaseModel):
+    """``POST /api/archive/sessions/{id}/tag`` (donor TagRequest)."""
+
+    tag: str
+
+
+def _archive_summary(s) -> dict[str, Any]:
+    """LiveSession → the archive tab's list element (donor field set)."""
+    return {
+        "id": s.id,
+        "title": s.title,
+        "tag": s.tag,
+        "model": s.model,
+        "root_session_id": s.root_session_id,
+        "updated_at": s.updated_at,
+        "is_archived": s.is_archived,
+    }
+
+
+@app.get("/api/archive/sessions")
+async def tektos_list_archive_sessions(
+    search: str = "",
+    sort: str = "updated_at",
+    order: str = "desc",
+) -> list[dict[str, Any]]:
+    """Archived sessions with search/sort (donor wire, raw array).
+
+    ADR-141 T2c — donor main.py:4141. ``search_sessions`` runs the donor
+    query (title/tag/id/root substring, same sort branches) and the
+    ``is_archived`` filter is applied server-side as in the donor.
+    """
+    port = registry.session
+    if port is None:
+        _session_port_offline()
+    sessions = await port.search_sessions(query=search, sort=sort, order=order)
+    return [_archive_summary(s) for s in sessions if s.is_archived]
+
+
+@app.get("/api/archive/sessions/{session_id}")
+async def tektos_get_archive_session(session_id: str) -> dict[str, Any]:
+    """One archived session's details (donor wire).
+
+    ADR-141 T2c — donor main.py:4163: 404 for unknown sessions, 400 when
+    the session exists but is not archived (donor semantics preserved).
+    """
+    port = registry.session
+    if port is None:
+        _session_port_offline()
+    s = await port.get_session(session_id)
+    if s is None:
+        raise HTTPException(404, f"Session {session_id} not found")
+    if not s.is_archived:
+        raise HTTPException(400, f"Session {session_id} is not archived")
+    return {
+        "id": s.id,
+        "title": s.title,
+        "tag": s.tag,
+        "model": s.model,
+        "root_session_id": s.root_session_id,
+        "created_at": s.created_at,
+        "updated_at": s.updated_at,
+    }
+
+
+@app.get("/api/archive/sessions/{session_id}/messages")
+async def tektos_archive_session_messages(session_id: str) -> list[dict[str, Any]]:
+    """Conversation replay for an archived session (donor wire).
+
+    ADR-141 T2c — donor main.py:4182: ``get_replay(session_id)`` verbatim —
+    the kernel referent is the same bus read as ``/replay``.
+    """
+    from kernel.tektos_replay import get_replay
+
+    return await get_replay(registry.event_bus, session_id)
+
+
+@app.post("/api/archive/sessions/{session_id}/rename")
+async def tektos_rename_archive_session(
+    session_id: str, req: _ArchiveRenameBody
+) -> dict[str, Any]:
+    """Rename an archived session. Donor ``{ok:true}``; 404 on unknown id."""
+    port = registry.session
+    if port is None:
+        _session_port_offline()
+    try:
+        await port.rename_session(session_id, req.title)
+    except KeyError:
+        raise HTTPException(404, f"Session {session_id} not found")
+    return {"ok": True}
+
+
+@app.post("/api/archive/sessions/{session_id}/tag")
+async def tektos_tag_archive_session(
+    session_id: str, req: _ArchiveTagBody
+) -> dict[str, Any]:
+    """Tag an archived session. Donor ``{ok:true}``; 404 on unknown id."""
+    port = registry.session
+    if port is None:
+        _session_port_offline()
+    try:
+        await port.tag_session(session_id, req.tag)
+    except KeyError:
+        raise HTTPException(404, f"Session {session_id} not found")
+    return {"ok": True}
+
+
 @app.get("/api/sessions/{session_id}/replay")
 async def tektos_replay_session(session_id: str) -> list[dict[str, Any]]:
     """Full replay for a Tektos session (ADR-132 slice F).
@@ -5300,6 +5423,34 @@ async def tektos_replay_session(session_id: str) -> list[dict[str, Any]]:
     from kernel.tektos_replay import get_replay
 
     return await get_replay(registry.event_bus, session_id)
+
+
+@app.get("/api/sessions/{session_id}/events")
+async def tektos_session_events(
+    session_id: str,
+    since_seq: int = 0,
+    limit: int = 1000,
+    event_type: str | None = None,
+) -> list[dict[str, Any]]:
+    """Filtered session events, donor wire (ADR-141 T2b).
+
+    Replaces the :8020/api/sessions/{id}/events proxy — the donor
+    ``event_store.get_events`` (tektos-ultima-v1 event_store.py:148)
+    query surface: ``since_seq`` (rows with seq > since_seq, 0 = all),
+    ``limit`` (hard-capped at 10000), ``event_type`` (exact match on the
+    donor mapped type). Rows are the same donor envelope shape
+    (``seq/type/payload/protocol_version/created_at``) as ``/replay`` —
+    the events surface is the filterable view over the same bus read.
+    """
+    from kernel.tektos_replay import get_events
+
+    return await get_events(
+        registry.event_bus,
+        session_id,
+        since_seq=since_seq,
+        limit=limit,
+        event_type=event_type,
+    )
 
 
 def _immune_offline() -> NoReturn:
