@@ -246,7 +246,7 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
      (3), `sessions/{session_id}/events` (1, pairs with ADR-140 WS parity),
      `archive/*` (5).
    - **T3 — self-improvement read surface** (5 routes: status/metrics/report/
-     experiences/enqueue) — pairs with the ADR-134 hindsight read-side.
+     experiences/enqueue) — pairs with the ADR-134 hindsight read-side. **P (2026-09-25, ADR-143)** — all 5 routes kernel-native on `registry.tektos_self_improve`/`registry.tektos_learning`; donor + UI wire-compatible.
    - **T4 — planner surface** (4: templates/status/plan/language-games) — the
      `build_spec_planner_router` exists unmounted; mounting + missing routes.
    - **T5 — tool management surface** (5: register/schema/enable/disable/execute)

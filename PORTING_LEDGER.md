@@ -531,6 +531,7 @@ Source repo: `rmholston420/tektos-ultima` (public, no LICENSE file at source; so
 - **Modifications:** vendored ONLY `ExperienceRecord` (ADR-095 D1). `SelfImprovementAdapter` (openhands-ext feedback loop wiring) and `LoopOrchestrator` (session-lifecycle hook path) are intentionally NOT ported — both auto-trigger self-modification on session completion and persist experience against live meta-learning databases (violates ADR-090 interim rule 4). Retained `to_dict`/`to_json`/`from_dict` serializers unchanged (feeds future Stage 7.4 Hindsight bridge without a separate vendoring step).
 - **ADR:** ADR-095 (Stage 5.6 propose-only scope)
 - **Logged:** 2026-09-10 02:20 EDT
+- **STATUS (2026-09-25, ADR-143):** `ExperienceRecord` ELEVATED from this vendor file to `kernel/learning/models.py` (donor dataclass verbatim, same `to_dict`/`to_json`/`from_dict` serializers); `adapters/tektos/vendor/self_improve_models_donor.py` is now a re-pointing shim. Consumed by the kernel learning substrate (ADR-143 S2) + the T3 routes (S5b).
 
 #### Tektos self-improve + self-repair proposers — HAND-BUILT (Stage 5.6)
 - **Source:** Kosmos-native (built on top of the vendored donor data model above); replaces the wholesale port of the donor engine/strategies/workflows/health_monitor/effectiveness modules that would ship apply paths during the ADR-090 DEFERRED window.
@@ -549,6 +550,7 @@ Source repo: `rmholston420/tektos-ultima` (public, no LICENSE file at source; so
 - **Port(s):** `SelfModificationPort` (ADR-090 — PROPOSED / DEFERRED)
 - **Modifications:** intentionally NOT ported in Stage 5.6 per ADR-095 §Consequences. Donor engines carry real apply paths (`APPLY_PATCH`, `RESTART_SERVICE`, `CLEAR_CACHE`, `FREE_VRAM`, filesystem-mutating expanders, session-lifecycle auto-triggers, meta-learning persistence loops) that would ship apply code during the ADR-090 DEFERRED window (violates ADR-090 interim rule 4). Unlocked at ADR-090 ratification.
 - **ADR:** ADR-090 (deferred), ADR-095 (exclusion locked)
+- **STATUS (2026-09-25):** self-repair half LANDED (ADR-141 R1–R8 / ADR-142): substrate → `kernel/reliability/`, Tektos threat-model policy (8 strategies + 6 workflows) → `plugins/tektos/self_repair/`. Self-improvement half LANDED (ADR-143): learning substrate → `kernel/learning/`, `LoopOrchestrator` → `plugins/tektos/self_improve/loop.py` (Hegelian loop over the 5 Tektos engines). This row's deferral is now fully discharged; the `SelfModificationPort` formal port remains open (self_modification expanders not ported).
 
 #### Tektos gateway proxy — PLANNED (Stage 2)
 - **Source:** https://github.com/rmholston420/tektos-ultima/tree/main/tektos/gateway

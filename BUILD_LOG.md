@@ -4824,3 +4824,51 @@ ADR-109 gateway module deletion + :8020 retirement.
 **Next:** T3 — self-improvement routes (next T-family per ADR-141 order),
 or Stage 13 subsystem ports (schema_evolution, db_manager, vision, voice,
 MCP, metabolism) in ROI order.
+
+---
+
+## 2026-09-25 13:27 EDT — ADR-141 T3 (self-improvement) — kernel learning substrate + Hegelian loop (ADR-143)
+
+- **Stage / plugin / port:** Stage 11 exit gate · T3 · no new formal port
+- **What changed:** The donor self-improvement surface (ADR-141 **T3**, 5
+  routes) and its three-layer machinery are now Kosmos-native, split at the
+  substrate/policy boundary per the governing layering rule. **Substrate
+  → kernel:** `kernel/learning/` — `LearningEngine` (experience ledger JSONL
+  + meta-learning metrics: total_tasks, total_improvements, learning_velocity,
+  model_rankings, best_model_for_coding, streaks), `LearningDriver` (bounded
+  queue + env-gated background cycle; `TEKTOS_SELF_IMPROVEMENT_ENABLED`
+  default OFF, `INTERVAL` default 1800 s), `ExperienceRecord` (donor
+  dataclass verbatim, `to_dict()` wire shape). **Tektos policy → plugin:**
+  `plugins/tektos/self_improve/loop.py::SelfImprovementLoop` (Hegelian
+  plan→execute→reflect→synthesize over the 5 Tektos engines + substrate
+  write-back; sync facade over `asyncio.run`).
+- **Files touched:** `kernel/learning/{engine,driver,models,__init__}.py`,
+  `kernel/tektos_hindsight.py` (sync `retain` write leg), `kernel/app.py`
+  (registry fields + boot block after self-repair + 5 routes + shutdown),
+  `plugins/tektos/self_improve/{loop,__init__}.py`,
+  `tests/kernel/test_adr143_s2_learning_engine.py` (16),
+  `tests/kernel/test_adr143_s3_learning_driver.py` (15),
+  `tests/kernel/test_adr143_s4_self_improve_loop.py` (11),
+  `tests/kernel/test_adr143_s5_self_improve_routes.py` (9)
+- **Ports / adapters affected:** none (ADR-007 DI seam:
+  `LearningEngine(tick_emitter=…, hindsight_retainer=…)` injected by the
+  composition root; unwired → honest `wired:false` on every route, never 500)
+- **PORTING_LEDGER / ADR updated:** ADR-143 (new), README ADR-143 row
+- **Commit trail:** S2 engine → S3 driver → S4 plugin loop (`ce6b60b`) →
+  S5a boot + hindsight `retain` (`0d05a8e`) → S5b 5 routes + S5c shutdown +
+  S5d tests.
+- **Donor wire-shape fidelity:** the 5 routes replace the :8020 gateway proxy,
+  byte-compatible with donor `main.py` (L3144-3274 read routes, L4555-4605
+  status+enqueue) and the UI selfimp tab (task/success/created_at experience
+  reads; total_tasks/total_improvements/learning_velocity/model_rankings/
+  best_model_for_coding metric keys; orchestrator_ready/pending status keys).
+- **Verification (tests, isolated ledgers + fake DI):** ADR-143 suite
+  51/51 green; full `tests/kernel/` **518 passed, 0 failed** (6.6 s).
+  Donor semantics preserved: `on_session_failed` does NOT write a benchmark
+  file; `get_experience` returns read-order (oldest-first) per donor.
+- **Gate progress (ADR-141):** T3 done ✓. Remaining before `main.py`
+  deletion: T1 (orchestrator status+agents), T2 (session-adjacent), T4
+  (planner), T5 (tools mgmt), T6 (memory actions), T7 (embedder), T8 (misc),
+  D-route Stage 13 subsystem ports, `/health` probe removal ×3, ADR-140 WS,
+  ADR-109 gateway deletion + :8020 retirement.
+- **Stop-condition status:** met — T3 complete; next T1 or T4 in ROI order
