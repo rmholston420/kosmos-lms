@@ -4443,3 +4443,12 @@ Hermes Agent uses) is now the primary LLM lane; Ollama is fallback-only.
 - **D2** `page.tsx`: immune card `base: ""` + detector line (`12 detectors · prompt_injection, secret_exposure, dangerous_command, context_collapse`).
 - **D3** `components: {}` is intentional — no fabricated component scores (would overlap the Thermal/Inference/LLM cards' real data).
 - **Verified:** 5/5 tests (GPU-free, stub adapter); live endpoint after restart: 12 detectors in <50 ms, `boot_errors: {}`; `tsc` clean, `next build` clean + served chunk verified.
+
+## 2026-09-25 — Stage 11.7 · ADR-123: kernel-native /api/memory/stats (Memory card re-point)
+
+- **Why:** the Memory card proxied `:8020/api/memory/stats` — a tier envelope (`working_count` / `long_term_count` / `procedural_count` / `balance`) the kernel's memory port does not implement. The kernel boots a **live** `DozerDbMemoryAdapter` (`KOSMOS_MEMORY_BACKEND=dozerdb`, Neo4j `bolt://127.0.0.1:7687`) that writes `MemoryEvent` / `Entity` / `Quarantined` nodes — the card showed fabricated tiers while the real graph sat idle a proxy away.
+- **D1** live test caught a real bug: the draft `stats()` used `query_cypher("label:MemoryEvent")` — that convention is understood only by `InMemoryGraphBackend`; the DozerDB backend forwards it to Neo4j as **real Cypher**, where `label:MemoryEvent` is a syntax error (endpoint returned all-`None` + errors). Fix: new `GraphBackend.count_nodes(label)` protocol method — DozerDB = `MATCH (n:<label>) RETURN count(n) AS c` through `_validate_identifier` (injection-guarded), in-memory = label filter over the node map.
+- **D2** `DozerDbMemoryAdapter.stats()` → `{healthy, memory_events, entities, quarantined, errors}`; a failing count degrades to `None` + error entry (never a fabricated number, never 500).
+- **D3** kernel-native `GET /api/memory/stats` (always-200): `registry.memory` `None` → `healthy: false`, `backend: "none"`; `stats()` raising → `healthy: false` + `errors`.
+- **D4** `page.tsx`: memory card `base: ""` + `parseCard` case **rewritten** for the real shape (memory_events / entities / quarantined; `null` count → `?`; `backend: "none"` → offline line).
+- **Verified:** 6/6 tests incl. the **real** adapter on `InMemoryGraphBackend` (2 events → 2 MemoryEvent + 4 Entity); 71-test adapter contract suite (incl. live-docker tier skip) unchanged/passing; **live** endpoint matches an independent sync-driver Neo4j query exactly — graph currently empty (0/0/0), which the card now shows honestly; `tsc` clean, `next build` clean + served chunk verified.

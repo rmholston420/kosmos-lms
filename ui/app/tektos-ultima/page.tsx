@@ -59,7 +59,7 @@ const SUBSYSTEMS: Subsystem[] = [
   { id: "immune", title: "Immune System", icon: "🛡️", endpoint: "/api/immune/health", base: "" },
   { id: "thermal", title: "Thermal", icon: "🌡️", endpoint: "/api/thermal/status", base: "" },
   { id: "inference", title: "Inference", icon: "🧠", endpoint: "/api/inference/status", base: "" },
-  { id: "memory", title: "Memory", icon: "🧩", endpoint: "/api/memory/stats" },
+  { id: "memory", title: "Memory", icon: "🧩", endpoint: "/api/memory/stats", base: "" },
   { id: "rag", title: "RAG", icon: "📚", endpoint: "/api/rag/status" },
   { id: "skills", title: "Skills", icon: "⚡", endpoint: "/api/skills/stats" },
   { id: "tools", title: "Tools", icon: "🔧", endpoint: "/api/tools" },
@@ -173,16 +173,18 @@ function parseCard(sub: Subsystem, data: unknown): CardData {
       };
     }
     case "memory": {
-      const longTerm = num(o?.long_term_count) ?? 0;
-      const working = num(o?.working_count) ?? 0;
-      const procedural = num(o?.procedural_count) ?? 0;
-      const balance = isObj(o?.summary) && isObj(o.summary.hemisphere_balance) ? o.summary.hemisphere_balance : null;
-      const left = num(balance?.left) ?? 0;
-      const right = num(balance?.right) ?? 0;
+      const healthy = o?.healthy === true;
+      const backend = str(o?.backend) ?? "none";
+      const events = num(o?.memory_events);
+      const ents = num(o?.entities);
+      const quar = num(o?.quarantined) ?? 0;
+      const errs = Array.isArray(o?.errors) ? (o.errors as string[]).join("; ") : "";
+      const line = events === null ? "count unavailable" : `${events.toLocaleString()} memory events`;
+      const sub = ents === null ? "" : `${ents.toLocaleString()} entities · ${quar} quarantined`;
       return {
-        status: longTerm > 0 ? "healthy" : "degraded",
-        lines: [`${longTerm.toLocaleString()} long-term`, `${working} working · ${procedural} procedural`],
-        detail: `hemispheres L ${left.toLocaleString()} / R ${right.toLocaleString()}`,
+        status: healthy && events !== null ? "healthy" : "degraded",
+        lines: [line, sub].filter(Boolean),
+        detail: errs || `backend: ${backend}`,
       };
     }
     case "rag": {

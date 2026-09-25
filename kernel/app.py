@@ -3493,6 +3493,53 @@ async def immune_health() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Memory status (ADR-123, Stage 11.7) — kernel-native, reads the LIVE
+# registry.memory (DozerDbMemoryAdapter, KOSMOS_MEMORY_BACKEND=dozerdb).
+# The old card proxied :8020/api/memory/stats — a 4-tier cognitive store
+# (working/long_term/procedural + hemisphere balance) the kernel does not
+# implement. The kernel's memory port is a graph of MemoryEvent nodes in
+# Neo4j. Envelope: {healthy, backend, memory_events, entities, quarantined,
+# errors, timestamp}. Counts are real Cypher; a failed count is None (never
+# fabricated). Always 200.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/memory/stats")
+async def memory_stats() -> dict[str, Any]:
+    """Kernel-native memory corpus stats — real Neo4j counts."""
+    adapter = registry.memory
+    now = datetime.now(timezone.utc)
+
+    backend = "none"
+    if adapter is not None:
+        backend = "dozerdb" if adapter.is_healthy() else "dozerdb (unhealthy)"
+        try:
+            s = await adapter.stats()
+        except Exception as exc:  # noqa: BLE001 — never 500
+            return {
+                "healthy": False,
+                "backend": backend,
+                "memory_events": None,
+                "entities": None,
+                "quarantined": None,
+                "errors": [f"stats(): {type(exc).__name__}"],
+                "timestamp": now.isoformat(),
+            }
+    else:
+        s = None
+
+    return {
+        "healthy": bool(s and s["healthy"]),
+        "backend": backend,
+        "memory_events": s["memory_events"] if s else None,
+        "entities": s["entities"] if s else None,
+        "quarantined": s["quarantined"] if s else None,
+        "errors": (s or {}).get("errors", []),
+        "timestamp": now.isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Praxis constitution (ADR-068 D2) — read-only integrity anchor for the
 # GOVERNANCE panel. Lazily loads + verifies the constitution on first hit,
 # then caches on ``registry.praxis_constitution``. A tamper failure at read

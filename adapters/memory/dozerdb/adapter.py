@@ -149,6 +149,7 @@ class GraphBackend(Protocol):
         cypher: str,
         params: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]: ...
+    async def count_nodes(self, label: str) -> int: ...
     async def delete_node(self, node_id: str) -> None: ...
     def is_healthy(self) -> bool: ...
     async def close(self) -> None: ...
@@ -206,6 +207,10 @@ class InMemoryGraphBackend:
             frag = needle.split(":", 1)[1].strip().lower()
             return [n for n in self._nodes.values() if frag in str(n).lower()]
         return list(self._nodes.values())
+
+    async def count_nodes(self, label: str) -> int:
+        """Test-only: count nodes with this label (mirrors the backend)."""
+        return sum(1 for n in self._nodes.values() if n.get("label") == label)
 
     async def delete_node(self, node_id: str) -> None:
         self._nodes.pop(node_id, None)
@@ -833,6 +838,36 @@ class DozerDbMemoryAdapter:
             )
             for score, event_id in fused[:limit]
         ]
+
+    # ── observability (ADR-123, Stage 11.7) ───────────────────────────────
+
+    async def stats(self) -> dict[str, Any]:
+        """Honest corpus counts for the dashboard (never raises).
+
+        Counts the node labels this adapter writes (``MemoryEvent``,
+        ``Entity``, ``Quarantined``) via ``GraphBackend.count_nodes`` —
+        real Cypher on DozerDB, a label-filter on the in-memory backend.
+        A failed count degrades to ``None`` — the endpoint reports the
+        failure instead of a fabricated number.
+        """
+        out: dict[str, Any] = {
+            "healthy": self.is_healthy(),
+            "memory_events": None,
+            "entities": None,
+            "quarantined": None,
+            "errors": [],
+        }
+        for prop, label in (
+            ("memory_events", "MemoryEvent"),
+            ("entities", "Entity"),
+            ("quarantined", "Quarantined"),
+        ):
+            try:
+                out[prop] = await self._graph.count_nodes(label)
+            except Exception as exc:  # noqa: BLE001 — ADR-023 rule 5
+                out["errors"].append(f"{label}: {type(exc).__name__}")
+                log.warning("memory.stats count failed for %s: %s", label, exc)
+        return out
 
     # ── lifecycle ───────────────────────────────────────────────────────
 

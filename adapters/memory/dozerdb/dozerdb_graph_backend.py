@@ -163,6 +163,20 @@ class DozerDbGraphBackend:
     ) -> list[dict[str, Any]]:
         return await self._run(cypher, params or {})
 
+    async def count_nodes(self, label: str) -> int:
+        """Count nodes by label — real Cypher (ADR-123).
+
+        The ``label:<Label>`` convention in ``InMemoryGraphBackend.query_cypher``
+        is NOT valid Cypher, so this is a dedicated method: the label goes
+        through the same injection guard as every other Cypher interpolation
+        in this backend.
+        """
+        _validate_identifier("label", label)
+        rows = await self._run(f"MATCH (n:{label}) RETURN count(n) AS c", {})
+        if not rows:
+            return 0
+        return int(rows[0]["c"])
+
     async def delete_node(self, node_id: str) -> None:
         await self._run(
             "MATCH (n {id: $nid}) DETACH DELETE n",
