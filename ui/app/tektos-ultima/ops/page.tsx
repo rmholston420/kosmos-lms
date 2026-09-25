@@ -14,10 +14,12 @@
  *             POST /api/memory/decay → honest degrade (no kernel referent:
  *             kernel memory is a MemoryEvent graph, tier decay is Tektos
  *             plugin policy — landing later)
- *   skills    GET  /api/skills · /api/skills/stats
- *             POST /api/skills/{id}/toggle
- *   tools     GET  /api/tools
- *             POST /api/tools/{name}/enable · /api/tools/{name}/disable
+ *   skills    (kernel-native, ADR-136) GET /api/skills/stats — Tektos Manager
+ *             archetype tracker (skill candidates); registry list + toggles
+ *             deferred (ADR-108 D9), not ported
+ *   tools     (kernel-native, ADR-136) GET /api/tools — ADR-107 capability
+ *             table + routing-only Tool Router; enable/disable stay on the
+ *             standalone Tektos registry (ADR-126 D9)
  *   logs      GET  /api/logs (polled 10 s)
  *   telemetry GET  /api/telemetry (polled 5 s)
  *   repair    GET  /api/self_repair/status · /api/self_repair/history
@@ -421,31 +423,51 @@ function MemoryTab() {
 // ---------------------------------------------------------------------------
 // Tab: Skills
 // ---------------------------------------------------------------------------
+// ADR-136 (Stage 11.20): kernel-native. The old tab proxied :8020 —
+// the standalone engine's 24-skill registry (list + per-skill toggle).
+// The kernel has NO skill registry (deferred, ADR-108 D9): its real
+// skills surface is the Tektos Manager archetype tracker
+// (KOSMOS_TEKTOS_MANAGER=on), which flags recurring task patterns as
+// skill *candidates*. The tab renders what the kernel actually has
+// (GET /api/skills/stats, ADR-125) and says so honestly — no fake
+// registry list, no toggle (toggles would mutate a store that does
+// not exist in the kernel).
 
-type SkillInfo = {
-  id?: string;
-  name?: string;
-  category?: string;
-  description?: string;
-  enabled?: boolean;
-  version?: string;
+type ArchetypeRow = {
+  category?: string | null;
+  occurrence_count?: number;
+  threshold?: number | null;
+  at_threshold?: boolean;
+  permanent_structure_id?: string | null;
+  first_seen?: string | null;
+  last_seen?: string | null;
 };
 
 function SkillsTab() {
-  const [skills, setSkills] = useState<SkillInfo[]>([]);
-  const [stats, setStats] = useState<unknown>(null);
+  const [stats, setStats] = useState<Record<string, unknown> | null>(null);
+  const [archetypes, setArchetypes] = useState<ArchetypeRow[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    const [s, st] = await Promise.all([
-      g<{ skills?: unknown } | unknown[]>("/api/skills"),
-      g("/api/skills/stats"),
-    ]);
-    if (Array.isArray(s)) setSkills(s as SkillInfo[]);
-    else if (isObj(s) && Array.isArray(s["skills"])) setSkills(s["skills"] as SkillInfo[]);
-    else setSkills([]);
+    const st = await g<Record<string, unknown> | null>("/api/skills/stats", "");
+    if (!isObj(st)) {
+      setStats(null);
+      setArchetypes([]);
+      setMsg("skills stats unavailable (kernel /api/skills/stats)");
+      return;
+    }
     setStats(st);
+    const inner = st["skills"];
+    if (isObj(inner) && Array.isArray(inner["archetype_list"])) {
+      setArchetypes(inner["archetype_list"] as ArchetypeRow[]);
+    } else {
+      setArchetypes([]);
+    }
+    if (Array.isArray(st["errors"]) && st["errors"].length > 0) {
+      setMsg(`skills: ${(st["errors"] as string[]).join("; ")}`);
+    } else {
+      setMsg(null);
+    }
   }, []);
 
   useEffect(() => {
@@ -454,70 +476,81 @@ function SkillsTab() {
     return () => clearInterval(t);
   }, [load]);
 
-  const toggle = async (s: SkillInfo) => {
-    if (!s.id) return;
-    setBusy(true);
-    setMsg(null);
-    const r = await act(`/api/skills/${encodeURIComponent(s.id)}/toggle`);
-    setBusy(false);
-    setMsg(r.ok ? `toggled ${s.name ?? s.id}` : `toggle failed: ${r.error ?? "unknown"}`);
-    void load();
-  };
+  const inner = isObj(stats) && isObj(stats["skills"]) ? stats["skills"] : null;
+  const wired = inner ? Boolean(inner["wired"]) : false;
 
   return (
     <div data-testid="tektos-ops-skills">
       <div style={{ ...panelStyle, display: "flex", gap: 18, flexWrap: "wrap" }}>
-        {isObj(stats)
-          ? Object.entries(stats)
-              .slice(0, 8)
-              .map(([k, v]) => <Metric key={k} label={k} value={typeof v === "object" ? JSON.stringify(v) : String(v)} />)
-          : <Metric label="Skills" value={String(skills.length)} />}
+        {isObj(stats) ? (
+          <>
+            <Metric label="status" value={String(stats["status"] ?? "—")} />
+            <Metric label="healthy" value={String(stats["healthy"] ?? "—")} />
+            <Metric
+              label="archetypes"
+              value={inner ? String(inner["archetypes"] ?? 0) : "—"}
+            />
+            <Metric
+              label="at_threshold"
+              value={inner ? String(inner["at_threshold"] ?? 0) : "—"}
+            />
+            <Metric
+              label="threshold"
+              value={inner && inner["threshold"] != null ? String(inner["threshold"]) : "—"}
+            />
+            <Metric
+              label="events"
+              value={inner && inner["total_events"] != null ? String(inner["total_events"]) : "—"}
+            />
+          </>
+        ) : (
+          <Metric label="Skills" value="stats unavailable" />
+        )}
       </div>
 
       {msg && (
         <div
           data-testid="tektos-ops-skills-msg"
-          style={{ fontSize: "var(--font-sm, 0.8125rem)", marginBottom: 14, color: msg.includes("failed") ? "var(--color-amitabha, #e07070)" : "var(--color-amoghasiddhi, #6ad08a)" }}
+          style={{ fontSize: "var(--font-sm, 0.8125rem)", marginBottom: 14, color: msg.includes("unavailable") || msg.includes("failed") ? "var(--color-amitabha, #e07070)" : "var(--color-amoghasiddhi, #6ad08a)" }}
         >
           {msg}
         </div>
       )}
 
+      {!wired && (
+        <div style={{ fontSize: "var(--font-sm, 0.8125rem)", color: "var(--color-text-dim, #888)", marginBottom: 14 }}>
+          kernel skill-candidate tracker not wired (KOSMOS_TEKTOS_MANAGER=off) — degraded state, not an error.
+          The donor&apos;s 24-skill registry (list + toggles) is deferred (ADR-108 D9) and not ported to the kernel.
+        </div>
+      )}
+
       <div style={panelStyle}>
-        {skills.length === 0 ? (
+        <div style={{ fontSize: "var(--font-sm, 0.8125rem)", color: "var(--color-text-dim, #888)", marginBottom: 10 }}>
+          Skill candidates (recurring task patterns at the tracker threshold):
+        </div>
+        {archetypes.length === 0 ? (
           <div style={{ fontSize: "var(--font-sm, 0.8125rem)", color: "var(--color-text-dim, #888)" }}>
-            no skills registered
+            no archetype candidates tracked
           </div>
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>
-                <Th>Name</Th>
                 <Th>Category</Th>
-                <Th>Version</Th>
-                <Th>Description</Th>
-                <Th>Enabled</Th>
+                <Th>Count</Th>
+                <Th>Threshold</Th>
+                <Th>Candidate</Th>
+                <Th>Last seen</Th>
               </tr>
             </thead>
             <tbody>
-              {skills.map((s) => (
-                <tr key={s.id ?? s.name}>
-                  <Td mono>{s.name ?? "—"}</Td>
-                  <Td>{s.category ?? "—"}</Td>
-                  <Td>{s.version ?? "—"}</Td>
-                  <Td style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } as CSSProperties}>
-                    {s.description ?? "—"}
-                  </Td>
-                  <Td>
-                    <button
-                      data-testid={`tektos-ops-skill-toggle-${s.id ?? s.name}`}
-                      style={{ ...btnStyle, padding: "3px 8px" }}
-                      disabled={busy}
-                      onClick={() => void toggle(s)}
-                    >
-                      {s.enabled ? "on" : "off"}
-                    </button>
-                  </Td>
+              {archetypes.map((a, i) => (
+                <tr key={a.category ?? i}>
+                  <Td mono>{a.category ?? "—"}</Td>
+                  <Td>{String(a.occurrence_count ?? 0)}</Td>
+                  <Td>{a.threshold != null ? String(a.threshold) : "—"}</Td>
+                  <Td>{a.at_threshold ? "yes" : "no"}</Td>
+                  <Td mono>{a.last_seen ?? "—"}</Td>
                 </tr>
               ))}
             </tbody>
@@ -532,18 +565,25 @@ function SkillsTab() {
 // Tab: Tools
 // ---------------------------------------------------------------------------
 
-type ToolInfo = { name?: string; description?: string; enabled?: boolean };
+type ToolCategoryCount = Record<string, number>;
 
 function ToolsTab() {
-  const [tools, setTools] = useState<ToolInfo[]>([]);
+  const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    const t = await g<{ tools?: unknown } | unknown[]>("/api/tools");
-    if (Array.isArray(t)) setTools(t as ToolInfo[]);
-    else if (isObj(t) && Array.isArray(t["tools"])) setTools(t["tools"] as ToolInfo[]);
-    else setTools([]);
+    const t = await g<Record<string, unknown> | null>("/api/tools", "");
+    if (!isObj(t)) {
+      setData(null);
+      setMsg("tools surface unavailable (kernel /api/tools)");
+      return;
+    }
+    setData(t);
+    if (Array.isArray(t["errors"]) && t["errors"].length > 0) {
+      setMsg(`tools: ${(t["errors"] as string[]).join("; ")}`);
+    } else {
+      setMsg(null);
+    }
   }, []);
 
   useEffect(() => {
@@ -552,61 +592,80 @@ function ToolsTab() {
     return () => clearInterval(t);
   }, [load]);
 
-  const setEnabled = async (tool: ToolInfo, enabled: boolean) => {
-    if (!tool.name) return;
-    setBusy(true);
-    setMsg(null);
-    const r = await act(`/api/tools/${encodeURIComponent(tool.name)}/${enabled ? "enable" : "disable"}`);
-    setBusy(false);
-    setMsg(r.ok ? `${enabled ? "enabled" : "disabled"} ${tool.name}` : `failed: ${r.error ?? "unknown"}`);
-    void load();
-  };
+  const inner = isObj(data) && isObj(data["tools"]) ? data["tools"] : null;
+  const wired = inner ? Boolean(inner["wired"]) : false;
+  const names: string[] =
+    inner && Array.isArray(inner["known_tool_names"])
+      ? (inner["known_tool_names"] as string[])
+      : [];
+  const categories = inner && isObj(inner["categories"])
+    ? (inner["categories"] as ToolCategoryCount)
+    : {};
 
   return (
     <div data-testid="tektos-ops-tools">
+      <div style={{ ...panelStyle, display: "flex", gap: 18, flexWrap: "wrap" }}>
+        {isObj(data) ? (
+          <>
+            <Metric label="status" value={String(data["status"] ?? "—")} />
+            <Metric label="healthy" value={String(data["healthy"] ?? "—")} />
+            <Metric label="known_tools" value={inner ? String(inner["known_tools"] ?? 0) : "—"} />
+            <Metric
+              label="categories"
+              value={inner ? String(Object.keys(categories).length) : "—"}
+            />
+            <Metric
+              label="routes_buffered"
+              value={wired && inner && inner["routes_buffered"] != null ? String(inner["routes_buffered"]) : "—"}
+            />
+            <Metric label="router" value={inner ? String(inner["router"] ?? "—") : "—"} />
+          </>
+        ) : (
+          <Metric label="Tools" value="surface unavailable" />
+        )}
+      </div>
+
+      {msg && (
+        <div
+          data-testid="tektos-ops-tools-msg"
+          style={{ fontSize: "var(--font-sm, 0.8125rem)", marginTop: 10, color: msg.includes("unavailable") || msg.includes("failed") ? "var(--color-amitabha, #e07070)" : "var(--color-amoghasiddhi, #6ad08a)" }}
+        >
+          {msg}
+        </div>
+      )}
+
+      {!wired && (
+        <div style={{ fontSize: "var(--font-sm, 0.8125rem)", color: "var(--color-text-dim, #888)", marginBottom: 14 }}>
+          kernel Tool Router not wired (KOSMOS_TEKTOS_TOOL_ROUTER=off) — degraded state, not an error.
+          Execution (approval gateway + sandbox) stays on the standalone Tektos registry (ADR-126 D9).
+        </div>
+      )}
+
       <div style={panelStyle}>
-        {tools.length === 0 ? (
+        <div style={{ fontSize: "var(--font-sm, 0.8125rem)", color: "var(--color-text-dim, #888)", marginBottom: 10 }}>
+          Capability table (static, ADR-107 D1) — the kernel&apos;s known tools by category:
+        </div>
+        {names.length === 0 ? (
           <div style={{ fontSize: "var(--font-sm, 0.8125rem)", color: "var(--color-text-dim, #888)" }}>
-            no tools registered
+            capability table unavailable
           </div>
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>
-                <Th>Name</Th>
-                <Th>Description</Th>
-                <Th>Enabled</Th>
+                <Th>Tool</Th>
               </tr>
             </thead>
             <tbody>
-              {tools.map((t) => (
-                <tr key={t.name}>
-                  <Td mono>{t.name ?? "—"}</Td>
-                  <Td>{t.description ?? "—"}</Td>
-                  <Td>
-                    <button
-                      data-testid={`tektos-ops-tool-toggle-${t.name}`}
-                      style={{ ...btnStyle, padding: "3px 8px" }}
-                      disabled={busy}
-                      onClick={() => void setEnabled(t, !(t.enabled ?? true))}
-                    >
-                      {t.enabled ?? true ? "on" : "off"}
-                    </button>
-                  </Td>
+              {names.map((n) => (
+                <tr key={n}>
+                  <Td mono>{n}</Td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </div>
-      {msg && (
-        <div
-          data-testid="tektos-ops-tools-msg"
-          style={{ fontSize: "var(--font-sm, 0.8125rem)", marginTop: 10, color: msg.includes("failed") ? "var(--color-amitabha, #e07070)" : "var(--color-amoghasiddhi, #6ad08a)" }}
-        >
-          {msg}
-        </div>
-      )}
     </div>
   );
 }
