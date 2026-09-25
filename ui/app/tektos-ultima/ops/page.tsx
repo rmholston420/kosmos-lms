@@ -4,9 +4,10 @@
  * /tektos-ultima/ops — Tektos subsystem operations page (Tektos integration
  * Stage 9.4, ADR-112).
  *
- * Seven tabs: db/memory/skills/tools/telemetry are kernel-native
- * (same-origin kernel endpoints, ADR-135/136/137/138); logs/repair
- * still drive the standalone Tektos API (:8020) through the kernel
+ * Seven tabs: db/memory/skills/tools/logs/telemetry are kernel-native
+ * (same-origin kernel endpoints, ADR-129/135/136/137/138); self-repair is
+ * split (ADR-139) — status is kernel-native (ADR-128), history + repair
+ * trigger still drive the standalone Tektos API (:8020) through the kernel
  * gateway (ADR-109 D1), same-origin:
  *
  *   db        (kernel-native, ADR-137) GET /api/db — persistence lane
@@ -27,8 +28,10 @@
  *   telemetry (kernel-native, ADR-138) GET /api/telemetry (polled 5 s) —
  *             donor {gpu, system} envelope re-implemented in
  *             kernel.tektos_telemetry (nvidia-smi + /proc)
- *   repair    GET  /api/self_repair/status · /api/self_repair/history
- *             POST /api/self_repair/repair
+ *   repair    SPLIT (ADR-139): status = kernel-native GET
+ *             /api/self_repair/status (ADR-128, propose-only);
+ *             history GET /api/self_repair/history + trigger
+ *             POST /api/self_repair/repair stay on the gateway
  *
  * Every upstream body is null-guarded (`Array.isArray` / `isObj`) per the
  * Stage 9.2/9.3 convention — a shape change degrades one tab, never the
@@ -882,8 +885,12 @@ function RepairTab() {
   const [note, setNote] = useState("");
 
   const load = useCallback(async () => {
+    // SPLIT BACKENDS (ADR-139): status is kernel-native (ADR-128, propose-only
+    // proposer) — base "" is the same-origin kernel. history stays on the
+    // gateway (the executing daemon's ledger is real data there until the
+    // standalone engine retires).
     const [s, h] = await Promise.all([
-      g<Record<string, unknown> | null>("/api/self_repair/status"),
+      g<Record<string, unknown> | null>("/api/self_repair/status", ""),
       g<{ history?: unknown } | unknown[]>("/api/self_repair/history"),
     ]);
     setStatus(s);
@@ -907,21 +914,29 @@ function RepairTab() {
     void load();
   };
 
-  const enabled = status?.["enabled"] ?? null;
-  const armed = status?.["armed"] ?? null;
+  // ADR-128 kernel envelope (kernel-native since ADR-139): status, healthy,
+  // note, proposer.{wired,tier,confidence,provenance},
+  // strategies.{strategies_registered,categories,strategy_names}.
+  const proposer = isObj(status?.["proposer"]) ? (status!["proposer"] as Record<string, unknown>) : null;
+  const strategies = isObj(status?.["strategies"]) ? (status!["strategies"] as Record<string, unknown>) : null;
+  const proposerWired = proposer?.["wired"] ?? null;
+  const proposerTier = proposer?.["tier"] ?? null;
+  const registered = strategies?.["strategies_registered"] ?? null;
 
   return (
     <div data-testid="tektos-ops-repair">
       <div style={{ ...panelStyle, display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center" }}>
-        {enabled !== null && <Metric label="Enabled" value={String(enabled)} />}
-        {armed !== null && <Metric label="Armed" value={String(armed)} />}
-        <Metric label="Events" value={String(history.length)} />
-        {status && (
-          <Metric
-            label="Last check"
-            value={str(status["last_check"]) ? str(status["last_check"]).slice(0, 19).replace("T", " ") : "—"}
-          />
-        )}
+        <Metric label="Proposer" value={proposerWired === null ? "—" : proposerWired ? "wired" : "not wired"} />
+        <Metric label="Approval tier" value={str(proposerTier) || "—"} />
+        <Metric label="Strategies" value={registered === null ? "—" : String(registered)} />
+        <Metric label="Events (engine)" value={String(history.length)} />
+      </div>
+
+      <div style={{ fontSize: "var(--font-sm, 0.8125rem)", margin: "0 0 14px", color: "var(--color-text-dim, #888)" }}>
+        Kernel proposer is propose-only (ADR-128): it proposes self-modification and publishes{" "}
+        <span style={{ fontFamily: "var(--font-mono, monospace)" }}>tektos.self_modification.proposed</span> for human
+        approval — execution is not wired in the kernel. History and the repair trigger below are served by the
+        standalone Tektos engine through the kernel gateway (real executed-repair ledger until it retires).
       </div>
 
       <div style={{ ...panelStyle, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
