@@ -24,7 +24,7 @@ from typing import Any
 
 import pytest
 
-from adapters.tektos.vendor.self_repair_models_donor import (
+from kernel.reliability.models import (
     RepairRecord,
     RepairStatus,
     RepairStrategy,

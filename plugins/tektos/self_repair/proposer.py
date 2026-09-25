@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, NoReturn
 
-from adapters.tektos.vendor.self_repair_models_donor import (
+from kernel.reliability.models import (
     RepairRecord,
     RepairStrategy,
 )

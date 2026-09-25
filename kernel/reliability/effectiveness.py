@@ -16,7 +16,7 @@ import time
 from collections import defaultdict
 from typing import Any
 
-from adapters.tektos.vendor.self_repair_models_donor import RepairRecord
+from kernel.reliability.models import RepairRecord
 
 log = logging.getLogger(__name__)
 

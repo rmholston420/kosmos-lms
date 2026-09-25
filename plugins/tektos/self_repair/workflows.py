@@ -15,7 +15,7 @@ import logging
 import time
 from typing import Any
 
-from adapters.tektos.vendor.self_repair_models_donor import (
+from kernel.reliability.models import (
     RepairResult,
     RepairStrategy,
 )

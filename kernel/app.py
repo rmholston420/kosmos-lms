@@ -241,6 +241,15 @@ class _BootRegistry:
         # and ``registry.relational_memory`` (block records). Downstream
         # call sites MUST tolerate ``None`` (ADR-101 degrade pattern).
         self.immune: Any = None
+        # ADR-141 R6 + ADR-142 (2026-09-25): kernel-owned self-repair
+        # engine daemon — the full donor port, now the kernel RELIABILITY
+        # SUBSTRATE (kernel.reliability.engine) with FULL donor execution
+        # semantics (no approval gate); the Tektos policy (8 strategies +
+        # 6 healing workflows) is injected at boot from
+        # plugins.tektos.self_repair (composition root). Boots
+        # unconditionally at kernel start (donor main.py:980-984).
+        # ``None`` only when its boot raised (see ``registry.errors``).
+        self.self_repair: Any = None
         # Stage 8.1 (ADR-103): kernel-owned SessionPort — the 24th formal
         # port + FSM substrate for Stages 8.2–8.7 (turn loop, reflection,
         # planner, executor, manager, multi-agent). Populated by
@@ -1734,6 +1743,34 @@ async def lifespan(app: FastAPI):
         except Exception as exc:  # noqa: BLE001
             registry.errors["tektos"] = f"{type(exc).__name__}: {exc}"
 
+    # --- ADR-141 R6: self-repair engine daemon (full donor port) ----------
+    # Donor semantics (main.py:980-984): the engine boots at startup and
+    # runs the monitoring loop unconditionally — no env gate, no approval
+    # gate (user decision, ADR-141). Built-in strategies/workflows are
+    # simulated by default (ctx mutation + ``[simulated]`` marker);
+    # TEKTOS_SELF_REPAIR_REQUIRE_REAL makes them hard-fail instead.
+    # Failure degrades to ``registry.errors['self_repair']`` and the
+    # routes report unwired — the kernel never 500s at boot.
+    try:
+        from kernel.reliability.engine import get_self_repair_engine
+
+        # ADR-142: the substrate lives in the kernel (kernel.reliability);
+        # the Tektos threat-model POLICY (8 strategies + 6 healing
+        # workflows) lives in the plugin and is INJECTED here at boot —
+        # the composition root is the only place plugin→kernel wiring
+        # may cross. The substrate itself never imports plugins
+        # (ADR-007); unwired it degrades to honest escalate-only.
+        from plugins.tektos.self_repair.strategies import get_strategy_registry
+        from plugins.tektos.self_repair.workflows import get_healing_workflows
+
+        registry.self_repair = get_self_repair_engine(
+            strategies=get_strategy_registry(),
+            workflows=get_healing_workflows(),
+        )
+        await registry.self_repair.start()
+    except Exception as exc:  # noqa: BLE001
+        registry.errors["self_repair"] = f"{type(exc).__name__}: {exc}"
+
     # --- Tektos UI sub-app mount (ADR-065, Stage 6.5.8) -----------------------
     # Depends on ``registry.approval`` (ADR-062) + ``registry.memory``
     # (ADR-063) only. Deliberately does NOT depend on ``registry.tektos``
@@ -1835,6 +1872,15 @@ async def lifespan(app: FastAPI):
         )
 
     yield
+
+    # ADR-141 R6: stop the self-repair engine daemon (donor had no
+    # explicit stop — main.py let it die with the process; we stop it
+    # cleanly before teardown).
+    if getattr(registry, "self_repair", None) is not None:
+        try:
+            await registry.self_repair.stop()
+        except Exception:  # noqa: BLE001
+            pass
 
     # ADR-121 (Stage 11.5): stop the sustained-thermal watchdog before
     # anything else so it can't race the event-bus teardown.
@@ -4367,7 +4413,7 @@ def _self_repair_strategy_catalog() -> dict[str, Any]:
     member missing from the map would be an inconsistency — surfaced as
     an error, never silently dropped.
     """
-    from adapters.tektos.vendor.self_repair_models_donor import RepairStrategy
+    from kernel.reliability.models import RepairStrategy
 
     known = {s.value for s in RepairStrategy}
     mapped = {

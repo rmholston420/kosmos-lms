@@ -16,7 +16,7 @@ import logging
 import time
 from typing import Any
 
-from adapters.tektos.vendor.self_repair_models_donor import HealthSnapshot
+from kernel.reliability.models import HealthSnapshot
 
 log = logging.getLogger(__name__)
 

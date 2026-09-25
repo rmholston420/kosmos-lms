@@ -46,17 +46,42 @@ from .effectiveness import (
     reset_effectiveness_tracker,
 )
 from .health_monitor import get_health_monitor, reset_health_monitor
-from adapters.tektos.vendor.self_repair_models_donor import (
+from .models import (
     DegradationLevel,
     DegradationPlan,
     HealthSnapshot,
     RepairRecord,
+    RepairResult,
     RepairStatus,
+    RepairStrategy,
 )
-from .strategies import get_strategy_registry, reset_strategy_registry
-from .workflows import get_healing_workflows, reset_healing_workflows
 
 log = logging.getLogger(__name__)
+
+
+class _EscalateOnlyRegistry:
+    """Fallback strategy surface when no agent policy is injected (ADR-142).
+
+    The substrate must not import the Tektos plugin (ADR-007), so the
+    built-in 8-strategy / 6-workflow threat model is *injected* at boot
+    by the composition root. When it is not wired, this fallback keeps the
+    full lifecycle running but degrades to honest escalation — the strategy
+    phase returns ``ESCALATE_TO_USER`` and ``list_strategies()`` is empty,
+    so ``get_status()`` reports ``strategies_registered=0`` (the same
+    "unwired" convention as ADR-141 T1). No fabricated repairs.
+    """
+
+    async def repair(self, category: str, severity: int, ctx: dict[str, Any]):
+        return RepairResult(
+            success=False,
+            strategy=RepairStrategy.ESCALATE_TO_USER,
+            actions_taken=[],
+            verification_passed=False,
+            error=f"No repair policy wired for category={category} (ADR-142)",
+        )
+
+    def list_strategies(self) -> list[dict[str, Any]]:
+        return []
 
 
 class SelfRepairEngine:
@@ -84,6 +109,8 @@ class SelfRepairEngine:
         enable_workflows: bool = True,
         enable_effectiveness_tracking: bool = True,
         enable_health_monitoring: bool = True,
+        strategies: Any = None,
+        workflows: Any = None,
     ):
         self.check_interval = check_interval
         self.warning_threshold = warning_threshold
@@ -94,9 +121,11 @@ class SelfRepairEngine:
         self.enable_effectiveness_tracking = enable_effectiveness_tracking
         self.enable_health_monitoring = enable_health_monitoring
 
-        # Core components
-        self.strategies = get_strategy_registry()
-        self.workflows = get_healing_workflows() if enable_workflows else None
+        # Core components. ``strategies`` / ``workflows`` are agent-POLICY
+        # surfaces injected by the composition root (ADR-142: substrate must
+        # not import plugins — ADR-007). Unwired → honest degrade.
+        self.strategies = strategies if strategies is not None else _EscalateOnlyRegistry()
+        self.workflows = workflows if (workflows is not None and enable_workflows) else None
         self.effectiveness = get_effectiveness_tracker() if enable_effectiveness_tracking else None
         self.health_monitor = (
             get_health_monitor(
@@ -453,10 +482,16 @@ def get_self_repair_engine(**kwargs: Any) -> SelfRepairEngine:
 
 
 def reset_self_repair_engine() -> None:
-    """Reset the global self-repair engine (for testing)."""
+    """Reset the global self-repair engine (for testing).
+
+    Substrate-only reset (ADR-142): the engine + substrate singletons.
+    The Tektos *plugin's* strategy-registry / healing-workflow singletons
+    are plugin state — tests that wire them (and may import the plugin)
+    reset them via ``plugins.tektos.self_repair.strategies.reset_strategy_registry``
+    and ``plugins.tektos.self_repair.workflows.reset_healing_workflows``.
+    The substrate must not import the plugin (ADR-007).
+    """
     global _engine
     _engine = None
-    reset_strategy_registry()
-    reset_healing_workflows()
     reset_effectiveness_tracker()
     reset_health_monitor()

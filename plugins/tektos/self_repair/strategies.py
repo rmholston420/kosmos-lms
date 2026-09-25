@@ -8,9 +8,10 @@ injection interface, the ``RepairStrategyRegistry`` and the
 ``TEKTOS_SELF_REPAIR_REQUIRE_REAL`` strict mode all carry over unchanged.
 
 Kosmos deltas (documented, not behavioral):
-  1. Imports resolve against the vendored data model
-     (``adapters.tektos.vendor.self_repair_models_donor``) instead of the
-     donor package's relative ``.models``.
+  1. Imports resolve against the kernel reliability substrate's data
+     model (``kernel.reliability.models`` — ADR-142 re-home of the
+     vendored donor data primitives) instead of the donor package's
+     relative ``.models``.
   2. Docstring provenance header (this file).
 
 Simulation semantics are UNCHANGED from the donor: built-in strategies
@@ -29,7 +30,7 @@ import os
 import time
 from typing import Any
 
-from adapters.tektos.vendor.self_repair_models_donor import (
+from kernel.reliability.models import (
     RepairResult,
     RepairStrategy,
 )
