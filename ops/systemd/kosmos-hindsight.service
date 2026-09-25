@@ -1,0 +1,35 @@
+# Kosmos-LMS owned Hindsight daemon (:9178) — cross-session memory.
+# Independent of the Hermes (:9177) and Tektos (:9000) copies:
+# own profile (~/.hindsight/profiles/kosmos.env), own database
+# (hindsight_kosmos) on the shared host Postgres, shared GPU LLM (:8090).
+# Hindsight is *optional* to the kernel — Wants=, not Requires=, so a
+# failing Hindsight does not tank anything else (ADR-101 degrade pattern).
+#
+# Runs from the Kosmos venv (2026-09-25, was borrowing
+# tektos-ultima-v1/.venv). Install the runtime first:
+#   uv pip install --python .venv/bin/python hindsight-api-slim==0.9.2 sentence-transformers
+#   # (or: uv pip install --python .venv/bin/python ".[hindsight]")
+# sentence-transformers is a hard boot requirement: the kosmos profile sets
+# HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL, which drives LocalSTEmbeddings.
+[Unit]
+Description=Kosmos-LMS Hindsight daemon (:9178)
+After=network-online.target
+Wants=network-online.target
+StartLimitBurst=3
+StartLimitIntervalSec=120
+
+[Service]
+Type=simple
+ExecStart=/home/rmholston/dev/kosmos-lms/.venv/bin/hindsight-api --port 9178 --log-level info
+WorkingDirectory=/home/rmholston/var/lib/kosmos/hindsight
+Environment=PATH=/home/rmholston/dev/kosmos-lms/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=VIRTUAL_ENV=/home/rmholston/dev/kosmos-lms/.venv
+EnvironmentFile=/home/rmholston/.hindsight/profiles/kosmos.env
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kosmos-hindsight
+
+[Install]
+WantedBy=default.target
