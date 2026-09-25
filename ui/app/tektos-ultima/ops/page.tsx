@@ -10,8 +10,10 @@
  *   db        GET  /api/db · /api/db/backups · /api/db/schema
  *             POST /api/db/backup · /api/db/restore · /api/db/optimize
  *             GET  /api/db/analyze
- *   memory    GET  /api/memory · /api/memory/stats
- *             POST /api/memory/decay
+ *   memory    (kernel-native, ADR-135) GET /api/memory · /api/memory/stats
+ *             POST /api/memory/decay → honest degrade (no kernel referent:
+ *             kernel memory is a MemoryEvent graph, tier decay is Tektos
+ *             plugin policy — landing later)
  *   skills    GET  /api/skills · /api/skills/stats
  *             POST /api/skills/{id}/toggle
  *   tools     GET  /api/tools
@@ -332,10 +334,9 @@ function MemoryTab() {
   const [mem, setMem] = useState<unknown>(null);
   const [stats, setStats] = useState<unknown>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    const [m, s] = await Promise.all([g("/api/memory"), g("/api/memory/stats")]);
+    const [m, s] = await Promise.all([g("/api/memory", ""), g("/api/memory/stats", "")]);
     setMem(m);
     setStats(s);
   }, []);
@@ -358,23 +359,20 @@ function MemoryTab() {
               .map(([k, v]) => <Metric key={k} label={k} value={typeof v === "object" ? JSON.stringify(v) : String(v)} />)
           : <span style={{ fontSize: "var(--font-sm, 0.8125rem)", color: "var(--color-text-dim, #888)" }}>stats unavailable</span>}
         <span style={{ flex: 1 }} />
+        {/* ADR-135 honest degrade: the donor's tier decay has no kernel
+            referent — the kernel memory is a MemoryEvent graph (no tiers,
+            no decay value function). Tier/decay policy lands later as
+            Tektos plugin policy against registry.memory. */}
         <button
           data-testid="tektos-ops-memory-decay-btn"
-          style={btnStyle}
-          disabled={busy}
+          style={{ ...btnStyle, opacity: 0.45, cursor: "not-allowed" }}
+          disabled
+          title="Kernel-native memory has no tier decay (arrives with Tektos plugin policy)"
           onClick={() => {
-            if (!window.confirm("Run memory decay? Low-value memories will be demoted/archived.")) return;
-            setBusy(true);
-            setMsg(null);
-            void act("/api/memory/decay")
-              .then((r) => setMsg(r.ok ? "decay: ok" : `decay failed: ${r.error ?? "unknown"}`))
-              .finally(() => {
-                setBusy(false);
-                void load();
-              });
+            setMsg("decay unavailable: kernel memory is a MemoryEvent graph — no tier decay (Tektos plugin policy, coming)");
           }}
         >
-          {busy ? "Decaying…" : "Decay"}
+          Decay (kernel: n/a)
         </button>
       </div>
 
