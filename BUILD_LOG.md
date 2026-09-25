@@ -4589,3 +4589,74 @@ Hermes Agent uses) is now the primary LLM lane; Ollama is fallback-only.
  - **T5** (`0c56442`): TelemetryTab reframe — nested envelope, base `""` (same-origin kernel): GPU temp/utilization/power/VRAM sparklines (5 s poll, 120 samples) + GPU-mem-util/fan/gfx-mem clocks + CPU/RAM/disk metrics. VRAM is raw **MiB** from `nvidia-smi` (donor fidelity) rendered as GiB; timestamp epoch seconds (donor shape) rendered via `Date`. Header doc: 5/7 → 6/7 tabs kernel-native.
  - **Verified:** `next build` EXIT 0 (22/22); full `tests/kernel plugins/tektos tests/adapters` regression green (exit 0, known Colossus-only interactive skips); live on restarted kernel (:8000): `/api/telemetry` → 200 with real nvidia-smi sample (47 °C, 71.38/400 W, 29.9/32.6 GiB VRAM, 2497/13801 MHz, CPU 2.3 %, RAM 63.4/124.9 GiB, disk 1426/1872.5 GiB); bundle check: retired flat-shape keys absent, `/api/telemetry` present in the ops chunk. tsc: only 1 pre-existing Playwright-spec error (untouched).
  - **Remaining ops-page gateway refs:** logs tab, self-repair tab, + the page-level `/health` upstream probe (drives the "upstream down" banner — a small follow-up, or folds into the `main.py` deletion exit gate).
+
+---
+
+## Stage 11.23 — ops Self-Repair tab: SPLIT backends (ADR-139) — 2026-09-25
+
+### Context
+
+The ops RepairTab polled three gateway routes to the standalone engine:
+`GET /api/self_repair/status`, `GET /api/self_repair/history` (the
+EXECUTING daemon's repair ledger), and `POST /api/self_repair/repair`
+(manual trigger). The kernel's self-repair referent (ADR-128, Stage
+11.11) is propose-only: `GET /api/self_repair/status` returns
+`{status, healthy, note, proposer.{wired,tier,confidence,provenance},
+strategies.{strategies_registered,categories,strategy_names}}` — an
+HUMAN_REQUIRED proposer (19 static strategies) publishing
+`tektos.self_modification.proposed` on the event bus for human
+approval. The kernel has **no execution path** (ADR-090: `apply()`
+raises) and **no repair history endpoint**.
+
+Recon correction (this session): the **logs tab is ALREADY
+kernel-native** (ADR-129, Stage 11.13 — `g("/api/logs", "")`, drop-in
+shape) — it was mis-listed as "remaining" in the ADR-137/138 notes.
+Self-repair was the true last tab family.
+
+### Decision (user-chosen)
+
+**SPLIT BACKENDS** — status kernel-native, history + trigger stay on
+the gateway. The standalone engine's executed-repair ledger is real
+data until `main.py` retires; the user chose live execution over an
+honest empty state. Alternatives rejected: (a) honest split with a
+bus-derived proposal history (ADR-133 pattern) + trigger removed; (b)
+UI-only minimal with history as honest empty state + trigger removed.
+
+### Slices
+
+- **R1** (`283f1d4`) — status re-point: `g("/api/self_repair/status",
+  "")` (base `""` = same-origin kernel, ADR-128 envelope). Donor
+  execution metrics (Enabled/Armed/Last check — fields the kernel
+  envelope lacks) re-pointed to **Proposer** (wired/not wired),
+  **Approval tier** (HUMAN_REQUIRED), **Strategies** (19 registered),
+  **Events (engine)** (history length). Donor fields no longer
+  referenced.
+- **R2** (`283f1d4`) — explicit split note rendered under the
+  metrics: kernel proposer is propose-only (ADR-128), publishes
+  `tektos.self_modification.proposed` for human approval, execution
+  not wired in kernel; history + trigger are served by the standalone
+  engine through the ADR-109 gateway. `act("/api/self_repair/repair")`
+  + `g("/api/self_repair/history")` UNCHANGED (default GATEWAY base).
+- **R3** (`283f1d4`) — header doc (intro line: logs is ADR-129
+  kernel-native, repair is split; repair line: split annotation) +
+  `next build` EXIT 0 (2.8 s, 22/22). Verified: `isObj` null-guard
+  present (line 63); live kernel status wired/HUMAN_REQUIRED/19
+  strategies; gateway `/api/self_repair/history` → `{"history":[]}`;
+  bundle references `api/self_repair` exactly where expected.
+- **R4** (this commit) — ADR-139 + README row + this BUILD_LOG entry.
+
+### Result
+
+- Ops page: **6 of 7 tabs fully kernel-native** (db, memory, skills,
+  tools, logs, telemetry); self-repair is split (status kernel,
+  history/trigger gateway).
+- **Residual gateway refs (ops page):** self-repair history + trigger
+  (split by user decision) + the page-level `/health` upstream probe
+  (drives the "upstream down" banner). Both fold into the `main.py`
+  deletion exit gate (Stage 14.5). At deletion time the history
+  section + trigger become the residual delta: either a bus-derived
+  proposal history (ADR-133 pattern) or an honest empty state —
+  decide then.
+- **Stage 11 endpoint split is now at the exit-gate boundary.** Next
+  in plan order: WebSockets (11.7) or the `main.py` deletion exit
+  gate (Stage 14.5).
