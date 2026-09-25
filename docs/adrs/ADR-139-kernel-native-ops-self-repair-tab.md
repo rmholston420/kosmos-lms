@@ -29,10 +29,29 @@ The tab's donor-shaped metrics (Enabled/Armed/Last check) referenced
 fields the kernel envelope does not carry, so re-pointing the status
 call alone would have rendered "—"s.
 
-## Decision (user-chosen)
+## Decision (user-chosen, reconfirmed 2026-09-25)
 
 **Split backends.** Status is kernel-native; history + the repair
-trigger stay on the gateway:
+trigger stay on the **gateway** — i.e. the ADR-109 in-kernel reverse
+proxy (`kernel/tektos_ultima_gateway.py`, same-origin :8000 routes
+forwarding to :8020). That is a migration bridge, NOT a separate
+service: it dies with :8020 at the Stage 14.5 `main.py` deletion
+gate. The split is therefore **exit-gate debt by design**, not a
+permanent architecture:
+
+- **Run-repair trigger:** execution never comes into the kernel
+  (ADR-090/128: self-modification is a human-approved proposal
+  pipeline, `apply()` raises). At 14.5 the button is *removed, not
+  disabled* — it retires with the engine; it is never "ported".
+- **History (executed-repair ledger):** real data in :8020's process.
+  At 14.5 it becomes a bus-derived PROPOSAL history
+  (`tektos.self_modification.proposed` via `read_recent`, the ADR-133
+  immune-history pattern) or an honest empty state.
+
+User reconfirmation (2026-09-25, when asked whether to flip the tab
+to fully kernel-native NOW vs. at 14.5): **keep as-is until 14.5** —
+live executed-repair data stays served by the engine through the
+bridge until deletion; the flip is the recorded residual delta.
 
 1. **R1 — status kernel-native:** `g("/api/self_repair/status", "")`
    (base `""` = same-origin kernel, ADR-128 envelope). Metrics
