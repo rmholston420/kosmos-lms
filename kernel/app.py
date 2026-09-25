@@ -1864,6 +1864,36 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # noqa: BLE001
         registry.errors["self_improvement"] = f"{type(exc).__name__}: {exc}"
 
+    # --- ADR-141 T5: dynamic ToolRegistry + 7 built-in sandbox tools --------
+    # Donor semantics (main.py:283-292): the tool registry boots
+    # UNCONDITIONALLY at kernel start with the event bus, then
+    # load_built_in(sandbox) registers the 7 coding-agent tools.
+    #
+    # Layering (user porting rule): the substrate is the kernel's
+    # kernel.tool_registry.ToolRegistry (T5a); the toolset + execution are
+    # the Tektos plugin's SandboxProvider + builtin_defs (T5b/T5c), injected
+    # here — the composition root is the only place plugin→kernel wiring
+    # may cross (ADR-007). The donor's MCP client + skill-manager hook are
+    # separate subsystems (out of T5 scope); unwired here they simply don't
+    # import additional tools, which matches donor boot order.
+    global _tool_registry, _tool_sandbox
+    if _tool_registry is not None:
+        # Pre-seeded (tests, or a re-entered lifespan): keep the existing
+        # registry — the donor boots it exactly once per process.
+        pass
+    else:
+        try:
+            from kernel.tool_registry import ToolRegistry
+            from plugins.tektos.tools.builtin_defs import register_donor_builtins
+            from plugins.tektos.tools.sandbox_provider import SandboxProvider
+
+            _tool_sandbox = SandboxProvider()
+            _tool_registry = ToolRegistry(event_bus=registry.event_bus)
+            register_donor_builtins(_tool_registry, _tool_sandbox)
+        except Exception as exc:  # noqa: BLE001
+            _tool_registry = None
+            _tool_sandbox = None
+            registry.errors["tool_registry"] = f"{type(exc).__name__}: {exc}"
 
     # --- Tektos UI sub-app mount (ADR-065, Stage 6.5.8) -----------------------
     # Depends on ``registry.approval`` (ADR-062) + ``registry.memory``
@@ -4272,14 +4302,15 @@ def skills_stats() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # /api/tools — ADR-126 (v2 Stage 11.10, tools family)
 #
-# The old card proxied :8020/api/tools — the standalone engine's executable
-# TektosToolRegistry (11 descriptors with sandbox limits + live call
-# counters). The kernel never boots that registry; its real tools surface is
+# The old card proxied :8020/api/tools. The kernel's REAL tools surface is
 # the Tektos Tool Router (Stage 8.5, ADR-107): the static capability table
 # (known tool → category) + a routing-only engine that maps task
-# descriptions / SubTask.tools_needed onto ToolRoutes. Execution (approval
-# gateway + sandbox) stays on the standalone engine for now — this endpoint
-# reports what the kernel actually has and says so honestly.
+# descriptions / SubTask.tools_needed onto ToolRoutes.
+#
+# ADR-141 T5 added the executable ToolRegistry (donor ToolRegistry port:
+# 7 built-in sandbox tools + management routes /api/tools/schema,
+# /register, /{name}/enable|disable|execute, just below this endpoint) —
+# this read-side endpoint keeps reporting the ADR-107 router truth.
 # ---------------------------------------------------------------------------
 
 
@@ -4347,11 +4378,118 @@ def tools_stats() -> dict[str, Any]:
             "known_tool_names": known_tools,
             "routes_buffered": routes_buffered,
             "recent_routes": recent_routes,
-            "execution": "not wired in kernel (standalone Tektos registry)",
+            "execution": "wired via ToolRegistry (ADR-141 T5) — /api/tools/{name}/execute",
         },
         "errors": errors,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+# ---------------------------------------------------------------------------
+# /api/tools/* — ADR-141 T5 (donor tool-management routes)
+#
+# Donor source: tektos-ultima main.py L2843-2935 — the management surface of
+# the dynamic ToolRegistry (5 routes on top of the ADR-136/126 GET read-side
+# above). Donor-faithful: same paths, same wire shapes, same 501 semantics.
+#
+# Layering (user porting rule): the registry SUBSTRATE (ToolDefinition +
+# ToolRegistry — register/get/list/execute/schema + tool.* events) is generic
+# shared infrastructure → kernel/tool_registry.py (T5a). The coding-agent
+# toolset (the 7 built-in sandbox tools + their execution) is the Tektos
+# threat model → plugins/tektos/tools/ (T5b sandbox_provider, T5c
+# builtin_defs), injected here at boot (composition root; ADR-007).
+#
+# Donor parity notes:
+#  - ``POST /api/tools/register`` is a DONOR 501 STUB: runtime HTTP tool
+#    registration is refused (a JSON body cannot carry a handler callable).
+#    Donor keeps the route so callers get a clear 501, not a silent no-op.
+#  - The donor's /api/mcp/* routes live with the MCP client (a separate
+#    subsystem, not in the ADR-141 T5 five-route scope).
+# ---------------------------------------------------------------------------
+
+_tool_registry: Any = None  # ToolRegistry — set in the boot (lifespan) below
+_tool_sandbox: Any = None   # SandboxProvider — set in the boot (lifespan) below
+
+
+@app.get("/api/tools/schema")
+async def get_tools_schema() -> dict[str, Any]:
+    """All enabled tools as OpenAI-compatible function schema (donor wire)."""
+    if _tool_registry is None:
+        return {"error": "Tool registry not initialized"}
+    return {"tools": _tool_registry.to_tools_schema()}
+
+
+class _RegisterToolBody(BaseModel):
+    name: str = Field(description="Tool name")
+    description: str = Field(description="Tool description")
+    parameters: dict[str, Any] = Field(
+        default_factory=dict, description="Tool parameters schema"
+    )
+
+
+@app.post("/api/tools/register")
+async def register_tool(body: _RegisterToolBody):
+    """Registering arbitrary tools over HTTP is not supported.
+
+    A ToolDefinition needs a real handler callable; accepting one by
+    JSON body would either be a security hole (arbitrary-code upload)
+    or a placeholder that returns a canned string on every invocation
+    (which is what this endpoint used to do). Real tools must be added
+    in-process via ``ToolRegistry.register`` at startup, or through MCP
+    integration for external tools. This route stays wired so callers
+    get a clear 501 instead of silently registering a no-op tool.
+    """
+    # Reference body so linters don't flag the unused parameter (donor).
+    _ = body
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "Runtime tool registration over HTTP is not implemented. "
+            "Register tools in-process via ToolRegistry.register or expose "
+            "them through MCP."
+        ),
+    )
+
+
+@app.post("/api/tools/{tool_name}/enable")
+async def enable_tool(tool_name: str) -> dict[str, Any]:
+    """Enable a disabled tool (donor wire)."""
+    if _tool_registry is None:
+        return {"error": "Tool registry not initialized"}
+    tool = _tool_registry.get(tool_name)
+    if not tool:
+        raise HTTPException(status_code=404, detail=f"Unknown tool: {tool_name}")
+    tool.enabled = True
+    return {"status": "enabled", "name": tool_name}
+
+
+@app.post("/api/tools/{tool_name}/disable")
+async def disable_tool(tool_name: str) -> dict[str, Any]:
+    """Disable a tool (donor wire)."""
+    if _tool_registry is None:
+        return {"error": "Tool registry not initialized"}
+    tool = _tool_registry.get(tool_name)
+    if not tool:
+        raise HTTPException(status_code=404, detail=f"Unknown tool: {tool_name}")
+    tool.enabled = False
+    return {"status": "disabled", "name": tool_name}
+
+
+class _ExecuteToolBody(BaseModel):
+    parameters: dict[str, Any] = Field(
+        default_factory=dict, description="Tool execution parameters"
+    )
+
+
+@app.post("/api/tools/{tool_name}/execute")
+async def execute_tool(
+    tool_name: str, body: _ExecuteToolBody
+) -> dict[str, Any]:
+    """Execute a tool with given parameters (donor wire)."""
+    if _tool_registry is None:
+        return {"error": "Tool registry not initialized"}
+    result = _tool_registry.execute(tool_name, body.parameters)
+    return {"result": result}
 
 
 # ---------------------------------------------------------------------------

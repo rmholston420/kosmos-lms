@@ -1,10 +1,10 @@
 """Stage 11.10 — ADR-126 tools tests: /api/tools.
 
 Kernel-native Tektos tools status (replaces the ADR-109 gateway proxy to
-:8020, whose executable TektosToolRegistry list has no kernel referent).
-The kernel's real tools surface is the Tektos Tool Router (ADR-107,
-routing-only) + the static capability table. Execution stays on the
-standalone engine — the endpoint must report that honestly.
+:8020). The kernel's real tools surface is the Tektos Tool Router (ADR-107,
+routing-only) + the static capability table. ADR-141 T5 added the executable
+ToolRegistry (donor port) — /api/tools/{name}/execute now reports wired
+execution; this endpoint keeps reporting the ADR-107 router truth.
 
 Tests run GPU-free: no network, no Postgres. The registry is faked per
 test; the router is the REAL ``TektosToolRouter`` (routing-only, so it
@@ -52,7 +52,8 @@ def test_tools_router_off_degraded(client: TestClient) -> None:
     }
     assert o["tools"]["routes_buffered"] is None
     assert o["tools"]["recent_routes"] == []
-    assert "standalone Tektos registry" in o["tools"]["execution"]
+    # ADR-141 T5 wired the executable ToolRegistry — the endpoint now says so.
+    assert "ToolRegistry (ADR-141 T5)" in o["tools"]["execution"]
     assert o["errors"] == []
 
 
