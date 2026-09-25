@@ -4,8 +4,9 @@
  * /tektos-ultima/sessions — session list + live chat (Tektos integration
  * Stage 9.3, ADR-111).
  *
- * Drives the standalone Tektos API (:8020) through the kernel gateway
- * (ADR-109 D1):
+ * All calls are kernel-native (same origin). ADR-131 moved session
+ * lifecycle; ADR-132 moved models, model-switch, replay and the
+ * prompt/sse turn stream (the standalone :8020 is fully retired):
  *
  *   GET  /api/sessions                          — active session list (polled 10 s)
  *   POST /api/sessions                          — create session
@@ -28,11 +29,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import Link from "next/link";
 
-const GATEWAY = "/api/tektos-ultima/gateway";
-// ADR-131 (Stage 11.15): session *lifecycle* (list/create/get/fork/
-// archive/interrupt/rename) is now kernel-native — same origin, no proxy.
-// ADR-132 (Stage 11.16): models, model-switch and replay also kernel-native.
-// Only conversation (prompt/sse) stays on the gateway until slice G lands.
 const KERNEL = "";
 const POLL_MS = 10_000;
 const FRAME_HEIGHT = "calc(100vh - var(--top-bar-h, 48px))";
@@ -353,7 +349,7 @@ export default function TektosSessionsPage() {
         return { ...prev, [id]: { ...c, messages: msgs } };
       });
     try {
-      const r = await fetch(`${GATEWAY}/api/prompt/sse`, {
+      const r = await fetch(`${KERNEL}/api/prompt/sse`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt, session_id: id }),

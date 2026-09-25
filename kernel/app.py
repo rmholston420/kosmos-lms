@@ -1085,22 +1085,37 @@ async def lifespan(app: FastAPI):
             return None  # silent — the default
 
         # ``on`` requires the three Stage 3.13 base collaborators. Pull
-        # them from the registry; when the plugin exposes them under a
-        # nested handle we fall through to ``None`` and log-degrade.
+        # them from the registry; missing → ADR-101 degrade to ``None``
+        # with a WARN log (see the inline materialisation below).
         immune = getattr(registry, "immune", None)
         loop_safety = getattr(registry, "loop_safety", None)
         thermal = getattr(registry, "thermal", None)
 
-        # Fallback: the tektos plugin often carries these three on itself
-        # rather than on the registry root. Probe the plugin handle when
-        # the direct registry slots are unset.
-        tektos_plugin = getattr(registry, "tektos", None)
-        if tektos_plugin is not None:
-            immune = immune or getattr(tektos_plugin, "immune", None)
-            loop_safety = loop_safety or getattr(
-                tektos_plugin, "loop_safety", None
+        # ADR-132 slice G3 (Gap 2 close-out): the registry root has no
+        # ``loop_safety``/``thermal`` slots — the Stage 8.2 wiring tests
+        # injected stubs, so the live kernel never materialised them and
+        # this helper always degraded to None even with the env on.
+        # Instantiate the real adapters inline (all deps optional):
+        # loop safety needs only the event bus; thermal uses the donor
+        # MetricsCollector with Colossus thresholds (no-op collector in
+        # tests). ``immune`` is the one true registry slot (booted at
+        # line ~972). The kernel's own ThermalWatchdog (registry.
+        # thermal_watchdog) is a separate object and does NOT satisfy
+        # the ThermalPort surface here — do not confuse the two.
+        if loop_safety is None and registry.event_bus is not None:
+            from adapters.loop_safety.tektos.adapter import (
+                TektosLoopSafetyAdapter,
             )
-            thermal = thermal or getattr(tektos_plugin, "thermal", None)
+
+            loop_safety = TektosLoopSafetyAdapter(
+                event_bus=registry.event_bus
+            )
+        if thermal is None and registry.event_bus is not None:
+            from adapters.thermal.tektos.adapter import (
+                TektosThermalAdapter,
+            )
+
+            thermal = TektosThermalAdapter(event_bus=registry.event_bus)
 
         missing = [
             name
@@ -1141,6 +1156,7 @@ async def lifespan(app: FastAPI):
         )
         # Reflect the wired loop onto the TektosPlugin dataclass slot too
         # (ADR-104 D11) so plugin-side code paths can reach it.
+        tektos_plugin = getattr(registry, "tektos", None)
         if tektos_plugin is not None and hasattr(
             tektos_plugin, "turn_loop"
         ):
@@ -4627,6 +4643,55 @@ async def tektos_replay_session(session_id: str) -> list[dict[str, Any]]:
     from kernel.tektos_replay import get_replay
 
     return await get_replay(registry.event_bus, session_id)
+
+
+@app.post("/api/prompt/sse")
+async def tektos_prompt_sse(payload: dict[str, Any]) -> StreamingResponse:
+    """Run a prompt as a Tektos turn and stream OpenAI chunk frames (ADR-132 slice G).
+
+    Donor parity with :8020 POST /api/prompt/sse: the body is
+    ``{session_id, prompt, model?}`` and the response is a
+    ``text/event-stream`` of ``chat.completion.chunk`` frames
+    (``choices[0].delta.content`` / ``finish_reason``) — the exact wire
+    format the sessions page already parses. The kernel referent for the
+    turn is the kernel-owned ``TektosTurnLoop`` (Stage 8.2, ADR-104);
+    its ``tektos.agent.turn.*`` bus events are mapped to frames by
+    :mod:`kernel.tektos_prompt_sse`. Replaces the :8020 prompt/sse proxy.
+    """
+    session_id = payload.get("session_id")
+    prompt = payload.get("prompt")
+    if not session_id or not isinstance(session_id, str):
+        raise HTTPException(422, "session_id is required")
+    if not prompt or not isinstance(prompt, str):
+        raise HTTPException(422, "prompt is required")
+    port = registry.session
+    if port is None:
+        _session_port_offline()
+    session = await port.get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    loop = registry.tektos_turn_loop
+    if loop is None:
+        raise HTTPException(
+            503,
+            "tektos turn loop offline (KOSMOS_TEKTOS_TURN_LOOP=on required)",
+        )
+    if registry.event_bus is None:
+        raise HTTPException(503, "event bus offline")
+    model = payload.get("model") or getattr(session, "model", "") or "unknown"
+
+    from kernel.tektos_prompt_sse import stream_prompt_sse
+
+    return StreamingResponse(
+        stream_prompt_sse(
+            bus=registry.event_bus,
+            loop=loop,
+            session_id=session_id,
+            prompt=prompt,
+            model=model,
+        ),
+        media_type="text/event-stream",
+    )
 
 
 @app.post("/api/sessions/{session_id}/fork")
