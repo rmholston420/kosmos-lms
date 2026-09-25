@@ -63,7 +63,9 @@ const SUBSYSTEMS: Subsystem[] = [
   { id: "rag", title: "RAG", icon: "📚", endpoint: "/api/rag/status", base: "" },
   { id: "skills", title: "Skills", icon: "⚡", endpoint: "/api/skills/stats", base: "" },
   { id: "tools", title: "Tools", icon: "🔧", endpoint: "/api/tools", base: "" },
-  { id: "models", title: "Models", icon: "🎛️", endpoint: "/api/llm/status" },
+  // ADR-141 T2: base:"" was missing — the card silently fell through to the
+  // GATEWAY fallback (:8020). Kernel-native /api/llm/status (app.py) is the referent.
+  { id: "models", title: "Models", icon: "🎛️", endpoint: "/api/llm/status", base: "" },
   { id: "plugins", title: "Plugins", icon: "🧩", endpoint: "/api/plugins", base: "" },
   { id: "neo4j", title: "Neo4j", icon: "🌐", endpoint: "/neo4j/status", base: DATA_SERVICES },
   { id: "postgres", title: "Postgres", icon: "🐘", endpoint: "/postgres/status", base: DATA_SERVICES },
