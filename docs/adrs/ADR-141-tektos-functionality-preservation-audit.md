@@ -257,6 +257,16 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
      experiences/enqueue) — pairs with the ADR-134 hindsight read-side. **P (2026-09-25, ADR-143)** — all 5 routes kernel-native on `registry.tektos_self_improve`/`registry.tektos_learning`; donor + UI wire-compatible.
    - **T4 — planner surface** (4: templates/status/plan/language-games) — the
      `build_spec_planner_router` exists unmounted; mounting + missing routes.
+     **P (2026-09-25, `9fcc1df`)** — all 4 routes kernel-native at the donor paths: T4a
+     `POST /api/planner/plan` + `GET /api/planner/templates` + `GET
+     /api/planner/language-games` over the donor `Planner` pipeline ported to
+     `plugins/tektos/planner/pipeline.py` (the five leaf stages already
+     existed from Stage 8.4); T4b `GET /api/planner/status` over the
+     `PlannerOrchestrator` elevated to `kernel/plan_tracker.py`. Donor
+     `model_dump()` wire verified field-for-field equal to the kernel
+     serializer; 13 wire tests green; full `tests/kernel/` 546 passed. The
+     SDK task-start plan hook (donor `sdk.py:889`, `plan.*` WS broadcast)
+     rides with ADR-140.
    - **T5 — tool management surface** (5: register/schema/enable/disable/execute)
      — pairs with the ADR-136 tools read-side.
    - **T6 — memory actions** (2: decay, entry delete) — pairs with ADR-135.

@@ -4888,3 +4888,46 @@ MCP, metabolism) in ROI order.
 - **PORTING_LEDGER / ADR updated:** ADR-141 T2 row → **P (2026-09-25, `2fc7973` + `80ff592`)**.
 - **Gate progress (ADR-141):** T1 ✓, T2 ✓, T3 ✓. Remaining before `main.py` deletion: T4 (planner), T5 (tools mgmt), T6 (memory actions), T7 (embedder), T8 (misc), D-route Stage 13 subsystem ports, `/health` probe removal ×3, ADR-140 WS, ADR-109 gateway deletion + :8020 retirement.
 - **Stop-condition status:** met — T2 complete; next T4 (planner surface, 4 routes — `build_spec_planner_router` exists unmounted).
+
+## 2026-09-25 14:58 EDT — ADR-141 T4 complete: planner surface (4 routes) kernel-native
+
+- **T4a — planner pipeline** (`POST /api/planner/plan`, `GET /api/planner/templates`,
+  `GET /api/planner/language-games`): the donor's `Planner` orchestrator
+  (`agents/planner/orchestrator.py`, 152 LOC, pure heuristic — no LLM)
+  ported verbatim to `plugins/tektos/planner/pipeline.py`. The five leaf
+  stages (language_game / disambiguator / translator / template_selector /
+  spec_generator) already existed from Stage 8.4 (ADR-106) — only the
+  composer class was missing. Donor `POST /plan` returns
+  `PlannerOutput.model_dump()`; the kernel models are frozen dataclasses,
+  so `_planner_output_to_wire` in `kernel/app.py` serializes to the
+  identical JSON (dataclasses→dicts, tuples→lists, enums→values). The
+  ADR-106 D8 router (`build_spec_planner_router`) is a *different*
+  surface (async, session-bound, persisting) and stays untouched.
+- **T4b — plan tracker** (`GET /api/planner/status`): donor
+  `runtime/planner_orchestrator.PlannerOrchestrator` (~130 LOC, pure
+  in-memory plan lifecycle — dataclasses + dict, no LLM) elevated to
+  `kernel/plan_tracker.py` per the layering rule (generic substrate, not
+  Tektos policy). Donor main.py:1455 boots it unconditionally → kernel
+  keeps a process-wide `_plan_tracker` singleton; `/status` returns
+  `{"status": "initialized", "stats": get_plan_stats()}` verbatim
+  (`total_plans/active/completed/failed/active_plan_id`).
+- **Donor cross-reference documented:** the SDK task-start hook
+  (donor `runtime/sdk.py:889` — `create_plan(prompt)` + `plan_proposed`/
+  `plan_approved` WS broadcast for the frontend PlanRow) is the only
+  consumer that populates the tracker; it rides with ADR-140
+  (WebSockets), noted in the ADR-141 T4 row.
+- **Verification:** donor-vs-kernel wire diffs run live (donor
+  `model_dump()` == kernel serializer on the same prompt; 4 templates,
+  4 language games field-for-field equal) + 13 wire-shape tests in
+  `tests/kernel/test_adr141_t4_planner_surface.py` (ADR-132 isolation:
+  bare TestClient without lifespan, `monkeypatch.chdir(tmp_path)`,
+  monkeypatched `_plan_tracker` singleton). Full `tests/kernel/`:
+  **546 passed, 0 failed** (was 533).
+- **PORTING_LEDGER / ADR updated:** ADR-141 T4 row → **P (2026-09-25, `9fcc1df`)**.
+- **Gate progress (ADR-141):** T1 ✓, T2 ✓, T3 ✓, T4 ✓. Remaining before
+  `main.py` deletion: T5 (tools mgmt), T6 (memory actions), T7
+  (embedder), T8 (misc), D-route Stage 13 subsystem ports, `/health`
+  probe removal ×3, ADR-140 WS, ADR-109 gateway deletion + :8020
+  retirement.
+- **Stop-condition status:** met — T4 complete; next T5 (tool
+  management surface, 5 routes — pairs with ADR-136 tools read-side).
