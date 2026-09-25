@@ -4419,3 +4419,10 @@ Hermes Agent uses) is now the primary LLM lane; Ollama is fallback-only.
 - **Fix:** `models` array on ADR-118's `/api/llm/status`, built from the live `FailoverLLMAdapter` (primary llama.cpp `:8090` qwen3.8-27b-code, fallback Ollama `:11434` qwen3-vl:4b). `active` tracks the failover pin; `recommended` = primary. No new route — the card reuses the already-polled endpoint.
 - **UI:** `page.tsx` SUBSYSTEMS models → `/api/llm/status`; parseCard reads nested `models`, prefers active lane, shows `N lanes` + active model + backend.
 - **Verified live:** endpoint returns both lanes with correct active/recommended flags; `next build` clean; 6/6 tests (added both-lane catalog shape + active-follows-failover).
+
+## 2026-09-25 — Stage 11.4 · ADR-120: kernel-native /api/inference/status (Inference card re-point)
+
+- **Problem:** the Inference card fetched `/api/inference/status` through the ADR-109 gateway proxy to the retired :8020 standalone engine's view.
+- **Fix:** kernel-native `GET /api/inference/status` in `kernel/app.py` probes the ACTIVE lane of the live `FailoverLLMAdapter`: llama.cpp → `GET /v1/models`, Ollama → `GET /api/version` (≤3 s bound). Envelope mirrors the old standalone shape so the card parses it unchanged; a down lane reports `degraded` while still naming the lane. Always 200.
+- **UI:** `page.tsx` SUBSYSTEMS inference → `base: ""` (kernel-native root). `parseCard` unchanged (verified `??` in fetchJson, so `""` is authoritative, not coerced to the gateway).
+- **Verified live:** endpoint returns `active / qwen3.8-27b-code / http://127.0.0.1:8090 / ok / true`; kernel healthy, `boot_errors: {}`; `next build` clean + served chunk verified; 4/4 tests (`tests/kernel/test_stage_11_4_adr_120_inference_status.py`: primary probe path, fallback probe path, lane-down degraded-with-identity, no-registry).

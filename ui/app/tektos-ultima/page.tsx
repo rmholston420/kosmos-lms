@@ -58,7 +58,7 @@ interface Subsystem {
 const SUBSYSTEMS: Subsystem[] = [
   { id: "immune", title: "Immune System", icon: "🛡️", endpoint: "/api/immune/health" },
   { id: "thermal", title: "Thermal", icon: "🌡️", endpoint: "/api/thermal/status" },
-  { id: "inference", title: "Inference", icon: "🧠", endpoint: "/api/inference/status" },
+  { id: "inference", title: "Inference", icon: "🧠", endpoint: "/api/inference/status", base: "" },
   { id: "memory", title: "Memory", icon: "🧩", endpoint: "/api/memory/stats" },
   { id: "rag", title: "RAG", icon: "📚", endpoint: "/api/rag/status" },
   { id: "skills", title: "Skills", icon: "⚡", endpoint: "/api/skills/stats" },

@@ -3300,6 +3300,55 @@ async def llm_status() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Inference status (ADR-120) — kernel-native probe of the ACTIVE LLM lane.
+# Replaces the ADR-109 gateway proxy to :8020/api/inference/status. Envelope
+# mirrors the old standalone shape so the UI card parses it unchanged:
+# {status: active|degraded, model, base_url, health: ok|error,
+# llm_available}. The probe is real (≤3 s bound): llama.cpp lane →
+# GET /v1/models, Ollama lane → GET /api/version.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/inference/status")
+async def inference_status() -> dict[str, Any]:
+    """Probe the active inference lane and report the kernel's LLM health."""
+    base: dict[str, Any] = {
+        "status": "degraded",
+        "model": None,
+        "base_url": None,
+        "health": "error",
+        "llm_available": False,
+    }
+    if registry.llm is None:
+        return base
+
+    active = getattr(registry.llm, "active_backend", "primary")
+    primary = getattr(registry.llm, "_primary", None)
+    fallback = getattr(registry.llm, "_fallback", None)
+    if active == "fallback" and fallback is not None:
+        lane_adapter, probe_path = fallback, "/api/version"
+    else:
+        lane_adapter, probe_path = (primary or registry.llm), "/v1/models"
+
+    model = getattr(lane_adapter, "_default_model", None)
+    base_url = getattr(lane_adapter, "_base_url", None)
+    out = {**base, "model": model, "base_url": base_url}
+    if not base_url:
+        return out
+
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(f"{base_url}{probe_path}")
+            resp.raise_for_status()
+        out.update(status="active", health="ok", llm_available=True)
+    except Exception:  # noqa: BLE001 — lane down is a degraded reading, not a 500
+        pass
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Praxis constitution (ADR-068 D2) — read-only integrity anchor for the
 # GOVERNANCE panel. Lazily loads + verifies the constitution on first hit,
 # then caches on ``registry.praxis_constitution``. A tamper failure at read
