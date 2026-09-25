@@ -241,7 +241,7 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
    smallest first within a tier):
    - **T1 — orchestrator `/status` + `/agents`** (2 routes): engine + `agents`
      roster dict already exist (ADR-114); two small routes on the mounted
-     `build_orchestrator_router`. Smallest possible first port.
+     `build_orchestrator_router`. Smallest possible first port. **P (2026-09-25, `7395319`)** — donor-fidelity routes on `/tektos/api/orchestrator/{status,agents}`, AgentsTab re-pointed, 7 tests green + live-verified on :8000.
    - **T2 — session-adjacent surfaces**: `state/{session_id}` read/save/snapshot
      (3), `sessions/{session_id}/events` (1, pairs with ADR-140 WS parity),
      `archive/*` (5).
