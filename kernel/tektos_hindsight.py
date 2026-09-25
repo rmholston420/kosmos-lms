@@ -69,3 +69,39 @@ async def get_experiences(
     preferred = [r for r in results if context in (r.get("tags") or [])]
     others = [r for r in results if r not in preferred]
     return (preferred + others)[:limit]
+
+
+# ── Write leg (ADR-143 T3 / S5a): the learning substrate's dual-persist ──────
+
+
+def retain(
+    content: str,
+    *,
+    context: str | None = None,
+    tags: list[str] | None = None,
+) -> dict[str, Any]:
+    """Persist one memory to the Hindsight bank (donor ``HindsightClient.retain``).
+
+    Donor fidelity: wraps the fact in an ``items`` list (single-item
+    ``RetainRequest`` shape) and POSTs to the bank's ``memories``
+    endpoint. SYNC on purpose — the kernel learning substrate
+    (``kernel.learning.LearningEngine._save_to_hindsight``) calls it from a
+    synchronous ``_save_experience`` path, exactly as the donor's sync
+    ``HindsightClient.retain`` did.
+
+    Fail-open at the call site: the engine wraps this in try/except and
+    degrades (the experience still lands in the JSONL ledger). This
+    function itself raises on transport/HTTP errors so the caller decides.
+    """
+    import httpx
+
+    item: dict[str, Any] = {"content": content}
+    if context is not None:
+        item["context"] = context
+    if tags is not None:
+        item["tags"] = tags
+    path = f"/v1/{_profile()}/banks/{_bank_id()}/memories"
+    with httpx.Client(timeout=5.0) as client:
+        response = client.post(f"{_base_url()}{path}", json={"items": [item]})
+        response.raise_for_status()
+        return response.json()

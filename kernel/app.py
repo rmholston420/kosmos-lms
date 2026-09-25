@@ -302,6 +302,20 @@ class _BootRegistry:
         # Proposals are HUMAN_REQUIRED (never auto-applied); execution
         # (repair execution) stays on the standalone engine.
         self.tektos_self_repair: Any = None
+        # ADR-143 T3: kernel learning substrate (donor
+        # ``SelfImprovementAdapter`` — experience → evaluation →
+        # meta-learning → benchmark loop, JSONL ledger). Boots
+        # unconditionally at kernel start (donor main.py:1224-1288 booted
+        # the adapter unconditionally too); the BACKGROUND cycle driver is
+        # separately env-gated via TEKTOS_SELF_IMPROVEMENT_ENABLED.
+        # ``None`` only when its boot raised (see ``registry.errors``).
+        self.tektos_learning: Any = None
+        # ADR-143 T3: kernel learning driver (prompt queue + env-gated
+        # background cycle). The Tektos Hegelian loop
+        # (``plugins.tektos.self_improve.loop``) is injected at boot from
+        # the composition root (ADR-007: the substrate never imports
+        # plugins). ``None`` only when its boot raised.
+        self.tektos_self_improve: Any = None
         # Stage 8.7 (ADR-114): kernel-owned Tektos multi-agent
         # orchestration engine family (TektosOrchestrator +
         # TektosHierarchicalAgent + TektosLongRunningAgent). Env-gated via
@@ -1770,6 +1784,84 @@ async def lifespan(app: FastAPI):
         await registry.self_repair.start()
     except Exception as exc:  # noqa: BLE001
         registry.errors["self_repair"] = f"{type(exc).__name__}: {exc}"
+
+    # --- ADR-143 T3 / S5a: kernel learning substrate + driver ----------------
+    # Donor semantics (main.py:1224-1288): the learning adapter boots
+    # UNCONDITIONALLY at kernel start (the ledger + read API are always
+    # available); only the BACKGROUND cycle driver is env-gated
+    # (TEKTOS_SELF_IMPROVEMENT_ENABLED, default off → queue-only).
+    #
+    # Layering (user porting rule): the substrate lives in the kernel
+    # (kernel.learning); the Tektos Hegelian loop POLICY lives in the
+    # plugin (plugins.tektos.self_improve.loop) and is INJECTED here at
+    # boot — the composition root is the only place plugin→kernel wiring
+    # may cross (ADR-007: the substrate never imports plugins). Unwired
+    # loop → honest ``orchestrator_ready: false`` in /status (donor
+    # booted with ``_self_improvement_loop_orchestrator = None`` on
+    # failure and reported exactly that).
+    try:
+        import kernel.tektos_hindsight as _hindsight
+        from kernel.learning.engine import get_learning_engine
+
+        # DI seam 1 — tick emitter (donor ``ws_event_emitter`` shape):
+        # async (session_id, event_type, payload). Bridges to the event
+        # bus so self_improvement.tick reaches WS subscribers; degrades
+        # open when the bus is absent or publish raises (donor parity).
+        async def _tick_emitter(
+            session_id: str, event_type: str, payload: dict[str, Any]
+        ) -> None:
+            _bus = registry.event_bus
+            if _bus is None:
+                return
+            from ports.event_envelope import EventEnvelope
+
+            await _bus.publish(
+                EventEnvelope(
+                    event_type=event_type,
+                    producer_plugin="kernel",
+                    payload={
+                        **payload,
+                        "session_id": session_id,
+                        "source": "tektos.self_improvement",
+                    },
+                )
+            )
+
+        # DI seam 2 — hindsight retainer (donor ``HindsightClient.retain``
+        # shape): sync .retain(content, *, context, tags). None → the
+        # engine degrades to JSONL-only (fail-open, donor parity).
+        _learning = get_learning_engine(
+            tick_emitter=_tick_emitter,
+            hindsight_retainer=_hindsight,
+        )
+        registry.tektos_learning = _learning
+
+        # S4 loop (plugin policy) → S3 driver (kernel substrate).
+        from kernel.learning.driver import LearningDriver
+        from plugins.tektos.self_improve.loop import SelfImprovementLoop
+
+        _loop = SelfImprovementLoop(
+            planner=registry.tektos_spec_planner,
+            executor=registry.tektos_executor,
+            manager=registry.tektos_manager,
+            reflection=registry.tektos_reflection,
+            synthesis=registry.tektos_synthesis,
+            experience=registry.tektos_experience,
+            learning=_learning,
+        )
+        _driver = LearningDriver(loop=_loop)
+        await _driver.start()
+        registry.tektos_self_improve = _driver
+        import logging
+
+        logging.getLogger(__name__).info(
+            "kosmos.tektos_learning: substrate + driver wired (ADR-143); "
+            "background cycles %s (TEKTOS_SELF_IMPROVEMENT_ENABLED)",
+            "ON" if _driver.running else "OFF (queue-only)",
+        )
+    except Exception as exc:  # noqa: BLE001
+        registry.errors["self_improvement"] = f"{type(exc).__name__}: {exc}"
+
 
     # --- Tektos UI sub-app mount (ADR-065, Stage 6.5.8) -----------------------
     # Depends on ``registry.approval`` (ADR-062) + ``registry.memory``
