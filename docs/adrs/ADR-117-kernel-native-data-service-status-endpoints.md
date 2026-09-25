@@ -75,3 +75,13 @@ qdrant    → {"healthy":true,"status":"connected","base_url":"http://127.0.0.1:
 ```
 
 UI rebuilt (`next build`); the served production bundle (`/_next/static/chunks/2agndj-of1ger.js`) confirmed to carry all five cards with `base:"/api/tektos/data-services"` endpoints, including the new Qdrant card.
+
+## D7 — Neo4j card made green (same-day follow-up, 2026-09-25)
+
+The `unconfigured` state above was the honest pre-fix condition. Recovery steps:
+
+1. **Diagnosis:** live Neo4j is `2026.08.0` — its user table lives in the `system` database, not the legacy `auth.ini` (the file present was stale/legacy and did not gate auth). `neo4j-admin dbms set-initial-password` is first-start-only, and the `NEO4J_AUTH` drop-in does not provision an already-initialized store — both were no-ops. The manually-set password was therefore unrecoverable from disk.
+2. **Recovery (non-destructive, data intact):** `dbms.security.auth_enabled=false` → unauthenticated `ALTER USER neo4j SET PASSWORD` to the repo dev credential (the tracked env file becomes the single source of truth) → restore `auth_enabled=true` → removed the drop-in.
+3. **Kernel env:** `KOSMOS_MEMORY_BACKEND=dozerdb` + `KOSMOS_DOZERDB_URI/_USER/_PASSWORD/_DATABASE` appended to `ops/systemd/kosmos-kernel.local.env`; kernel restarted.
+
+Verified: bolt auth OK with the repo dev credential (`CALL dbms.components()`, nodes=0 — fresh lane); `/api/tektos/data-services/neo4j/status` → `{"healthy":true,"status":"connected","uri":"bolt://127.0.0.1:7687"}`; live kernel env carries all four `KOSMOS_DOZERDB_*` vars, so the memory lane and the card now share one source of truth.

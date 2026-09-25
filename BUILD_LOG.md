@@ -4397,3 +4397,11 @@ Hermes Agent uses) is now the primary LLM lane; Ollama is fallback-only.
   (non-health: logs, directory, sessions, skills, tools, models, plugins,
   immune, thermal, inference, rag, self_repair) move kernel-native per the
   same pattern once this slice is confirmed in the UI.
+
+## 2026-09-25 04:20 EDT — ADR-117 follow-up · Neo4j card made green (DozerDB lane live)
+
+- **Problem:** dashboard Neo4j card showed `unconfigured` (honest pre-fix state — kernel env had no DozerDB lane) and the live Neo4j password (manually set) did not match the repo dev credential.
+- **Diagnosis:** Neo4j `2026.08.0` keeps its user table in the `system` database — the legacy `auth.ini` does not gate auth. `neo4j-admin dbms set-initial-password` is first-start-only and the `NEO4J_AUTH` drop-in does not re-provision an initialized store; the old password was unrecoverable from disk (verified offline: hex PBKDF2-SHA256, 1024 iters).
+- **Fix (non-destructive):** `dbms.security.auth_enabled=false` → unauthenticated `ALTER USER neo4j SET PASSWORD` to the repo dev credential (tracked env = single source of truth) → restore auth. Removed the temporary drop-in. Backups: `auth.ini.stale-20260925`, `neo4j.conf.bak-20260925` (restored).
+- **Kernel env:** `KOSMOS_MEMORY_BACKEND=dozerdb` + `KOSMOS_DOZERDB_URI/_USER/_PASSWORD/_DATABASE` appended to `ops/systemd/kosmos-kernel.local.env` (gitignored; backup in scratch). Kernel restarted.
+- **Verified:** bolt auth OK with repo dev credential (`CALL dbms.components()`, nodes=0); `/api/tektos/data-services/neo4j/status` → `connected`; live kernel env carries all four `KOSMOS_DOZERDB_*` vars — memory lane and card share one source of truth. ADR-117 §D7 appended.
