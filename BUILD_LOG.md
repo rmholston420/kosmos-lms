@@ -4290,3 +4290,21 @@ Use the `kosmos-log-maintenance` Perplexity Computer skill.
   to exit 126 by design. Pre-existing; affects Stage 8.7 terminal path too.
 - ADR-115 authored + README index row. Stage 9 exit-gate DoD now met:
   12 detectors green (9.1) + 7 tools invocable (9.2+9.3).
+
+## 2026-09-25 — GPU-share hardening for shared llama-server :8090
+
+- **llama-server-8090.service**: `--parallel 1` → `--parallel 2` (backup `llama-server-8090.service.bak_parallel1_20260925`).
+  With `--cont-batching` already on, two concurrent requests now interleave token generation
+  instead of queueing FIFO. Previously one 32k-token generation blocked all other consumers
+  (Hermes Agent + Kosmos share this single server).
+- **Live verification**: two concurrent /v1/chat/completions streams both reached first-token
+  in 1.59s and finished at 1.83s/1.94s (wall 1.94s) — true concurrency, not serialization.
+- `adapters/llm/ollama/adapter.py`: `OllamaAdapter` gains `max_concurrent: int = 1` —
+  an `asyncio.Semaphore` now wraps `generate`, `chat`, and `generate_stream`, so the Kosmos
+  lane can never hold both :8090 parallel slots at once. Effect: even under full Kosmos load,
+  one slot (and its compute share) remains available for the Hermes lane.
+- **Verification**: 27/27 `adapters/llm/` contract tests green; semaphore probe (stubbed
+  client): 3 concurrent calls → max_inflight=1 with cap=1, max_inflight=3 with cap=5.
+- **Ops note**: kernel `registry.llm` (OllamaAdapter) still defaults to `:11434`
+  (`KOSMOS_OLLAMA_BASE_URL` unset) — separate from the :8090 shared server; left unchanged
+  here, flagged for a follow-up decision.

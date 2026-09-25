@@ -15,6 +15,7 @@ Design rules from ADR-012 and Kosmos-Build-Spec-v25.md §4:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from collections.abc import AsyncIterator
@@ -54,6 +55,7 @@ class OllamaAdapter:
         base_url: str | None = None,
         default_model: str | None = None,
         timeout_seconds: float = 120.0,
+        max_concurrent: int = 1,
     ) -> None:
         self._base_url = (base_url or _default_base_url()).rstrip("/")
         self._default_model = default_model or _default_model()
@@ -61,6 +63,11 @@ class OllamaAdapter:
             base_url=self._base_url,
             timeout=httpx.Timeout(timeout_seconds, connect=10.0),
         )
+        # GPU-share guard: the shared llama-server (port 8090) runs
+        # --parallel 2 so Hermes and Kosmos can interleave; this semaphore
+        # keeps the Kosmos lane to one in-flight generation at a time so
+        # it can never occupy both slots and starve the Hermes lane.
+        self._gen_sem = asyncio.Semaphore(max(1, max_concurrent))
 
     # ── Generation (non-streaming) ─────────────────────────────────────────
 
@@ -83,9 +90,10 @@ class OllamaAdapter:
         if options:
             payload["options"] = options
 
-        resp = await self._client.post("/api/generate", json=payload)
-        resp.raise_for_status()
-        return resp.json()
+        async with self._gen_sem:
+            resp = await self._client.post("/api/generate", json=payload)
+            resp.raise_for_status()
+            return resp.json()
 
     async def generate_text(
         self,
@@ -129,20 +137,21 @@ class OllamaAdapter:
         if options:
             payload["options"] = options
 
-        async with self._client.stream("POST", "/api/chat", json=payload) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                if not line:
-                    continue
-                try:
-                    chunk = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                delta = chunk.get("message", {}).get("content", "")
-                if delta:
-                    yield delta
-                if chunk.get("done"):
-                    break
+        async with self._gen_sem:
+            async with self._client.stream("POST", "/api/chat", json=payload) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    delta = chunk.get("message", {}).get("content", "")
+                    if delta:
+                        yield delta
+                    if chunk.get("done"):
+                        break
 
     # ── Chat ───────────────────────────────────────────────────────────────
 
@@ -162,9 +171,10 @@ class OllamaAdapter:
         if options:
             payload["options"] = options
 
-        resp = await self._client.post("/api/chat", json=payload)
-        resp.raise_for_status()
-        return resp.json()
+        async with self._gen_sem:
+            resp = await self._client.post("/api/chat", json=payload)
+            resp.raise_for_status()
+            return resp.json()
 
     # ── Embeddings ─────────────────────────────────────────────────────────
 
