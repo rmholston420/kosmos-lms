@@ -9,9 +9,11 @@
  * repair), panels covers the remaining subsystems that only had a home in
  * the standalone :5556 SPA — planner, context, immune, dreamtime, metabolism,
  * multi-agent, self-improvement, schema, hindsight, axioms, knowledge and
- * configuration. Every tab drives the standalone Tektos API (:8020) through
- * the kernel gateway (ADR-109), same-origin, GET-only (the page mutates
- * nothing, so CI can run it against a live upstream safely).
+ * configuration. Tabs whose families have a kernel referent are
+ * kernel-native (same origin): logs (ADR-129), directory (ADR-130),
+ * immune (ADR-133); the rest still drive the standalone Tektos API
+ * (:8020) through the kernel gateway (ADR-109). All GET-only (the page
+ * mutates nothing, so CI can run it against a live upstream safely).
  *
  * Tab -> endpoints:
  *   status   /api/nervous-system/status /api/observability/status /api/mcp/status
@@ -20,8 +22,8 @@
  *            /api/inference/metrics /api/thermal/health
  *   planner  /api/planner/status /api/planner/templates /api/planner/language-games
  *   context  /api/context/status /api/contextCurator/status
- *   immune   /api/immune/detectors /api/immune/threats /api/immune/responses
- *            /api/immune/memory /api/immune/memory/entries
+ *   immune   (kernel-native, ADR-133) /api/immune/detectors /api/immune/threats
+ *            /api/immune/responses /api/immune/memory /api/immune/memory/entries
  *   dreamtime /api/dreamtime/summary /api/dreamtime/history
  *   metabolism /api/metabolism /api/metabolism/context /api/metabolism/history
  *   agents   /api/multi-agent-orchestrator/status /api/multi-agent-orchestrator/agents
@@ -484,11 +486,11 @@ function ImmuneTab() {
 
   const load = useCallback(async () => {
     const [d, th, r, m, e] = await Promise.all([
-      g<Record<string, unknown>>("/api/immune/detectors"),
-      g<Record<string, unknown>>("/api/immune/threats"),
-      g<Record<string, unknown>>("/api/immune/responses"),
-      g<Record<string, unknown>>("/api/immune/memory"),
-      g<Record<string, unknown>>("/api/immune/memory/entries"),
+      g<Record<string, unknown>>("/api/immune/detectors", ""),
+      g<Record<string, unknown>>("/api/immune/threats", ""),
+      g<Record<string, unknown>>("/api/immune/responses", ""),
+      g<Record<string, unknown>>("/api/immune/memory", ""),
+      g<Record<string, unknown>>("/api/immune/memory/entries", ""),
     ]);
     setDetectors(asList(d?.["detectors"]));
     setThreats(asList(th?.["threats"]));

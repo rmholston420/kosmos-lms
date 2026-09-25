@@ -136,7 +136,9 @@ async def test_memory_summary_and_entries(client) -> None:
     assert m["total_threats_observed"] == 2
     assert m["active_threats"] == 1
     assert m["resolved_threats"] == 1
-    assert m["uptime_hours"] >= 0.0
+    # in-process kernel: boot ts is import-time, so uptime is seconds,
+    # not an epoch-scale number (guards the monotonic-vs-epoch bug)
+    assert 0.0 <= m["uptime_hours"] < 1.0
     r2 = await client.get("/api/immune/memory/entries")
     assert r2.status_code == 200
     assert len(r2.json()["response_history"]) == 2

@@ -4697,12 +4697,15 @@ async def tektos_immune_memory() -> dict[str, Any]:
     """Memory summary: observed/active/resolved counts + kernel uptime."""
     if registry.event_bus is None:
         raise HTTPException(503, "event bus offline")
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
 
     from kernel.tektos_immune import get_memory_summary
 
-    started_at = datetime.fromtimestamp(
-        time.monotonic() - _KERNEL_BOOT_TS, tz=timezone.utc
+    # Kernel boot wall-time: ``time.monotonic()`` is not epoch-based, so
+    # subtract the monotonic uptime from *now* (naive math on the raw
+    # monotonic value yields a bogus "epoch" offset).
+    started_at = datetime.now(timezone.utc) - timedelta(
+        seconds=time.monotonic() - _KERNEL_BOOT_TS
     )
     return await get_memory_summary(registry.event_bus, started_at=started_at)
 
