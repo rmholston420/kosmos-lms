@@ -4777,6 +4777,175 @@ async def self_improvement_status() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# /api/state — ADR-141 T2a: LAST_KNOWN_STATE anchor routes (donor wire)
+# ---------------------------------------------------------------------------
+
+#: Session → state manager cache (donor main.py:119 ``state_managers``).
+#: Managers are cheap (path bookkeeping); files live per-session under
+#: ``<workspace>/tektos_state/`` (kernel/session_state.py).
+_state_managers: dict[str, Any] = {}
+
+
+class _StateSaveBody(BaseModel):
+    """Request body for ``POST /api/state/{session_id}/save`` (ADR-141 T2a).
+
+    Donor ``StateSaveRequest`` (main.py:4780) — same fields and defaults.
+    ``session_id`` is carried by the path, not the body.
+    """
+
+    objective: str = ""
+    progress: str = ""
+    completion_pct: float = 0.0
+    current_file: str = ""
+    current_command: str = ""
+    next_steps: list[str] = Field(default_factory=list)
+    key_decisions: list[str] = Field(default_factory=list)
+    constraints: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    todo_items: list[dict[str, Any]] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    referenced_files: list[str] = Field(default_factory=list)
+
+
+async def _emit_session_state_event(
+    session_id: str, event_type: str, payload: dict[str, Any]
+) -> None:
+    """Publish a session-state event on the kernel event bus (fail-open).
+
+    Kernel referent for the donor's per-session WS push
+    (``_emit_schema_event``, main.py:5543) — the ADR-140 WS surface
+    consumes these; the bus is the single fan-out point. No bus →
+    dropped (donor parity: a client with no socket hears nothing).
+    """
+    bus = registry.event_bus
+    if bus is None:
+        return
+    from ports.event_envelope import EventEnvelope
+
+    await bus.publish(
+        EventEnvelope(
+            event_type=event_type,
+            producer_plugin="kernel",
+            payload={**payload, "session_id": session_id},
+        )
+    )
+
+
+@app.get("/api/state/{session_id}")
+async def get_session_state(session_id: str) -> dict[str, Any]:
+    """LAST_KNOWN_STATE anchor for a session (donor wire shape).
+
+    ADR-141 T2a — donor main.py:4798. ``state`` is the parsed
+    ``SessionState.to_dict()``, ``markdown`` its ``to_markdown()`` — the
+    anchor document any resumed session loads first. 404 when no manager
+    exists for the session (donor semantics).
+    """
+    from kernel.session_state import SessionStateManager
+
+    manager = _state_managers.get(session_id)
+    if manager is None:
+        manager = SessionStateManager(
+            session_id=session_id,
+            project="Tektos-Ultima-v1",
+        )
+        if not manager.has_state():
+            raise HTTPException(404, f"No state manager for session {session_id}")
+        _state_managers[session_id] = manager
+    state = manager.load_state()
+    return {
+        "session_id": session_id,
+        "state": state.to_dict(),
+        "markdown": state.to_markdown(),
+    }
+
+
+@app.post("/api/state/{session_id}/save")
+async def save_session_state(
+    session_id: str, req: _StateSaveBody
+) -> dict[str, Any]:
+    """Save/update session state to LAST_KNOWN_STATE.md (donor wire).
+
+    ADR-141 T2a — donor main.py:4818 + ``StateSaveRequest`` (4780): any
+    resumed session loads this to know exactly where to continue.
+    Auto-creates the manager on first save; emits
+    ``session.state.saved`` on the event bus (kernel referent for the
+    donor's WS push). Returns ``{ok, version}`` — ``version`` is the
+    state's own version field (always 1 here, as in the donor: the body
+    builds a fresh state).
+    """
+    from kernel.session_state import SessionState, SessionStateManager
+
+    manager = _state_managers.setdefault(
+        session_id,
+        SessionStateManager(
+            session_id=session_id,
+            project="Tektos-Ultima-v1",
+        ),
+    )
+    state = SessionState(
+        session_id=session_id,
+        project="Tektos-Ultima-v1",
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        objective=req.objective,
+        progress=req.progress,
+        completion_pct=req.completion_pct,
+        current_file=req.current_file,
+        current_command=req.current_command,
+        next_steps=req.next_steps,
+        key_decisions=req.key_decisions,
+        constraints=req.constraints,
+        blockers=req.blockers,
+        todo_items=req.todo_items,
+        notes=req.notes,
+        referenced_files=req.referenced_files,
+    )
+    manager.save_state(state)
+    await _emit_session_state_event(
+        session_id,
+        "session.state.saved",
+        {
+            "objective": req.objective,
+            "progress": req.progress,
+            "completion_pct": req.completion_pct,
+        },
+    )
+    return {"ok": True, "version": state.version}
+
+
+@app.post("/api/state/{session_id}/snapshot")
+async def snapshot_session_state(session_id: str) -> dict[str, Any]:
+    """Full state snapshot with version bump (donor wire).
+
+    ADR-141 T2a — donor main.py:4866: session-boundary checkpoint
+    (complete, archive, interrupt). 404 when no manager exists. Emits
+    ``session.state.snapshot``. Returns ``{ok, version}`` (the bumped
+    version, as in the donor).
+    """
+    from kernel.session_state import SessionStateManager
+
+    manager = _state_managers.get(session_id)
+    if manager is None:
+        manager = SessionStateManager(
+            session_id=session_id,
+            project="Tektos-Ultima-v1",
+        )
+        if not manager.has_state():
+            raise HTTPException(404, f"No state manager for session {session_id}")
+        _state_managers[session_id] = manager
+    state = manager.load_state()
+    manager.save_full_snapshot(state)
+    await _emit_session_state_event(
+        session_id,
+        "session.state.snapshot",
+        {
+            "version": state.version,
+            "timestamp": state.timestamp,
+        },
+    )
+    return {"ok": True, "version": state.version}
+
+
+# ---------------------------------------------------------------------------
 # /api/logs — ADR-129 (Stage 11.13): kernel-native log ring buffer
 # ---------------------------------------------------------------------------
 
