@@ -29,6 +29,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import Link from "next/link";
 
 const GATEWAY = "/api/tektos-ultima/gateway";
+// ADR-131 (Stage 11.15): session *lifecycle* (list/create/get/fork/
+// archive/interrupt/rename) is now kernel-native — same origin, no proxy.
+// Conversation (models/prompt/sse/replay/model-switch) stays on the
+// gateway until ADR-132.
+const KERNEL = "";
 const POLL_MS = 10_000;
 const FRAME_HEIGHT = "calc(100vh - var(--top-bar-h, 48px))";
 
@@ -228,7 +233,7 @@ export default function TektosSessionsPage() {
     if (inFlightList.current) return;
     inFlightList.current = true;
     try {
-      const r = await fetch(`${GATEWAY}/api/sessions`, { cache: "no-store" });
+      const r = await fetch(`${KERNEL}/api/sessions`, { cache: "no-store" });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const body: unknown = await r.json();
       if (Array.isArray(body)) {
@@ -292,7 +297,7 @@ export default function TektosSessionsPage() {
     setCreating(true);
     setError(null);
     try {
-      const r = await fetch(`${GATEWAY}/api/sessions`, {
+      const r = await fetch(`${KERNEL}/api/sessions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: newModel, cwd: newCwd.trim() || ".", permission_mode: "auto" }),
@@ -424,7 +429,7 @@ export default function TektosSessionsPage() {
     if (!selected) return;
     abortRef.current?.abort();
     try {
-      await fetch(`${GATEWAY}/api/sessions/${selected}/interrupt`, { method: "POST" });
+      await fetch(`${KERNEL}/api/sessions/${selected}/interrupt`, { method: "POST" });
     } catch {
       /* best effort */
     }
@@ -452,7 +457,7 @@ export default function TektosSessionsPage() {
   const fork = useCallback(async () => {
     if (!selected) return;
     try {
-      const r = await fetch(`${GATEWAY}/api/sessions/${selected}/fork`, {
+      const r = await fetch(`${KERNEL}/api/sessions/${selected}/fork`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
@@ -470,7 +475,7 @@ export default function TektosSessionsPage() {
   const archive = useCallback(async () => {
     if (!selected) return;
     try {
-      const r = await fetch(`${GATEWAY}/api/sessions/${selected}/archive`, { method: "POST" });
+      const r = await fetch(`${KERNEL}/api/sessions/${selected}/archive`, { method: "POST" });
       if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text().catch(() => "")}`.slice(0, 160));
       setSelected(null);
       await refreshList();

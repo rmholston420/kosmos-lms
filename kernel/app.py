@@ -71,7 +71,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import time
 from decimal import Decimal, InvalidOperation
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, NoReturn
 
 from fastapi import (
     FastAPI,
@@ -141,7 +141,17 @@ class _KosmosLogRing(logging.Handler):
     records, not framework chatter. ``snapshot()`` returns oldest-first.
     """
 
-    _NOISE_PREFIXES = ("uvicorn", "httpx", "httpcore", "multipart", "watchfiles")
+    _NOISE_PREFIXES = (
+        "uvicorn",
+        "httpx",
+        "httpcore",
+        "multipart",
+        "watchfiles",
+        # neo4j.notifications re-logs one Cypher deprecation notice per
+        # query — hundreds of identical WARNINGs would drown kernel
+        # records in the ring (Stage 11.15 live observation).
+        "neo4j",
+    )
 
     def __init__(self, maxlen: int = _LOG_RING_MAX) -> None:
         super().__init__(level=_LOG_RING_LEVEL)
@@ -4351,6 +4361,247 @@ async def directory_list(
         "errors": errors,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Tektos sessions (ADR-131, Stage 11.15) — kernel-native session lifecycle
+#
+# The sessions page previously proxied :8020/api/sessions* — the *standalone*
+# Tektos engine's SessionManager. The kernel's referent is
+# ``registry.session`` booted with ``KOSMOS_SESSION=tektos``: a
+# ``TektosSessionAdapter`` — the fidelity port of the donor SessionManager
+# behind the ADR-103 SessionPort contract. A *Tektos* session (model, cwd,
+# tag, fork lineage, per-session FSM history) is deliberately NOT served by
+# the generic inmemory adapter (``KOSMOS_SESSION=inmemory``): that one is
+# kernel plumbing without model/title/root lineage.
+#
+# Response shapes match :8020/api/sessions* byte-for-byte where the page
+# parses them (list = raw array, POST = {id,title,model,cwd,status},
+# archive/interrupt = {ok:true}), so the page is drop-in compatible.
+# GET /{id} additionally carries the ADR-103 ``state`` + ``state_history``
+# audit — a superset the page ignores. Conversation slice (prompt/sse,
+# replay, models, model-switch) lands in ADR-132.
+# ---------------------------------------------------------------------------
+
+
+def _serialize_live_session(s) -> dict[str, Any]:
+    """LiveSession (port) → the sessions page's SessionInfo element."""
+    return {
+        "id": s.id,
+        "model": s.model,
+        "cwd": s.cwd,
+        "status": s.status,
+        "title": s.title,
+        "tag": s.tag,
+        "root_session_id": s.root_session_id,
+        "created_at": s.created_at,
+        "updated_at": s.updated_at,
+        "is_active": s.is_active,
+        "is_failed": s.is_failed,
+        "is_archived": s.is_archived,
+    }
+
+
+def _serialize_transition(t) -> dict[str, Any]:
+    """ADR-103 StateTransition → flat dict (from/to are plain str)."""
+    return {
+        "from": t.from_state,
+        "to": t.to_state,
+        "reason": t.reason,
+        "at": t.timestamp_iso,
+    }
+
+
+def _session_port_offline() -> NoReturn:
+    """503 when the Tektos session subsystem is not booted."""
+    raise HTTPException(
+        503,
+        "Tektos sessions offline: set KOSMOS_SESSION=tektos "
+        "(kernel referent for Tektos sessions)",
+    )
+
+
+@app.get("/api/sessions")
+async def tektos_list_sessions(archived: bool = False) -> list[dict[str, Any]]:
+    """List Tektos sessions — raw array (donor shape). ``?archived=true``.
+
+    Replaces the :8020/api/sessions proxy. Element shape is the donor
+    SessionManager schema (the sessions page's SessionInfo, unchanged).
+    """
+    port = registry.session
+    if port is None:
+        _session_port_offline()
+    sessions = await port.list_sessions(archived=archived)
+    return [_serialize_live_session(s) for s in sessions]
+
+
+@app.post("/api/sessions")
+async def tektos_create_session(payload: dict[str, Any]) -> dict[str, Any]:
+    """Create a Tektos session. Body: ``{model, cwd?, permission_mode?,
+    resume_session_id?, fork_session_id?}`` — donor CreateSessionRequest.
+
+    Returns the donor shape ``{id, title, model, cwd, status}``.
+    Replaces the :8020 POST /api/sessions proxy.
+    """
+    port = registry.session
+    if port is None:
+        _session_port_offline()
+    model = payload.get("model")
+    if not model or not isinstance(model, str):
+        raise HTTPException(422, "model is required")
+    cwd = str(payload.get("cwd") or ".")
+    permission_mode = str(payload.get("permission_mode") or "auto")
+    resume_id = payload.get("resume_session_id")
+    fork_id = payload.get("fork_session_id")
+    if fork_id:
+        s = await port.fork_session(str(fork_id), model=model, cwd=cwd)
+    elif resume_id:
+        s = await port.resume_session(str(resume_id))
+    else:
+        s = await port.create_session(
+            model=model, cwd=cwd, permission_mode=permission_mode
+        )
+    return {
+        "id": s.id,
+        "title": s.title or "",
+        "model": s.model,
+        "cwd": s.cwd,
+        "status": s.status,
+    }
+
+
+@app.get("/api/sessions/{session_id}")
+async def tektos_get_session(session_id: str) -> dict[str, Any]:
+    """One Tektos session (donor fields) + ADR-103 ``state`` audit.
+
+    ``state_history`` is the per-session FSM audit (created/started/
+    completed/interrupted/archived transitions) — referent detail the
+    generic inmemory kernel plumbing has no equivalent for.
+    Replaces the :8020 GET /api/sessions/{id} proxy (superset).
+    """
+    port = registry.session
+    if port is None:
+        _session_port_offline()
+    s = await port.get_session(session_id)
+    if s is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    out = _serialize_live_session(s)
+    out["state"] = port.get_state(session_id).value
+    out["state_history"] = [
+        _serialize_transition(t) for t in port.get_history(session_id)
+    ]
+    return out
+
+
+@app.patch("/api/sessions/{session_id}")
+async def tektos_update_session(
+    session_id: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Rename a Tektos session title. Body: ``{title}`` (donor PATCH shape).
+
+    Returns the donor shape ``{id, title, model, status, is_archived, tag}``.
+    """
+    port = registry.session
+    if port is None:
+        _session_port_offline()
+    title = payload.get("title")
+    if not title or not isinstance(title, str):
+        raise HTTPException(422, "title is required")
+    if await port.get_session(session_id) is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    await port.rename_session(session_id, title)
+    s = await port.get_session(session_id)
+    return {
+        "id": s.id,
+        "title": s.title,
+        "model": s.model,
+        "status": s.status,
+        "is_archived": s.is_archived,
+        "tag": s.tag,
+    }
+
+
+@app.post("/api/sessions/{session_id}/archive")
+async def tektos_archive_session(session_id: str) -> dict[str, Any]:
+    """Archive a Tektos session. Returns donor ``{ok:true}``."""
+    port = registry.session
+    if port is None:
+        _session_port_offline()
+    if await port.get_session(session_id) is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    await port.archive_session(session_id)
+    return {"ok": True}
+
+
+@app.post("/api/sessions/{session_id}/interrupt")
+async def tektos_interrupt_session(session_id: str) -> dict[str, Any]:
+    """Interrupt a running Tektos session. Returns donor ``{ok:true}``.
+
+    Donor semantics: a not-running session is a no-op (warn + ok), not an
+    error — the adapter's vendor layer implements that gate.
+    """
+    port = registry.session
+    if port is None:
+        _session_port_offline()
+    if await port.get_session(session_id) is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    from ports.session import InvalidTransitionError
+
+    try:
+        await port.interrupt_turn(session_id, reason="user interrupt")
+    except InvalidTransitionError:
+        # Donor semantics: a not-running session is a no-op (warn + ok),
+        # not an error. The ADR-103 FSM only allows RUNNING → INTERRUPTED;
+        # any other state raises InvalidTransitionError, which we swallow
+        # to reproduce the donor's observable {ok:true} behavior.
+        pass
+    return {"ok": True}
+
+
+@app.post("/api/sessions/{session_id}/fork")
+async def tektos_fork_session(
+    session_id: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Fork a Tektos session. Body: ``{model?, cwd?}`` (both optional —
+    donor defaults to "default" / "./"). Returns the donor shape
+    ``{id, title, model, status, parent_title}``.
+    """
+    port = registry.session
+    if port is None:
+        _session_port_offline()
+    if await port.get_session(session_id) is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    source = await port.get_session(session_id)
+    model = str(payload.get("model") or "default")
+    cwd = str(payload.get("cwd") or "./")
+    s = await port.fork_session(session_id, model=model, cwd=cwd)
+    return {
+        "id": s.id,
+        # Donor wraps the vendor's "fork of <title>" prefix again —
+        # the UI only reads ``id`` from this response, so fidelity to
+        # the donor's observable string wins over tidying it.
+        "title": f"Fork of {s.title or session_id[:8]}",
+        "model": s.model,
+        "status": s.status,
+        "parent_title": source.title or session_id[:8],
+    }
+
+
+@app.delete("/api/sessions/{session_id}")
+async def tektos_delete_session(session_id: str) -> dict[str, Any]:
+    """Delete a Tektos session. Donor shape ``{ok:true, events_deleted}``.
+
+    Donor semantics: an unknown session is 404 (the donor manager
+    raises; the vendored manager returns 0 instead — so we check
+    existence first to reproduce the donor's observable behavior).
+    """
+    port = registry.session
+    if port is None:
+        _session_port_offline()
+    if await port.get_session(session_id) is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    deleted = await port.delete_session(session_id)
+    return {"ok": True, "events_deleted": deleted}
 
 
 # ---------------------------------------------------------------------------
