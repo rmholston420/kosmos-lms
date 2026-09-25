@@ -4606,6 +4606,29 @@ async def tektos_switch_session_model(
     return {"ok": True, "model": model, "old_model": old_model}
 
 
+@app.get("/api/sessions/{session_id}/replay")
+async def tektos_replay_session(session_id: str) -> list[dict[str, Any]]:
+    """Full replay for a Tektos session (ADR-132 slice F).
+
+    Donor shape: ``[{seq, type, payload, protocol_version, created_at}]``
+    oldest first — the sessions page folds this into a conversation.
+    The kernel has no per-session event store, so this reads the known
+    Tektos event types off the bus, filters to the session, and maps
+    ``tektos.agent.turn.*`` → the donor chat-event types (see
+    :mod:`kernel.tektos_replay`). Replaces the :8020 replay proxy.
+    """
+    port = registry.session
+    if port is None:
+        _session_port_offline()
+    if await port.get_session(session_id) is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    if registry.event_bus is None:
+        raise HTTPException(503, "event bus offline")
+    from kernel.tektos_replay import get_replay
+
+    return await get_replay(registry.event_bus, session_id)
+
+
 @app.post("/api/sessions/{session_id}/fork")
 async def tektos_fork_session(
     session_id: str, payload: dict[str, Any]

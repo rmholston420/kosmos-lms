@@ -337,6 +337,10 @@ class TektosTurnLoop:
                             "model": (llm_response or {}).get("model"),
                             "latency_ms": int(latency_ms),
                             "response_length": len(response_text),
+                            # ADR-132 slice F: carry the assistant text so the
+                            # kernel-native replay endpoint can reconstruct
+                            # the conversation (donor assistant.delta parity).
+                            "text": response_text,
                         },
                     )
 

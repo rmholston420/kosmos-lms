@@ -335,6 +335,7 @@ async def test_stage_8_2_D6_llm_completed_event_published() -> None:
     payload = llm_events[0].payload
     assert payload["model"] == "fake-1"
     assert payload["response_length"] == len("greetings from fake")
+    assert payload["text"] == "greetings from fake"
     assert payload["session_id"] == "s-8"
     assert "latency_ms" in payload
 
