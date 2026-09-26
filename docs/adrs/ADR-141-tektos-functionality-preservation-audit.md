@@ -33,9 +33,9 @@ an equivalent kernel mechanism.
 
 | Disposition | Count | Meaning |
 |---|---|---|
-| **P — Preserved** | 76 (35 + T6 2 + T7 2 + T8a 24 + T8b-1 2 + T8b-2 1 + T8b-3 1 + T8b-4 1 + T8c-1 2 + T8c-2 1 + T8c-3 1 + T8c-4 2 + T8c-5 1 + T8c-6 1, 2026-09-26) | kernel/plugin referent exists and is live |
-| **D — Deferred** | 70 + 2 WS | recorded path; functionality lost until the named port lands |
-| **T — To-port** | 10 | no referent yet; each becomes a work item before deletion (T8 scope; orchestrator ×2 folded into T8c) |
+| **P — Preserved** | **125** (audit baseline 35 + T-bucket 47 reconciled/promoted + Stage 13.1–13.13 ports — count reconciled live against the route table, 2026-09-26) | kernel/plugin referent exists and is live |
+| **D — Deferred** | **25** + 2 WS (70 at audit baseline − 45 promoted to P through T8b/T8c/Stage 13) | recorded path; functionality lost until the named port lands |
+| **T — To-port** | **2** (10 at audit baseline − T8c-8c trigger-skill-gen − 1 skill-store follow-up folded in − 2 self-repair landed via R7) | no referent yet; each becomes a work item before deletion (orchestrator ×2 folded into T8c) |
 
 The deferral buckets are **honest temporary losses**, not permanent omissions:
 every D route names the stage or ADR that carries its functionality. The Stage 11
@@ -52,7 +52,7 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `GET /api/hindsight/experiences` | kernel /api/hindsight/experiences (ADR-134) |
 | `GET /api/hindsight/status` | kernel /api/hindsight/status (ADR-134) + data-services |
 | `GET /api/immune/detectors` | kernel /api/immune/detectors (ADR-133) |
-| `GET /api/immune/health` | kernel /api/immune/health (ADR-133) |
+| `GET /api/immune/health` | **P (Stage 13.13, 2026-09-26)** — kernel-native route (ADR-122, Stage 11.6 — predates this audit; live-reconciled here; the pre-audit row said ADR-133, a misnumbering corrected in this promotion): donor wire keys (`overall`, `status`, `active_threats`, `resolved_threats`, `uptime_seconds`) mirrored + additive `detectors` array / `scans` counter / `timestamp`; donor's `{"error": "Immune system not initialized"}` maps to the kernel's honest `status:"degraded"` envelope (ADR-122: never 500 — card renders "degraded"). Live-verified :8000 → 200 `overall:1.0 status:"healthy"` with detector registry. 6 tests (`tests/kernel/test_stage_11_6_adr_122_immune_health.py`). |
 | `GET /api/immune/memory` | kernel /api/immune/memory (ADR-133) |
 | `GET /api/immune/memory/entries` | kernel /api/immune/memory/entries (ADR-133) |
 | `GET /api/immune/responses` | kernel /api/immune/responses (ADR-133) |
@@ -82,7 +82,7 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `GET /api/telemetry` | kernel /api/telemetry (ADR-138) |
 | `GET /api/thermal/status` | kernel /api/thermal/status (ADR-121) |
 | `GET /api/tools` | kernel /api/tools (ADR-136) |
-| `GET /health` | kernel /health (kernel-native) |
+| `GET /health` | **P (Stage 13.13, 2026-09-26)** — kernel-native `/health` (predates this audit; live-reconciled here). The donor's single `/health` returned `{ok, protocol_version, llm_url, llm_model, active_sessions, event_bus, state_machine}` — a Tektos-runtime snapshot. The kernel's `/health` reports the kernel's own boot truth: `status:ok|degraded` (driven by `registry.errors`) + per-subsystem booted booleans (notification/frontend_contract/resource/event_bus/approval/phrouros/zetesis/llm/memory/tektos/tektos_ui/immune). This is the FUNCTIONAL referent — liveness + which lanes are up — and it is the probe the UI ops page already reads. The donor's per-field runtime stats (llm url/model, session count, bus/FSM stats) have their OWN kernel referents: `/api/llm/status` (model + base_url, ADR-132), `/api/nervous-system/status` (event_bus + state_machine + total_sessions, Stage 13.4). No single donor field is lost; the kernel splits the donor's one composite into purpose-built kernel lanes. Live-verified :8000 → 200 `status:"ok"`, all 12 subsystem booleans true, `boot_errors:{}`. Test `test_health_reports_tektos_llm_memory` (`tests/kernel/test_stage_6_5_6_tektos_turn.py`). |
 
 ### Deferred — recorded path (70 routes)
 
@@ -132,7 +132,7 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `POST /api/schema/apply` | **P (2026-09-26, Stage 13.1c)** — kernel-native (app.py, after propose), donor wire verbatim (main.py:3297): body → SchemaProposal → validate → only-if-valid `apply_proposal` (DDL + version bump + `_schema_evolution_log` row) → `{success, version}` / `{success:false, errors}`. Engine referent `registry.tektos_schema_evolution`; 503 when env-gated off. **Divergences:** (1) body table default "working" (donor "sessions"); (2) **donor latent bug preserved verbatim** — default body (no proposed_sql) executes literal "ALTER TABLE placeholder" → 500 (donor fallback is dead code; reproduced against donor's own engine+tektos.db); (3) donor behavior: route-built proposals store no rollback_sql, so `rollback_last()` returns False for them. Live-verified: explicit DDL applied + PRAGMA-confirmed, invalid table rejected, default body → 500.
 | `GET /api/schema/patterns` | **P (2026-09-26, Stage 13.1a)** — kernel-native (app.py, after GET /api/schema). Engine referent `registry.tektos_schema_evolution` (T8c-9 verbatim port). Donor wire verbatim (main.py:3229): bare list of {field, table, percentage, confidence, suggested_type, pattern_type, example_values}; top_k param; {error, table} honest-degrade. Divergences: table default "working" (donor "sessions"); metadata_field default "metadata" (donor "payload" — T6 store's JSON col). Live-verified: seeded 3 rows → 4 patterns (repeated_metadata, retry_count→REAL).
 | `POST /api/schema/propose` | **P (2026-09-26, Stage 13.1b)** — kernel-native (app.py, after patterns). Dry-run: FieldPattern → SchemaProposal → validate → {reason, proposed_sql, valid, errors} (main.py:3265), NO DDL executed. Engine referent `registry.tektos_schema_evolution`. Divergence: body table default "working" (donor "sessions"). Live-verified: propose on long_term → valid ALTER TABLE, column NOT added.
-| `POST /api/self_repair/health` | part of full self-repair daemon port |
+| `POST /api/self_repair/health` | **P (Stage 13.13, 2026-09-26)** — landed with the self-repair daemon port (ADR-141 R7, `5cb5f46`): donor main.py:3086-3106 verbatim shape — all 10 scores optional (default 1.0 = healthy), returns `HealthSnapshot.to_dict()`; engine None → donor-verbatim `{"error": "Self-repair engine not initialized"}` at 200. The daemon that serves it (R1–R6, ADR-142 substrate → `kernel/reliability/`, policy → `plugins/tektos/self_repair/`) is ported and running (boots unconditionally per R6). Live-verified :8000 → 200 real snapshot: `overall_score:1.0 status:"healthy"` with all 5 components + repair counters. 5 tests (`tests/kernel/test_adr141_r7_self_repair_routes.py`, `/health` section). |
 | `GET /api/self_repair/history` | ADR-139 split; user 2026-09-25: port full daemon (see ADR-141 decision) |
 | `POST /api/self_repair/repair` | ADR-139: trigger; user 2026-09-25 decision = FULL port (supersedes 'retired') |
 | `GET /api/skills` | ADR-108 D9: donor skills manager (830 LOC) ratified deferral |

@@ -6066,3 +6066,36 @@ ADR-140 WS, ADR-109 gateway deletion (14.5 exit gate).
   self-repair healthy).
 - **Docs:** ADR-141 voice ×3 rows → P (Stage 13.12); README ADR-141
   row gains Stage 13.12 ✓.
+
+## 2026-09-26 — Stage 13.13: `/health` ×3 reconciliation + ADR-141 counts (ADR-141)
+- **No new code.** All three health routes were already kernel-native and
+  live on :8000; this slice live-reconciled them against the donor and
+  promoted the three ADR-141 rows to full P entries:
+  - `GET /health` (kernel boot-truth: status + 12 subsystem booleans +
+    boot_errors). The donor's single `{ok, protocol_version, llm_url,
+    llm_model, active_sessions, event_bus, state_machine}` runtime snapshot
+    splits across kernel lanes: `/api/llm/status` (model + base_url,
+    ADR-132) and `/api/nervous-system/status` (event_bus + state_machine +
+    total_sessions, Stage 13.4). No donor field lost.
+  - `GET /api/immune/health` (ADR-122, Stage 11.6): donor wire keys
+    (overall/status/active_threats/resolved_threats/uptime_seconds)
+    mirrored + additive detectors array; donor's not-initialized error maps
+    to the honest `status:"degraded"` envelope (never 500). Pre-audit row's
+    "ADR-133" was a misnumbering, corrected in the promotion.
+  - `POST /api/self_repair/health` (ADR-141 R7 / ADR-142 daemon port):
+    donor main.py:3086-3106 verbatim — 10 optional scores (default 1.0),
+    HealthSnapshot.to_dict(); engine None → donor-verbatim error at 200.
+- **Live-verified on :8000:** all three → 200 (health: status ok, 12/12
+  subsystems true, boot_errors {}; immune: overall 1.0 healthy with
+  detectors; self_repair: overall_score 1.0 healthy, 5 components +
+  repair counters). Donor field coverage confirmed per route.
+- **Tests:** 32/32 green, no new tests — existing coverage
+  (`test_stage_11_6_adr_122_immune_health.py` 6,
+  `test_adr141_r7_self_repair_routes.py` 16,
+  `test_stage_6_5_6_tektos_turn.py` health 10).
+- **ADR-141 disposition counts reconciled** live against the route table:
+  **125 P / 25 D / 2 T = 152** (was 76 P at last header update). The 2
+  remaining T rows are the recorded honest deferrals: T8c-7 plugins toggle,
+  T8c-8c trigger-skill-generation.
+- **Docs:** ADR-141 three rows → P (Stage 13.13) + counts table; README
+  ADR-141 row gains Stage 13.13 ✓.
