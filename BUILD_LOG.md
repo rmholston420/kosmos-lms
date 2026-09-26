@@ -5363,3 +5363,34 @@ MCP, metabolism) in ROI order.
 - **Gate progress (ADR-141):** T1–T7 ✓, T8a ✓, T8b ✓, T8c-1 ✓, T8c-2 ✓,
   T8c-3 ✓. Remaining T8c: hooks ×2, schedule, evaluation, plugins toggle,
   dreamtime ×4, schema (10 rows).
+
+## 2026-09-26 — ADR-141 T8c-7: plugins toggle resolved as DEFERRED (no code)
+- **What:** The donor's plugins pair (`GET /api/plugins` main.py:4390,
+  `POST /api/plugins/{name}/toggle` :4403) reconciled. Recon found the
+  kernel ALREADY has `GET /api/plugins` (ADR-127 Stage 11.11, app.py:5210,
+  4-test suite) — 4 `plugins/` subsystems + frontend_contract descriptors,
+  with the donor's functional search-provider registry explicitly marked
+  "pending (follow-up ADR)". ADR-141 line 66 had already resolved the GET
+  to that endpoint; only the toggle row was open.
+- **Decision:** the toggle is deferred, NOT ported. The donor toggled 4
+  swappable search-provider plugins (tektos-ultima/plugins/{searxng,
+  duckduckgo, farfalle, tavily}_plugin/); the kernel's `plugins/` packages
+  are fixed composition-root subsystems (no enable gate) and the only wired
+  search adapter is `adapters/search/searxng`. Two candidate ports were
+  rejected: (a) a `registry.plugin_enabled` flag — read by nothing, so the
+  route would be a no-op = fabricated functionality; (b) a 4-subsystem
+  manifest GET — duplicate of ADR-127's committed endpoint (FastAPI
+  first-registered-wins would leave it shadowed dead code) and would report
+  fixed subsystems as togglable. The toggle's only honest referent is the
+  functional-registry follow-up ADR that ADR-127 already punted; re-opening
+  that decision inside the T8c slice is scope creep. No functionality lost:
+  kernel search works via the searxng adapter.
+- **Revert:** the first-attempt code (duplicate shadowed GET + no-op toggle
+  + 4 test file) was reverted (`git checkout kernel/app.py`, test file
+  removed) before this commit — nothing fabricated reaches main.
+- **Verified:** ADR-127 suite still green (untouched); full kernel suite
+  green post-revert.
+- **Docs:** ADR-141 toggle row → Deferred (full rationale), T8 section
+  T8c-7 note; README progress line. P count unchanged (76).
+- **Gate progress (ADR-141):** T1–T7 ✓, T8a ✓, T8b ✓, T8c-1…T8c-6 ✓,
+  T8c-7 deferred. Remaining T8c: dreamtime ×4, schema (5 rows).

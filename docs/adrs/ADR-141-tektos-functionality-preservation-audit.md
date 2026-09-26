@@ -191,7 +191,7 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `POST /api/planner/plan` | **P (2026-09-26, T8a)** — kernel-native (T4, app.py:5840) |
 | `GET /api/planner/status` | **P (2026-09-26, T8a)** — kernel-native (T4, app.py:5877) |
 | `GET /api/planner/templates` | **P (2026-09-26, T8a)** — kernel-native (T4, app.py:5806) |
-| `POST /api/plugins/{name}/toggle` | no referent — plugin toggle |
+| `POST /api/plugins/{name}/toggle` | **Deferred (2026-09-26, T8c-7)** — no honest kernel referent *today*. The donor toggled 4 swappable search-provider plugins (`tektos-ultima/plugins/{searxng,duckduckgo,farfalle,tavily}_plugin/`). The kernel has no runtime loadable-plugin loader — its `plugins/` packages are fixed composition-root subsystems (ADR-127) and its only wired search adapter is `adapters/search/searxng`. ADR-127's `GET /api/plugins` already reports the functional-plugin registry as "pending (follow-up ADR)". T8c-7 considered (a) a `registry.plugin_enabled` toggle flag and (b) a 4-subsystem manifest — both rejected: (a) is read by nothing (no-op = fabricated functionality); (b) duplicates ADR-127's committed `GET` and would report fixed subsystems as togglable. No functionality lost: kernel search works via the searxng adapter; only runtime-toggle-across-N-providers is deferred until the functional-registry follow-up ADR lands (out of ADR-141 gate scope — re-opening ADR-127's decision here would be scope creep). |
 | `GET /api/routing/decide` | **P (2026-09-26, T8c-2)** — kernel-native: donor `src/tektos/routing.py` (396 LOC, generic multi-model routing) verbatim → `kernel/routing.py` substrate + `registry.model_router` boot slot (kernel primary-lane env, donor BALANCED/general profile) + `_decide_routing` thin surface (donor wire `{task, category, recommended_model, confidence, fallback_models, estimated_cost}` + honest `reason`). Documented divergence: donor route ALWAYS failed (wrong route() kwargs + .get() on dataclass → stuck 0.5-confidence fallback); kernel calls route() correctly (length→complexity 1-5, unknown category→MISC). 7 tests; live :8000 → `Selected qwen3.8-27b-code for refactoring (tier=fast)` |
 | `GET /api/schedule` | **P (2026-09-26, T8c-5)** — kernel-native: donor main.py:5266. Donor defect fixed (T8c-2 class): donor built a FRESH `BackupScheduler()` per request (in-memory `backup_records` starts `[]`) → route ALWAYS returned `[]`. Kernel referent scans the REAL on-disk backup dir (`KOSMOS_BACKUP_DIR`, default `~/.tektos/backups`) for donor's own `{postgresql,redis,sqlite,neo4j}_{ts}.{ext}` artifacts → donor wire `[{id,name,type,status,last_run,next_run,interval,enabled}]`, newest first; `[]` degrade on failure (donor shape). 4 tests; live :8000 → 106 real backups |
 | `GET /api/schema` | no referent — schema read (kernel has /api/kernel/schema, different surface) |
@@ -421,6 +421,19 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
      (`test_adr141_t8c6_evaluation_status.py`, incl. harness-state
      reflection + error degrade); live :8000 → `initialized`. Remaining
      T8c: plugins toggle, dreamtime ×4, schema (6 rows).
+     **T8c-7 (2026-09-26)** — plugins toggle: **deferred, not ported**
+     (no code committed — see the row at line 194). The donor's
+     `GET /api/plugins` was already resolved (audit line 66) to the
+     ADR-127 Stage 11.11 kernel endpoint (`app.py:5210` — 4 `plugins/`
+     subsystems + frontend_contract descriptors, functional-registry gap
+     marked "pending (follow-up ADR)"). The toggle's only honest referent
+     is that future functional registry: the kernel's `plugins/` packages
+     are fixed composition-root subsystems (no enable gate) and the only
+     wired search adapter is searxng. A toggle flag read by nothing would
+     be fabricated functionality; a 4-subsystem manifest would duplicate
+     ADR-127's committed endpoint. Reverted the first-attempt code
+     (duplicate shadowed GET + no-op toggle) before commit. Remaining
+     T8c: dreamtime ×4, schema (5 rows).
 
 3. **D-bucket ports ride the plan's Stage 13** in its own order
    (13.1 schema_evolution → 13.2 db_manager → … → 13.7 voice), each with its own
