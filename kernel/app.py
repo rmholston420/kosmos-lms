@@ -4524,6 +4524,67 @@ async def detect_schema_patterns(
 
 
 # ---------------------------------------------------------------------------
+# ADR-141 Stage 13.1b — schema-evolution action surface (dry-run): propose
+# ---------------------------------------------------------------------------
+# Donor main.py:3265 (D → P): build a SchemaProposal from a detected
+# pattern, validate it against the current schema, return the proposed
+# SQL WITHOUT executing it (pure dry-run — no DDL). Engine referent =
+# registry.tektos_schema_evolution (T8c-9 verbatim port). Documented
+# divergence: body `table` default "working" (donor "sessions" — tektos.db
+# retired, ADR-137). Wire shape otherwise donor-verbatim: {reason,
+# proposed_sql, valid, errors}.
+
+class _ProposeSchemaChangeBody(BaseModel):
+    field_name: str = Field(description="Field name to add")
+    table: str = Field(default="working", description="Target table")
+    pattern_type: str = Field(default="repeated_metadata", description="Pattern type")
+    evidence_count: int = Field(default=10, description="Evidence count")
+    total_records: int = Field(default=100, description="Total records")
+    percentage: float = Field(default=0.5, description="Percentage")
+    suggested_type: str = Field(default="TEXT", description="Suggested column type")
+    example_values: list = Field(default_factory=list, description="Example values")
+    confidence: float = Field(default=0.8, description="Confidence score")
+
+
+@app.post("/api/schema/propose")
+async def propose_schema_change(body: _ProposeSchemaChangeBody):
+    """Propose a schema change from detected patterns (donor main.py:3265)."""
+    if registry.tektos_schema_evolution is None:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Schema-evolution engine not initialized "
+                         "(KOSMOS_TEKTOS_MEMORY=off)"
+            },
+        )
+    engine = registry.tektos_schema_evolution
+    from kernel.schema_evolution import FieldPattern
+
+    pattern = FieldPattern(
+        table=body.table,
+        field_name=body.field_name,
+        pattern_type=body.pattern_type,
+        evidence_count=body.evidence_count,
+        total_records=body.total_records,
+        percentage=body.percentage,
+        suggested_column=body.field_name,
+        suggested_type=body.suggested_type,
+        example_values=body.example_values,
+        confidence=body.confidence,
+    )
+    proposal = engine.propose_from_pattern(pattern)
+    valid = proposal.validate(engine)
+    return {
+        "reason": proposal.reason,
+        "proposed_sql": proposal.proposed_sql,
+        "valid": valid,
+        "errors": proposal.validation_errors,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Embedder surface (ADR-141 T7, donor main.py:4448/4464) — kernel-native.
 # The donor ran a private EmbedderClient (_embedder_client, :8091) behind
 # two routes. Per the layering rule (governing, 2026-09-25) the embedder

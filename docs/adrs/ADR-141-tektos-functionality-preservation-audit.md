@@ -130,7 +130,7 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `GET /api/repoMap/status` | Stage 13 (repo map) |
 | `POST /api/schema/apply` | Stage 13.1 schema_evolution |
 | `GET /api/schema/patterns` | **P (2026-09-26, Stage 13.1a)** — kernel-native (app.py, after GET /api/schema). Engine referent `registry.tektos_schema_evolution` (T8c-9 verbatim port). Donor wire verbatim (main.py:3229): bare list of {field, table, percentage, confidence, suggested_type, pattern_type, example_values}; top_k param; {error, table} honest-degrade. Divergences: table default "working" (donor "sessions"); metadata_field default "metadata" (donor "payload" — T6 store's JSON col). Live-verified: seeded 3 rows → 4 patterns (repeated_metadata, retry_count→REAL).
-| `POST /api/schema/propose` | Stage 13.1 schema_evolution |
+| `POST /api/schema/propose` | **P (2026-09-26, Stage 13.1b)** — kernel-native (app.py, after patterns). Dry-run: FieldPattern → SchemaProposal → validate → {reason, proposed_sql, valid, errors} (main.py:3265), NO DDL executed. Engine referent `registry.tektos_schema_evolution`. Divergence: body table default "working" (donor "sessions"). Live-verified: propose on long_term → valid ALTER TABLE, column NOT added.
 | `POST /api/self_repair/health` | part of full self-repair daemon port |
 | `GET /api/self_repair/history` | ADR-139 split; user 2026-09-25: port full daemon (see ADR-141 decision) |
 | `POST /api/self_repair/repair` | ADR-139: trigger; user 2026-09-25 decision = FULL port (supersedes 'retired') |

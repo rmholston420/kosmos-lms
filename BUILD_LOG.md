@@ -5491,3 +5491,26 @@ MCP, metabolism) in ROI order.
 - **Docs:** ADR-141 patterns row → P (Stage 13.1a); README progress line.
 - **Gate progress (ADR-141):** Stage 13.1a ✓. Remaining 13.1: propose
   (13.1b), apply (13.1c).
+
+## 2026-09-26 — ADR-141 Stage 13.1b: POST /api/schema/propose kernel-native
+
+- **Slice:** ADR-141 Stage 13.1b (schema-evolution dry-run action route)
+- **What changed:** `POST /api/schema/propose` at the donor path
+  (main.py:3265), donor wire verbatim — body `_ProposeSchemaChangeBody`
+  (field_name, table, pattern_type, evidence_count, total_records,
+  percentage, suggested_type, example_values, confidence) → FieldPattern →
+  `engine.propose_from_pattern()` → `proposal.validate(engine)` →
+  {reason, proposed_sql, valid, errors}. **Pure dry-run: no DDL executed.**
+  Engine referent `registry.tektos_schema_evolution`; 503 + "not
+  initialized" when env-gated off.
+- **Documented divergence:** body `table` default "working" (donor
+  "sessions" — tektos.db retired, ADR-137).
+- **Verified:** 4 route tests green (module-scoped real boot, gate on, tmp
+  db: valid-table dry-run returns valid+SQL and leaves schema unchanged,
+  invalid-table reports {valid:False, errors:["does not exist"]},
+  default table = working, engine-None 503). Full suite green. Live :8000 —
+  propose on long_term → valid `ALTER TABLE long_term ADD COLUMN priority
+  TEXT`, and PRAGMA confirms the column was NOT added (dry-run honored).
+- **Docs:** ADR-141 propose row → P (Stage 13.1b); README progress line.
+- **Gate progress (ADR-141):** Stage 13.1a ✓, 13.1b ✓. Remaining 13.1:
+  apply (13.1c — the only DDL-executing route).
