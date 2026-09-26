@@ -4244,6 +4244,170 @@ async def embedder_embed(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Config surface (ADR-141 T8b-1, donor main.py:5160/5232) — kernel-native.
+# The donor reported its own runtime_sdk values (TEKTOS_* envs); the kernel
+# reports the equivalent KOSMOS_* boot values read live from the ACTIVE
+# LLM lane (ADR-116/132 — same pattern as /api/llm/status) + the kernel's
+# own envs. PATCH maps donor keys onto the KOSMOS_* vars that actually
+# steer this kernel (the donor's TEKTOS_LLM_* targets are dead in the
+# kernel process — documented divergence in ADR-141). Always 200.
+# ---------------------------------------------------------------------------
+
+_T8B_PROTOCOL_VERSION = "1.0.0"
+_T8B_LOG = logging.getLogger(__name__)
+
+# Donor key → the env var that actually steers the kernel (boot-time read).
+_T8B_CONFIG_PATCH_MAP: dict[str, str] = {
+    "llm_base_url": "KOSMOS_LLAMA_SWAP_BASE_URL",
+    "llm_model": "KOSMOS_LLAMA_SWAP_DEFAULT_MODEL",
+    "gpu_power_limit": "GPU_POWER_LIMIT",
+    "log_level": "KOSMOS_LOG_LEVEL",
+    "vision_url": "KOSMOS_VISION_BASE_URL",
+    "KOSMOS_LLM_BASE_URL": "KOSMOS_LLM_BASE_URL",
+    "KOSMOS_LLM_FALLBACK_BASE_URL": "KOSMOS_LLM_FALLBACK_BASE_URL",
+    "KOSMOS_VLM_BASE_URL": "KOSMOS_VLM_BASE_URL",
+}
+
+# env vars surfaced as sensitive rows (value masked, never plaintext).
+_T8B_SENSITIVE_ENV_KEYS = (
+    "KOSMOS_LLM_API_KEY",
+    "KOSMOS_LLM_FALLBACK_API_KEY",
+    "KOSMOS_VLM_API_KEY",
+    "KOSMOS_SECRETS_PATH",
+)
+
+# (env key, type, description) — surfaced as config rows when the process
+# environment carries it. KOSMOS_* names = the kernel's live boot topology
+# (ADR-132); the donor dumped its flat main.py env, so the rows are the
+# kernel's equivalent surface.
+_T8B_ENV_ROWS: tuple[tuple[str, str, str], ...] = (
+    ("KOSMOS_LLM_BASE_URL", "string", "Primary LLM lane (GPU llama.cpp)"),
+    ("KOSMOS_LLM_FALLBACK_BASE_URL", "string", "Fallback LLM lane (CPU llama.cpp)"),
+    ("KOSMOS_LLM_MODEL", "string", "Primary lane default model"),
+    ("KOSMOS_LLM_FALLBACK_MODEL", "string", "Fallback lane default model"),
+    ("KOSMOS_VISION_BASE_URL", "string", "Vision LLM lane (Qwen3-VL)"),
+    ("KOSMOS_VLM_BASE_URL", "string", "VLM lane base URL"),
+    ("KOSMOS_QDRANT_URL", "string", "Qdrant vector store URL"),
+    ("KOSMOS_LOG_LEVEL", "string", "Logging verbosity"),
+    ("GPU_POWER_LIMIT", "number", "GPU power limit in watts"),
+)
+
+
+def _active_llm_lane() -> tuple[str | None, str | None, str]:
+    """(model, base_url, lane) of the ACTIVE lane — mirrors /api/llm/status."""
+    if registry.llm is None:
+        return None, None, "unavailable"
+    active = getattr(registry.llm, "active_backend", "primary")
+    primary = getattr(registry.llm, "_primary", None)
+    fallback = getattr(registry.llm, "_fallback", None)
+    if active == "fallback" and fallback is not None:
+        lane_adapter = fallback
+        lane = "fallback"
+    else:
+        lane_adapter = primary or registry.llm
+        lane = "primary"
+    return (
+        getattr(lane_adapter, "_default_model", None),
+        getattr(lane_adapter, "_base_url", None),
+        lane,
+    )
+
+
+@app.get("/api/config")
+async def tektos_config_get() -> dict[str, Any]:
+    """Runtime configuration as key-value pairs (donor main.py:5160)."""
+    model, base_url, lane = _active_llm_lane()
+    rows: list[dict[str, Any]] = []
+    for env_key, row_type, description in _T8B_ENV_ROWS:
+        value = os.environ.get(env_key)
+        if value is None and env_key not in (
+            "KOSMOS_LLM_BASE_URL",
+            "KOSMOS_LLM_FALLBACK_BASE_URL",
+        ):
+            continue  # cosmetic rows only when set; lane rows always present
+        rows.append(
+            {
+                "key": env_key,
+                "value": value,
+                "type": row_type,
+                "sensitive": False,
+                "description": description,
+            }
+        )
+    for env_key in _T8B_SENSITIVE_ENV_KEYS:
+        if os.environ.get(env_key):
+            rows.append(
+                {
+                    "key": env_key,
+                    "value": "••••••••",
+                    "type": "string",
+                    "sensitive": True,
+                    "description": f"{env_key} (masked)",
+                }
+            )
+    return {
+        "protocol_version": _T8B_PROTOCOL_VERSION,
+        "llm": {
+            "model": model,
+            "base_url": base_url,
+            "lane": lane,
+            "recommended_model": "qwen3.8-27b",
+        },
+        "config": rows,
+        "llm_available": base_url is not None,
+    }
+
+
+class _T8BUpdateConfigBody(BaseModel):
+    key: str
+    value: Any
+
+
+@app.patch("/api/config")
+async def tektos_config_patch(body: _T8BUpdateConfigBody) -> dict[str, Any]:
+    """Update a configuration value (donor main.py:5232).
+
+    Donor wire preserved: ``ok``/``key``/``value`` (+``note`` for unmapped
+    keys). Documented divergence: the donor's optimistic ``ok: True`` meant
+    "written to os.environ" — but the kernel reads lane topology at boot,
+    so a configured lane cannot be live-mutated. The honest ``applied``
+    flag surfaces that: configured keys report ``applied: False`` +
+    restart note; unmapped-but-known env keys are written to the process
+    environment for the next boot (``applied: True``).
+    """
+    env_var = _T8B_CONFIG_PATCH_MAP.get(body.key)
+    if env_var is None:
+        _T8B_LOG.warning("Unknown config key: %s", body.key)
+        return {
+            "ok": True,
+            "key": body.key,
+            "value": str(body.value),
+            "applied": False,
+            "note": "key not mapped to runtime",
+        }
+    if os.environ.get(env_var):
+        _T8B_LOG.info(
+            "Config key %s already configured — restart required (not applied)",
+            body.key,
+        )
+        return {
+            "ok": True,
+            "key": body.key,
+            "value": str(body.value),
+            "applied": False,
+            "note": "already configured; restart required to apply",
+        }
+    os.environ[env_var] = str(body.value)
+    _T8B_LOG.info("Config updated: %s = %s (via %s)", body.key, body.value, env_var)
+    return {
+        "ok": True,
+        "key": body.key,
+        "value": str(body.value),
+        "applied": True,
+    }
+
+
+# ---------------------------------------------------------------------------
 # RAG status (ADR-124, Stage 11.8) — kernel-native.
 # The old card proxied :8020/api/rag/status, whose stats carried a
 # top_k/similarity_threshold/query_count the kernel does not track

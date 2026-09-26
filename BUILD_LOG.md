@@ -5133,3 +5133,37 @@ MCP, metabolism) in ROI order.
 - **Gate progress (ADR-141):** T1 ✓, T2 ✓, T3 ✓, T4 ✓, T5 ✓, T6 ✓,
   T7 ✓, **T8a ✓**. T8b next.
 - **Stop-condition status:** met — T8a complete; next T8b.
+
+## 2026-09-26 02:06 EDT — ADR-141 T8b-1 complete: config GET/PATCH kernel-native
+- **What:** Donor `main.py:5160` (GET) + `:5232` (PATCH) `/api/config` ported as
+  kernel-native `tektos_config_get`/`tektos_config_patch` in `kernel/app.py`.
+- **Design (layering rule):** surface over kernel substrate — GET mirrors
+  `/api/llm/status` for the live lane (registry.llm ADR-132 topology:
+  model/base_url/lane) + boot env rows (`KOSMOS_LLM_*`, `KOSMOS_VISION_*`,
+  `KOSMOS_QDRANT_URL`, `KOSMOS_LOG_LEVEL`, `GPU_POWER_LIMIT`) + masked
+  sensitive keys (`KOSMOS_LLM_API_KEY` etc. → `••••••••`, never plaintext).
+  Donor wire preserved: `protocol_version`/`llm`/`config`/`llm_available`.
+- **Documented divergence:** donor PATCH returned optimistic `ok: True` for
+  "written to os.environ"; kernel reads lane topology at boot, so a configured
+  lane cannot be live-mutated. PATCH keeps the donor wire (`ok`/`key`/`value`/
+  `note`) and adds an honest `applied` flag: configured key → `applied: False`
+  + "restart required" note; unconfigured env key → written for next boot,
+  `applied: True`; unknown key → donor's `note: key not mapped to runtime`.
+- **Live verify (:8000):** GET 200 — `llm_available: true`, lane rows present,
+  `llm` block matches `/api/llm/status` exactly. PATCH unknown key →
+  `{"ok":true,"applied":false,"note":"key not mapped to runtime"}`.
+- **Pitfall found + fixed:** first test fixture did `del sys.modules["kernel.app"]`
+  + re-import → fresh registry broke sibling tests (tools_stats failed on full
+  suite, passed in isolation). Fixed by matching the established harness
+  (module-level `import kernel.app as ka`, `TestClient(ka.app)`).
+- **Pitfall found:** `kill` inside a security-rejected terminal command does
+  NOT run — the old uvicorn (pid 60466) kept :8000; the new process never
+  bound. Killed in a standalone command, verified `port free`, restarted.
+- **Tests:** `tests/kernel/test_adr141_t8b1_config_surface.py` — 6 tests
+  (GET shape, env rows, sensitive masking, PATCH unknown/configured/unconfigured,
+  422 on missing key). Full `tests/kernel/` 586 passed.
+- **Docs:** ADR-141 rows → P (T8b-1), counts P 63→65 / T 19→17, T8 section
+  T8b-1 paragraph; ADR README → T8b-1 ✓.
+- **Gate progress (ADR-141):** T1–T7 ✓, T8a ✓, **T8b-1 ✓**. Next: T8b-2
+  (keys), T8b-3 (llm/probe), T8b-4 (search).
+- **Stop-condition status:** met — T8b-1 complete; next T8b-2.

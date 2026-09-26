@@ -33,9 +33,9 @@ an equivalent kernel mechanism.
 
 | Disposition | Count | Meaning |
 |---|---|---|
-| **P — Preserved** | 63 (35 + T6 2 + T7 2 + T8a 24, 2026-09-26) | kernel/plugin referent exists and is live |
+| **P — Preserved** | 65 (35 + T6 2 + T7 2 + T8a 24 + T8b-1 2, 2026-09-26) | kernel/plugin referent exists and is live |
 | **D — Deferred** | 70 + 2 WS | recorded path; functionality lost until the named port lands |
-| **T — To-port** | 19 | no referent yet; each becomes a work item before deletion (T8 scope; orchestrator ×2 folded into T8c) |
+| **T — To-port** | 17 | no referent yet; each becomes a work item before deletion (T8 scope; orchestrator ×2 folded into T8c) |
 
 The deferral buckets are **honest temporary losses**, not permanent omissions:
 every D route names the stage or ADR that carries its functionality. The Stage 11
@@ -168,8 +168,8 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `GET /api/archive/sessions/{session_id}/messages` | **P (2026-09-26, T8a)** — kernel-native (T2c, app.py:5670) |
 | `POST /api/archive/sessions/{session_id}/rename` | **P (2026-09-26, T8a)** — kernel-native (T2c, app.py:5682) |
 | `POST /api/archive/sessions/{session_id}/tag` | **P (2026-09-26, T8a)** — kernel-native (T2c, app.py:5697) |
-| `GET /api/config` | no referent — config read |
-| `PATCH /api/config` | no referent — config write |
+| `GET /api/config` | **P (2026-09-26, T8b-1)** — kernel-native: `tektos_config_get` (app.py) surfaces live lane (ADR-132 topology) + boot env rows; donor wire `protocol_version`/`llm`/`config`/`llm_available`; tests `tests/kernel/test_adr141_t8b1_config_surface.py` |
+| `PATCH /api/config` | **P (2026-09-26, T8b-1)** — kernel-native: `tektos_config_patch`; donor wire `ok`/`key`/`value`/`note` preserved + honest `applied` flag (configured lanes not live-mutated — documented divergence) |
 | `POST /api/delegate` | no referent — delegate action (kernel has delegation via subagents, no HTTP surface) |
 | `GET /api/directory_list` | **P (2026-09-26, T8a)** — kernel-native (Stage 11.14 ADR-130, app.py:5293; test_stage_11_14_adr_130_directory_list.py) |
 | `GET /api/dreamtime/history` | no referent |
@@ -334,6 +334,16 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
      orchestrator status/agents, plugins/{name}/toggle); **T8d** — substrate
      ports where none exists (hooks list/fire, schedule over the donor
      BackupScheduler, evaluation/status, schema GET, dreamtime ×4).
+     **T8b-1 (2026-09-26)** — config GET/PATCH kernel-native (donor
+     main.py:5160/5232). GET surfaces the live lane (ADR-132 topology via
+     registry.llm — model/base_url/lane, mirrors /api/llm/status) + boot env
+     rows + masked sensitive keys, at the donor wire
+     (`protocol_version`/`llm`/`config`/`llm_available`). PATCH preserves the
+     donor wire (`ok`/`key`/`value`/`note`) with one documented divergence:
+     an honest `applied` flag — configured lanes are read at boot and are NOT
+     live-mutated (restart required), unconfigured env keys are written back
+     for the next boot. 6 tests, all live against :8000. Full `tests/kernel/`
+     586 passed.
 
 3. **D-bucket ports ride the plan's Stage 13** in its own order
    (13.1 schema_evolution → 13.2 db_manager → … → 13.7 voice), each with its own
