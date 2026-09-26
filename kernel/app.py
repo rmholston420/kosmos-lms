@@ -2409,10 +2409,10 @@ async def lifespan(app: FastAPI):
     # kernel.tool_registry.ToolRegistry (T5a); the toolset + execution are
     # the Tektos plugin's SandboxProvider + builtin_defs (T5b/T5c), injected
     # here — the composition root is the only place plugin→kernel wiring
-    # may cross (ADR-007). The donor's MCP client + skill-manager hook are
-    # separate subsystems (out of T5 scope); unwired here they simply don't
-    # import additional tools, which matches donor boot order.
-    global _tool_registry, _tool_sandbox
+    # may cross (ADR-007). The donor's MCP client is now wired in the boot
+    # block directly below (ADR-141 Stage 13.15); the skill-manager hook
+    # remains an out-of-scope donor subsystem.
+    global _tool_registry, _tool_sandbox, _mcp_client
     if _tool_registry is not None:
         # Pre-seeded (tests, or a re-entered lifespan): keep the existing
         # registry — the donor boots it exactly once per process.
@@ -2430,6 +2430,34 @@ async def lifespan(app: FastAPI):
             _tool_registry = None
             _tool_sandbox = None
             registry.errors["tool_registry"] = f"{type(exc).__name__}: {exc}"
+
+    # --- MCP client (ADR-141 Stage 13.15, donor main.py:287-303) -------------
+    # Donor semantics: the MCP client wraps the SAME tool registry and boots
+    # its connection lazily — the client object exists (so /api/mcp/status
+    # reports ``connected: false``), and ``connect()`` runs only when
+    # ``KOSMOS_MCP_SERVER_URL`` is set (donor: ``TEKTOS_MCP_SERVER_URL``,
+    # default ``http://127.0.0.1:3001/mcp``; transport
+    # ``KOSMOS_MCP_TRANSPORT``, default ``http``). Connection failure is
+    # non-fatal (donor parity): the client stays unwired-URL, status
+    # reports disconnected, and /api/mcp/connect can retry manually.
+    if _mcp_client is None and _tool_registry is not None:
+        try:
+            from kernel.mcp_client import MCPClient
+
+            _mcp_client = MCPClient(registry=_tool_registry)
+            mcp_url = os.environ.get(
+                "KOSMOS_MCP_SERVER_URL", "http://127.0.0.1:3001/mcp"
+            )
+            mcp_transport = os.environ.get("KOSMOS_MCP_TRANSPORT", "http")
+            try:
+                _mcp_client.connect(mcp_url, mcp_transport)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "MCP connect to %s failed (non-fatal): %s", mcp_url, exc
+                )
+        except Exception as exc:  # noqa: BLE001
+            _mcp_client = None
+            registry.errors["mcp_client"] = f"{type(exc).__name__}: {exc}"
 
     # --- Tektos UI sub-app mount (ADR-065, Stage 6.5.8) -----------------------
     # Depends on ``registry.approval`` (ADR-062) + ``registry.memory``
@@ -6782,12 +6810,13 @@ def tools_stats() -> dict[str, Any]:
 #  - ``POST /api/tools/register`` is a DONOR 501 STUB: runtime HTTP tool
 #    registration is refused (a JSON body cannot carry a handler callable).
 #    Donor keeps the route so callers get a clear 501, not a silent no-op.
-#  - The donor's /api/mcp/* routes live with the MCP client (a separate
-#    subsystem, not in the ADR-141 T5 five-route scope).
+#  - The donor's /api/mcp/* routes are wired in the /api/mcp section below
+#    (ADR-141 Stage 13.15, MCPClient substrate in kernel/mcp_client.py).
 # ---------------------------------------------------------------------------
 
 _tool_registry: Any = None  # ToolRegistry — set in the boot (lifespan) below
 _tool_sandbox: Any = None   # SandboxProvider — set in the boot (lifespan) below
+_mcp_client: Any = None     # MCPClient — set in the boot (lifespan) below
 
 
 @app.get("/api/tools/schema")
@@ -6869,6 +6898,51 @@ async def execute_tool(
         return {"error": "Tool registry not initialized"}
     result = _tool_registry.execute(tool_name, body.parameters)
     return {"result": result}
+
+
+# ---------------------------------------------------------------------------
+# /api/mcp — ADR-141 Stage 13.15 (donor main.py:2930-2954 wire-verbatim)
+#
+# The Model Context Protocol surface: ``GET /api/mcp/status`` reports the
+# client's connection state (donor reads ``_server_url`` /
+# ``_imported_count``), and ``POST /api/mcp/connect`` connects to an MCP
+# server and imports its tools into the registry. Both routes and the
+# ``MCPClient`` substrate are byte-verbatim ports of the donor; the only
+# differences are the module import (``kernel.mcp_client``) and the boot
+# env names (``KOSMOS_MCP_SERVER_URL`` / ``KOSMOS_MCP_TRANSPORT``).
+#
+# Documented donor-verbatim quirk: the SSE transport's ``connect()`` calls
+# ``asyncio.run(...)`` internally — fine from the boot (no running loop at
+# that point, the donor also calls it during sync startup) but an error
+# from inside a request handler. Donor parity is preserved; HTTP transport
+# (the default) is loop-safe.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/mcp/status")
+async def get_mcp_status() -> dict[str, Any]:
+    """Get MCP client connection status (donor wire, verbatim)."""
+    if not _mcp_client:
+        return {"connected": False, "url": None}
+    return {
+        "connected": _mcp_client._server_url is not None,
+        "url": _mcp_client._server_url,
+        "imported_count": _mcp_client._imported_count,
+    }
+
+
+class _ConnectMCPServer(BaseModel):
+    url: str = Field(default="", description="MCP server URL")
+    transport: str = Field(default="http", description="Transport protocol")
+
+
+@app.post("/api/mcp/connect")
+async def connect_mcp(body: _ConnectMCPServer) -> dict[str, Any]:
+    """Connect to an MCP server and import its tools (donor wire, verbatim)."""
+    if not _mcp_client:
+        return {"error": "MCP client not initialized"}
+    result = _mcp_client.connect(body.url, body.transport)
+    return result
 
 
 # ---------------------------------------------------------------------------
