@@ -94,17 +94,17 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `GET /api/contextCurator/status` | Stage 13 (context curator) |
 | — 13.2 substrate — | **P (Stage 13.2a, 2026-09-26).** Donor `db_manager.py` (1575 LOC, 100% stdlib) → `kernel/db_manager.py`; donor FULL schema-evolution engine `tektos/schema_evolution.py` (1644 LOC) → `kernel/schema_evolution_full.py` (distinct from the T8c-9 migrations engine). `registry.tektos_db` booted under `KOSMOS_TEKTOS_DB=on`, kernel-owned db at donor's canonical `data/tektos.db` (fresh file, no donor data carried). Donor self-import `from .schema_evolution import RelationshipDetector` fixed to absolute (documented divergence). The 19 routes below ride on this substrate. |
 | `GET /api/db/analyze` | **P (Stage 13.2b, 2026-09-26)** — kernel /api/db/analyze (registry.tektos_db.analyze_all, donor wire verbatim) |
-| `POST /api/db/backup` | Stage 13.2 db_manager |
-| `GET /api/db/backups` | Stage 13.2 db_manager |
+| `POST /api/db/backup` | **P (Stage 13.2e, 2026-09-26)** — kernel (registry.tektos_db.backup; {backup, path, size_bytes, tables, rows, checksum}; donor cartesian-join `rows` quirk preserved 1:1, reproduced standalone + live) |
+| `GET /api/db/backups` | **P (Stage 13.2e, 2026-09-26)** — kernel (registry.tektos_db.list_backups; {"backups": [...]} shape locked) |
 | `POST /api/db/dml` | **P (Stage 13.2d, 2026-09-26)** — kernel (registry.tektos_db.execute_dml; `{"rows_affected": n}`; UPDATE/DELETE without WHERE + require_confirmation=True → 400) |
 | `POST /api/db/explain` | **P (Stage 13.2d, 2026-09-26)** — kernel (registry.tektos_db.explain_query; SELECT → `{plan, estimated_rows, uses_index}`; non-SELECT → 400) |
-| `POST /api/db/export` | Stage 13.2 db_manager |
-| `POST /api/db/import` | Stage 13.2 db_manager |
+| `POST /api/db/export` | **P (Stage 13.2e, 2026-09-26)** — kernel (registry.tektos_db.export_table; json/csv; {"exported": true, path, format}; missing table → donor-500 preserved 1:1, live-confirmed) |
+| `POST /api/db/import` | **P (Stage 13.2e, 2026-09-26)** — kernel (registry.tektos_db.import_table; json/csv; {"imported": true, rows}; unsupported format → 400; missing file → donor-500 (unhandled FileNotFoundError), live-confirmed) |
 | `POST /api/db/indexes` | **P (Stage 13.2c, 2026-09-26)** — kernel (registry.tektos_db.create_index; existing index → `{"created": false}` 200 donor if-exists; bad table identifier → 400) |
 | `DELETE /api/db/indexes/{index_name}` | **P (Stage 13.2c, 2026-09-26)** — kernel (registry.tektos_db.drop_index; missing index → `{"dropped": false}` 200) |
-| `POST /api/db/optimize` | Stage 13.2 db_manager |
+| `POST /api/db/optimize` | **P (Stage 13.2e, 2026-09-26)** — kernel (registry.tektos_db.optimize; {vacuum, analyze, tables_analyzed, total_rows, suggestions, normalization_issues, relationships_detected, ...}) |
 | `POST /api/db/query` | **P (Stage 13.2d, 2026-09-26)** — kernel (registry.tektos_db.execute_query; non-SELECT → 400 donor ValueError; malformed/missing table → 500 donor unhandled sqlite3) |
-| `POST /api/db/restore` | Stage 13.2 db_manager |
+| `POST /api/db/restore` | **P (Stage 13.2e, 2026-09-26)** — kernel (registry.tektos_db.restore; missing backup → 400 {"detail": "Backup not found: ..."}; donor-verbatim) |
 | `GET /api/db/schema` | **P (Stage 13.2b, 2026-09-26)** — kernel /api/db/schema (registry.tektos_db.introspect, donor wire verbatim) |
 | `POST /api/db/tables` | **P (Stage 13.2c, 2026-09-26)** — kernel (registry.tektos_db.create_table; bad name → 400; existing → `{"created": false}` 200 donor if-not-exists) |
 | `DELETE /api/db/tables/{table_name}` | **P (Stage 13.2c, 2026-09-26)** — kernel (registry.tektos_db.drop_table; missing/malformed name → `{"dropped": false}` 200 — existence check precedes _safe_identifier, 400 path unreachable, live-confirmed) |

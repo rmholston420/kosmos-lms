@@ -5044,6 +5044,146 @@ async def db_explain_query(body: _DBQueryBody):
 
 
 # ---------------------------------------------------------------------------
+# Database-manager export/import/backup/restore/optimization routes
+# (ADR-141 Stage 13.2e, donor main.py:3656–3754) — donor-verbatim wires,
+# over the kernel-owned registry.tektos_db substrate (Stage 13.2a).
+# Gate-off → {"error": ...} 200 (donor verbatim, as 13.2b/c/d);
+# donor ValueError → 400; restore FileNotFoundError → 400; other Exception → 500.
+# ---------------------------------------------------------------------------
+
+class _DBExportBody(BaseModel):
+    table_name: str
+    format: str = "json"  # json, csv, sql
+    path: str | None = None
+
+
+class _DBImportBody(BaseModel):
+    table_name: str
+    format: str = "json"  # json, csv, sql
+    path: str
+    mode: str = "insert"  # insert or replace
+    clear_first: bool = False
+
+
+class _DBBackupBody(BaseModel):
+    backup_path: str | None = None
+    compress: bool = False
+
+
+class _DBRestoreBody(BaseModel):
+    backup_path: str
+    verify: bool = True
+
+
+@app.post("/api/db/export")
+async def db_export_table(body: _DBExportBody):
+    """Export a table to JSON, CSV, or SQL (donor main.py:3656)."""
+    from fastapi.responses import JSONResponse
+
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized"}
+    try:
+        path = mgr.export_table(body.table_name, body.format, body.path)
+        return {"exported": True, "path": path, "format": body.format}
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+
+
+@app.post("/api/db/import")
+async def db_import_table(body: _DBImportBody):
+    """Import data into a table from JSON, CSV, or SQL (donor main.py:3671)."""
+    from fastapi.responses import JSONResponse
+
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized"}
+    try:
+        count = mgr.import_table(body.table_name, body.format, body.path, body.mode, body.clear_first)
+        return {"imported": True, "rows": count}
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+
+
+@app.post("/api/db/backup")
+async def db_create_backup(body: _DBBackupBody):
+    """Create a database backup (donor main.py:3685)."""
+    from fastapi.responses import JSONResponse
+
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized"}
+    try:
+        info = mgr.backup(body.backup_path, body.compress)
+        return {
+            "backup": True,
+            "path": info.path,
+            "size_bytes": info.size_bytes,
+            "tables": info.table_count,
+            "rows": info.row_count,
+            "checksum": info.checksum,
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+@app.post("/api/db/restore")
+async def db_restore_backup(body: _DBRestoreBody):
+    """Restore the database from a backup (donor main.py:3705)."""
+    from fastapi.responses import JSONResponse
+
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized"}
+    try:
+        result = mgr.restore(body.backup_path, body.verify)
+        return {"restored": result, "path": body.backup_path}
+    except (FileNotFoundError, ValueError) as e:
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+@app.get("/api/db/backups")
+async def db_list_backups():
+    """List all available backups (donor main.py:3720)."""
+    from fastapi.responses import JSONResponse
+
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized"}
+    backups = mgr.list_backups()
+    return {
+        "backups": [
+            {
+                "path": b.path,
+                "timestamp": b.timestamp,
+                "size_bytes": b.size_bytes,
+                "tables": b.table_count,
+                "rows": b.row_count,
+                "checksum": b.checksum,
+            }
+            for b in backups
+        ]
+    }
+
+
+@app.post("/api/db/optimize")
+async def db_optimize():
+    """Run database optimization: VACUUM, ANALYZE, rebuild indexes (donor main.py:3743)."""
+    from fastapi.responses import JSONResponse
+
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized"}
+    try:
+        results = mgr.optimize()
+        return results
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+# ---------------------------------------------------------------------------
 # Embedder surface (ADR-141 T7, donor main.py:4448/4464) — kernel-native.
 # The donor ran a private EmbedderClient (_embedder_client, :8091) behind
 # two routes. Per the layering rule (governing, 2026-09-25) the embedder

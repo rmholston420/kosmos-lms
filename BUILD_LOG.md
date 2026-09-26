@@ -5707,3 +5707,42 @@ MCP, metabolism) in ROI order.
 - **Gate progress (ADR-141):** 13.2a + 13.2b + 13.2c + 13.2d P.
   13 of 19 /api/db/* routes P (`GET /api/db` via ADR-137). Next:
   13.2e export/import/backup/restore/optimize (remaining 5).
+
+## 2026-09-26 — Stage 13.2e: /api/db/* export/import/backup/restore/optimization (ADR-141)
+- **Routes:** the final six donor `/api/db/*` routes (`POST /export`,
+  `POST /import`, `POST /backup`, `POST /restore`, `GET /backups`,
+  `POST /optimize`) + 4 donor bodies (`_DBExportBody`, `_DBImportBody`,
+  `_DBRestoreBody`, `_DBBackupBody` — `_DBOptimizeBody` absent, donor
+  optimize takes no body) at donor paths, donor-verbatim wiring over
+  `registry.tektos_db` (gate-off → 200 `{"error": "Database manager not
+  initialized"}`, matching the 13.2b/c/d wire; ValueError → 400).
+- **DONOR QUIRKS preserved 1:1 (new):**
+  1. `backup` `rows` field — the route maps `info.row_count` → `"rows"`,
+     and the donor's row_count SQL is a cartesian join
+     (`sqlite_master × table list`, no per-table COUNT) → equals
+     `len(sqlite_master) × table_count` (1 for a 1-table db even with 3
+     rows). Byte-identical to donor db_manager.py:820; reproduced
+     standalone in the test to pin the value.
+  2. `export` missing table → unhandled sqlite3.OperationalError → 500
+     on real uvicorn (TestClient re-raises) — same donor-500 class as
+     13.2b sample / 13.2d query.
+  3. `import` missing file → route catches ValueError only;
+     FileNotFoundError unhandled → 500 on real uvicorn (TestClient
+     re-raises).
+  4. `restore` missing backup → 400 `{"detail": "Backup not found: ..."}`
+     (donor raises FileNotFoundError; route maps to 400).
+- **Test:** `tests/kernel/test_adr141_s132e_db_eio_routes.py` — 13 tests
+  (export json/csv/missing-donor-500; import json/bad-format-400/
+  missing-file-donor-500; backup + list_backups + cartesian-rows lock;
+  restore missing 400 + happy path; optimize shape; gate-off 6 routes
+  with minimally valid bodies). Full suite green (691 passed).
+- **Live-verified on :8000:** 10-probe sweep all green (export json/csv,
+  export missing 500, import json/rows=1, import bad-format 400, import
+  missing 500, backup rows=1 quirk live, backups list, restore-missing
+  400, optimize vacuum/analyze completed).
+- **Docs:** ADR-141 6 rows → P (13.2e); README progress line.
+- **Gate progress (ADR-141):** Stage 13.2 `/api/db/*` surface COMPLETE —
+  every donor `/api/db/*` route P (`GET /api/db` via ADR-137). 19/19.
+  Next: remaining Stage 13 D-routes (axioms, context, mcp, metabolism,
+  nervous-system, observability, rag, repoMap, thermal, vision, voice),
+  `/health` ×3, ADR-140 WS, ADR-109 gateway deletion.
