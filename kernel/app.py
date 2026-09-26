@@ -359,6 +359,12 @@ class _BootRegistry:
         # structure map: file/dir/import scan). Generic substrate →
         # kernel/repo_map_generator.py.
         self.tektos_repo_map: Any = None
+        # ADR-141 Stage 13.10: donor RAGRetriever (document chunking +
+        # SQLite vector index + cosine/keyword retrieval). Generic
+        # substrate → kernel/rag_retriever.py; the donor's
+        # EmbedderClient seam is bridged to the kernel-owned
+        # registry.embeddings (ADR-124 D1) in the composition root.
+        self.tektos_rag_retriever: Any = None
         # ADR-143 T3: kernel learning substrate (donor
         # ``SelfImprovementAdapter`` — experience → evaluation →
         # meta-learning → benchmark loop, JSONL ledger). Boots
@@ -1920,6 +1926,63 @@ async def lifespan(app: FastAPI):
         )
         return generator
 
+    @ _try("tektos_rag_retriever")
+    def _boot_tektos_rag_retriever():
+        import os as _os
+        from pathlib import Path as _Path
+
+        if _os.environ.get("KOSMOS_TEKTOS_RAG", "on").lower() not in ("on", "true", "1"):
+            return None
+        embedder = registry.embeddings
+        if embedder is None:
+            registry.errors["tektos_rag_retriever"] = (
+                "skipped: embeddings lane not booted (ADR-124 D1)"
+            )
+            return None
+        from kernel.rag_retriever import RAGRetriever
+
+        # ADR-007 bridge (composition root only, substrate untouched):
+        # the donor's `EmbedderClient` seam is an async pair —
+        #   embed_batch(texts)  → obj with .embeddings: list[list[float]]
+        #   embed(query)        → obj with .embeddings[0]
+        # The kernel-owned embeddings lane (ADR-124 D1,
+        # LlamaEmbeddingsAdapter) speaks the ADR-073 batch contract
+        # (`embed(*, texts)` → list[list[float]]) + `embed_meta(*, texts)`
+        # → EmbeddingMeta(.embeddings). This tiny object adapts one
+        # method of the kernel lane to BOTH donor calls (the donor never
+        # uses embed() for anything but a single query; embed_meta is the
+        # batch path in the kernel and returns the same vector list).
+        class _EmbedderBridge:
+            async def embed_batch(self, texts):
+                meta = await embedder.embed_meta(texts=list(texts))
+                return meta
+
+            async def embed(self, text):
+                return await self.embed_batch([text])
+
+        # Donor boot (main.py:1464-1470): project_root = the donor repo
+        # root, db at <root>/data/tektos_rag.db (gitignored via *.db).
+        # Kernel-honest equivalent: index the Kosmos repo, db at
+        # data/tektos_rag.db relative to the Kosmos root. start() is
+        # async (opens the SQLite index + verifies embedder
+        # connectivity); the _try boot fn executes sync inside the async
+        # lifespan, so it is scheduled on the running loop
+        # fire-and-forget, exactly as in the donor's boot.
+        root = _Path(__file__).parent.parent
+        retriever = RAGRetriever(
+            embedder_client=_EmbedderBridge(),
+            project_root=str(root),
+            db_path=str(root / "data" / "tektos_rag.db"),
+        )
+        asyncio.get_running_loop().create_task(retriever.start())
+        logger.info(
+            "kosmos.tektos_rag_retriever: wired (ADR-141 Stage 13.10); "
+            "db=%s, embedder=%s",
+            retriever._db_path,
+            type(embedder).__name__,
+        )
+        return retriever
+
     registry.tektos_reflection = _boot_tektos_reflection
     registry.tektos_synthesis = _boot_tektos_synthesis
     registry.tektos_experience = _boot_tektos_experience
@@ -1937,6 +2000,7 @@ async def lifespan(app: FastAPI):
     registry.tektos_metabolism = _boot_tektos_metabolism
     registry.tektos_context_curator = _boot_tektos_context_curator
     registry.tektos_repo_map = _boot_tektos_repo_map
+    registry.tektos_rag_retriever = _boot_tektos_rag_retriever
     registry.tektos_orchestrator = _boot_tektos_orchestrator
 
     # --- Gnosis boot seeder (ADR-064) ----------------------------------------
@@ -4302,6 +4366,19 @@ async def repo_map_status() -> dict[str, Any]:
     return {
         "status": "initialized",
         "stats": generator.get_stats(),
+    }
+
+
+@app.get("/api/ragRetriever/status")
+async def rag_retriever_status() -> dict[str, Any]:
+    """RAG retriever status (donor main.py:4661)."""
+    retriever = registry.tektos_rag_retriever
+    if retriever is None:
+        return {"status": "not_initialized"}
+    return {
+        "status": "initialized",
+        "db_path": retriever._db_path,
+        "initialized": retriever._initialized,
     }
 
 

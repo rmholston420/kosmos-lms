@@ -5943,3 +5943,39 @@ MCP, metabolism) in ROI order.
   Kosmos repo; regression probes 13.4/13.5/13.6/13.7/13.8 all clean.
 - **Docs:** ADR-141 repoMap row → P (Stage 13.9); README ADR-141 row
   gains Stage 13.9 ✓.
+
+## 2026-09-26 — Stage 13.10: RAG retriever status route (ADR-141)
+- **Substrate:** donor `tektos/runtime/rag_retriever.py` (858 LOC, 100%
+  stdlib + aiosqlite, zero `tektos.*` imports) → `kernel/rag_retriever.py`
+  BYTE-VERBATIM (generic vector-index substrate → kernel per the
+  governing layering rule).
+- **Boot:** `registry.tektos_rag_retriever` under `KOSMOS_TEKTOS_RAG=on`
+  (default on); `project_root` = Kosmos repo root, db at
+  `data/tektos_rag.db` (gitignored `*.db`). The donor's `EmbedderClient`
+  seam (`embed_batch(texts)`/`embed(query)` → `.embeddings`) is bridged
+  to the kernel-owned ADR-124 D1 lane (`LlamaEmbeddingsAdapter`, :8091)
+  via a tiny `_EmbedderBridge` in the composition root (ADR-007 —
+  substrate untouched; one method of the kernel lane answers both donor
+  calls). Async `start()` (SQLite open) scheduled fire-and-forget on the
+  running loop, exactly as in the donor boot (main.py:1464-1470).
+- **Route:** `GET /api/ragRetriever/status` donor-verbatim
+  (main.py:4661): `initialized` + db_path + initialized flag /
+  `not_initialized` gate-off at 200.
+- **Divergences:** none on the wire; project_root/db path necessarily
+  differ (Kosmos repo, not the donor repo) — documented in the boot fn.
+- **Tests:** `tests/kernel/test_adr141_s1310_rag_retriever_status.py`
+  3 tests (route initialized with post-boot wait, gate-off, REAL
+  keyword-retrieval round-trip on a tmp tree with no embedder — pure
+  SQLite + chunking, no mocks, no live :8091).
+- **Suite:** 815 passed (812 + 3).
+- **Live-verified on :8000:** `initialized:true`, db path correct,
+  embedder lane :8091 healthy; regression probes 13.3–13.9 + embedder
+  all clean.
+- **Docs:** ADR-141 ragRetriever row → P (Stage 13.10); README ADR-141
+  row gains Stage 13.10 ✓.
+
+**Stage 13 thin-route D-buckets COMPLETE:** mcp ×2 was scoped in a
+prior session (kernel `ToolRegistry`/`plugins/tektos/mcp` referents);
+repoMap ×1 (13.9), ragRetriever ×1 (13.10), contextCurator ×1 (13.8)
+now all P. Remaining Stage 13: vision ×3, voice ×3, `/health` ×3,
+ADR-140 WS, ADR-109 gateway deletion (14.5 exit gate).
