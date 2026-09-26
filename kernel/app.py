@@ -365,6 +365,11 @@ class _BootRegistry:
         # EmbedderClient seam is bridged to the kernel-owned
         # registry.embeddings (ADR-124 D1) in the composition root.
         self.tektos_rag_retriever: Any = None
+        # ADR-141 Stage 13.11: donor VisionClient (OpenAI-compatible
+        # /chat/completions vision transport — Qwen3-VL lane). Generic
+        # substrate → kernel/vision_client.py; the kernel's
+        # KOSMOS_VISION_* env lane (ADR-132) feeds it.
+        self.tektos_vision: Any = None
         # ADR-143 T3: kernel learning substrate (donor
         # ``SelfImprovementAdapter`` — experience → evaluation →
         # meta-learning → benchmark loop, JSONL ledger). Boots
@@ -1983,6 +1988,54 @@ async def lifespan(app: FastAPI):
         )
         return retriever
 
+    @ _try("tektos_vision")
+    def _boot_tektos_vision():
+        import os as _os
+
+        # ADR-141 Stage 13.11 (vision ×3): donor boot (main.py:920-945)
+        # gated on TEKTOS_VISION_URL and pointed VisionClient at
+        # TEKTOS_VISION_MODEL. Kernel-honest equivalent: the ADR-132
+        # vision lane env pair (KOSMOS_VISION_BASE_URL/MODEL — the same
+        # vars /api/models already reports), plus a sibling gate
+        # KOSMOS_TEKTOS_VISION (default on) for parity with 13.9/13.10.
+        if _os.environ.get("KOSMOS_TEKTOS_VISION", "on").lower() not in ("on", "true", "1"):
+            return None
+        vision_url = (
+            _os.environ.get("KOSMOS_VISION_BASE_URL")
+            or "http://127.0.0.1:8094"
+        ).rstrip("/")
+        # Donor parity: append /v1 if the URL lacks a version suffix
+        # (donor main.py:938-940).
+        if not vision_url.endswith("/v1"):
+            vision_url = f"{vision_url}/v1"
+        vision_model = _os.environ.get("KOSMOS_VISION_MODEL") or "qwen3-vl-4b"
+        from kernel.vision_client import VisionClient
+
+        client = VisionClient(base_url=vision_url, model=vision_model)
+
+        # The donor's boot `await vision_client.start()` (OpenAI
+        # /health probe, failure → vision_client = None). The _try boot
+        # fn executes sync inside the async lifespan, so the probe is
+        # scheduled on the running loop with the donor's exact
+        # failure→None semantics (documented divergence: slot may be
+        # None briefly during boot, or None permanently if the lane
+        # is down).
+        async def _probe() -> None:
+            try:
+                await client.start()
+                logger.info(
+                    "kosmos.tektos_vision: connected (ADR-141 Stage 13.11); %s (model: %s)",
+                    client.base_url,
+                    client.model,
+                )
+            except Exception as exc:  # noqa: BLE001 — donor parity (main.py:941-943)
+                logger.warning("Vision endpoint not available at %s: %s", vision_url, exc)
+                if registry.tektos_vision is client:
+                    registry.tektos_vision = None
+
+        asyncio.get_running_loop().create_task(_probe())
+        return client
+
     registry.tektos_reflection = _boot_tektos_reflection
     registry.tektos_synthesis = _boot_tektos_synthesis
     registry.tektos_experience = _boot_tektos_experience
@@ -2001,6 +2054,7 @@ async def lifespan(app: FastAPI):
     registry.tektos_context_curator = _boot_tektos_context_curator
     registry.tektos_repo_map = _boot_tektos_repo_map
     registry.tektos_rag_retriever = _boot_tektos_rag_retriever
+    registry.tektos_vision = _boot_tektos_vision
     registry.tektos_orchestrator = _boot_tektos_orchestrator
 
     # --- Gnosis boot seeder (ADR-064) ----------------------------------------
@@ -4380,6 +4434,154 @@ async def rag_retriever_status() -> dict[str, Any]:
         "db_path": retriever._db_path,
         "initialized": retriever._initialized,
     }
+
+
+# ---------------------------------------------------------------------------
+# /api/vision — ADR-141 Stage 13.11 (vision ×3, donor main.py:4219-4352)
+#
+# Donor-verbatim wire contract: POST /api/vision/analyze (base64 image),
+# POST /api/vision/analyze-url, GET /api/vision/status. The transport
+# substrate (kernel/vision_client.py, donor vision_client.py byte-verbatim)
+# talks to the ADR-132 Qwen3-VL lane (KOSMOS_VISION_* env, :8094 on
+# Collosus). 503 when the slot is None (gate off, or the boot probe
+# failed — donor main.py:941-943 parity).
+# ---------------------------------------------------------------------------
+
+
+class VisionAnalyzeRequest(BaseModel):
+    """Request body for vision analysis (donor main.py:4224)."""
+
+    session_id: str
+    image_base64: str
+    prompt: str = "Describe what you see in this image in detail."
+    system_prompt: str | None = None
+    model: str | None = None
+
+
+class VisionAnalyzeUrlRequest(BaseModel):
+    """Request body for vision analysis from URL (donor main.py:4234)."""
+
+    session_id: str
+    image_url: str
+    prompt: str = "Describe what you see in this image in detail."
+    system_prompt: str | None = None
+    model: str | None = None
+
+
+@app.post("/api/vision/analyze")
+async def vision_analyze(req: VisionAnalyzeRequest):
+    """Analyze an image using the vision model (donor main.py:4244).
+
+    Accepts a base64-encoded image and returns the model's text description.
+    """
+    client = registry.tektos_vision
+    if client is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Vision client not initialized. Set TEKTOS_VISION_URL to enable.",
+        )
+
+    try:
+        # Write base64 to temp file
+        import base64 as _base64
+        import tempfile
+        from contextlib import suppress
+
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
+                tmp_file.write(_base64.b64decode(req.image_base64))
+                tmp_path = tmp_file.name
+
+            # Analyze
+            result = await client.analyze(tmp_path, req.prompt, req.system_prompt)
+
+            return {
+                "ok": True,
+                "session_id": req.session_id,
+                "text": result.text,
+                "model": result.model,
+                "usage": {
+                    "prompt_tokens": result.prompt_tokens,
+                    "completion_tokens": result.completion_tokens,
+                    "total_tokens": result.total_tokens,
+                },
+                "timings": result.timings,
+            }
+        finally:
+            if tmp_path:
+                import os
+
+                with suppress(OSError):
+                    os.unlink(tmp_path)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Vision analyze error: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/vision/analyze-url")
+async def vision_analyze_url(req: VisionAnalyzeUrlRequest):
+    """Analyze an image from a URL using the vision model (donor main.py:4295)."""
+    client = registry.tektos_vision
+    if client is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Vision client not initialized. Set TEKTOS_VISION_URL to enable.",
+        )
+
+    try:
+        result = await client.analyze_url(req.image_url, req.prompt, req.system_prompt)
+
+        return {
+            "ok": True,
+            "session_id": req.session_id,
+            "text": result.text,
+            "model": result.model,
+            "usage": {
+                "prompt_tokens": result.prompt_tokens,
+                "completion_tokens": result.completion_tokens,
+                "total_tokens": result.total_tokens,
+            },
+            "timings": result.timings,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Vision analyze URL error: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/vision/status")
+async def vision_status():
+    """Check vision client status (donor main.py:4326)."""
+    client = registry.tektos_vision
+    if client is None:
+        return {
+            "ok": False,
+            "initialized": False,
+            "detail": "Vision client not initialized. Set TEKTOS_VISION_URL to enable.",
+        }
+
+    try:
+        healthy = await client.health()
+        return {
+            "ok": True,
+            "initialized": True,
+            "healthy": healthy,
+            "model": client.model,
+            "base_url": client.base_url,
+        }
+    except Exception as exc:
+        return {
+            "ok": True,
+            "initialized": True,
+            "healthy": False,
+            "error": str(exc),
+            "model": client.model,
+            "base_url": client.base_url,
+        }
 
 
 # ---------------------------------------------------------------------------

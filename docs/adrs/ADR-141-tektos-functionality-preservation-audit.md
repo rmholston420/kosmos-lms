@@ -153,9 +153,9 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `GET /api/thermal/health` | **P (Stage 13.6, 2026-09-26)** — kernel route over the ADR-121 ThermalWatchdog (the kernel's thermal referent; same class as the donor's ThermalMonitor). Donor `get_health_score()` bands (monitor.py:174) verbatim as `watchdog.get_health_score()` — pure temp→score map (None/0 → 1.0, <60→1.0 … ≥85→0.1). Gate-off → donor-verbatim `{"error": "Thermal monitor not initialized"}` at 200 (13.2e convention). Live-verified: 73°C → 0.7. |
 | `POST /api/thermal/reset` | **P (Stage 13.6, 2026-09-26)** — kernel route; donor `reset()` (monitor.py:218, `regulator.reset()` → optimal) kernel-side equivalent: clear the SustainedCooldownRule at/above window + restore NOMINAL_POWER_CAP_W via `apply_cap` when cooldown is active. `watchdog.reset()` then returns the `:8020`-shaped `snapshot()`. Gate-off → same donor-verbatim error. Live-verified: `{"status":"reset", snapshot with real gpu temp}`. |
 | `GET /api/toolRouter/status` | kernel tool_router router (executor/api.py) — status surface unverified |
-| `POST /api/vision/analyze` | Stage 13.7 (vision :8094) |
-| `POST /api/vision/analyze-url` | Stage 13.7 (vision :8094) |
-| `GET /api/vision/status` | Stage 13.7 (vision :8094) |
+| `POST /api/vision/analyze` | **P (Stage 13.11, 2026-09-26)** — donor `tektos/providers/vision_client.py` (239 LOC, stdlib + httpx, zero `tektos.*` imports) → `kernel/vision_client.py` byte-verbatim (generic OpenAI-compatible vision transport → kernel per the governing layering rule). Booted from the ADR-132 vision lane (`KOSMOS_VISION_BASE_URL`/:8094, `KOSMOS_VISION_MODEL`/qwen3-vl-4b) + `KOSMOS_TEKTOS_VISION` gate (default on); donor /v1 normalization + failure→None boot semantics (main.py:920-945). 4 tests incl. real-socket OpenAI server; live-verified on :8000 (status initialized, qwen3-vl-4b). |
+| `POST /api/vision/analyze-url` | **P (Stage 13.11, 2026-09-26)** — same substrate/route family as analyze (donor main.py:4219-4352). |
+| `GET /api/vision/status` | **P (Stage 13.11, 2026-09-26)** — same substrate/route family as analyze (donor main.py:4219-4352). |
 | `GET /api/voice/state` | Stage 13.7 (voice) |
 | `POST /api/voice/stt` | Stage 13.7 (voice) |
 | `POST /api/voice/tts` | Stage 13.7 (voice) |

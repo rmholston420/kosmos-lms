@@ -5979,3 +5979,45 @@ prior session (kernel `ToolRegistry`/`plugins/tektos/mcp` referents);
 repoMap ×1 (13.9), ragRetriever ×1 (13.10), contextCurator ×1 (13.8)
 now all P. Remaining Stage 13: vision ×3, voice ×3, `/health` ×3,
 ADR-140 WS, ADR-109 gateway deletion (14.5 exit gate).
+
+## 2026-09-26 — Stage 13.11: vision ×3 substrate port + 3 routes (ADR-141)
+- **Substrate:** donor `tektos/providers/vision_client.py` (239 LOC,
+  100% stdlib + httpx, zero `tektos.*` imports — the only "tektos"
+  string is the logger name) → `kernel/vision_client.py`
+  BYTE-VERBATIM (generic OpenAI-compatible vision transport → kernel
+  per the governing layering rule).
+- **Boot:** `registry.tektos_vision` under `KOSMOS_TEKTOS_VISION=on`
+  (default on), fed by the ADR-132 vision-lane env pair
+  (`KOSMOS_VISION_BASE_URL` default :8094, `KOSMOS_VISION_MODEL`
+  default qwen3-vl-4b — the same vars /api/models reports). Donor
+  /v1-suffix normalization (main.py:938-940) + donor failure→None
+  boot semantics (main.py:941-943) preserved: the async /health probe
+  is scheduled fire-and-forget on the running loop and nulls the slot
+  on failure (documented divergence: donor awaited it inline).
+- **Routes:** `POST /api/vision/analyze`, `POST /api/vision/analyze-url`,
+  `GET /api/vision/status` — donor-verbatim wire contract
+  (main.py:4219-4352), incl. the 503 "Vision client not initialized"
+  pair on the analyze routes when the slot is None.
+- **Divergences:** none on the wire. Boot probe scheduled rather than
+  awaited (sync `_try` boot fn inside async lifespan); registry slot
+  replaces the donor module global.
+- **Tests:** `tests/kernel/test_adr141_s1311_vision_routes.py` 4 tests —
+  real local OpenAI-compatible vision server (stdlib http.server, real
+  sockets, no mocks, no GPU dep): status envelope, base64 analyze
+  round-trip (asserts the real image data-URL payload), analyze-url
+  round-trip (real HTTP image fetch), 503 gate-off pair.
+- **Suite:** 819 passed (815 + 4).
+- **Live-verified on :8000:** `/api/vision/status` →
+  `{ok:true, initialized:true, healthy:true, model:qwen3-vl-4b,
+  base_url:http://127.0.0.1:8094/v1}`; regression probes
+  13.3–13.10 all clean.
+- **Lane note (NOT a port defect):** real image analyze against the
+  live :8094 lane returns 500 "image input is not supported — provide
+  the mmproj" — the :8094 llama-server (llama-server-8094.service,
+  CPU build, `qwen3-vl-4b-unsloth.gguf`) runs WITHOUT `--mmproj` and no
+  projector file for this model exists on disk (only the 35B-A3B
+  projector). Lane-config gap; the kernel route propagates the donor's
+  exact 500 surface for it. Fix = obtain a Qwen3-VL-4B mmproj +
+  restart the service with `--mmproj <file>`.
+- **Docs:** ADR-141 vision ×3 rows → P (Stage 13.11); README ADR-141
+  row gains Stage 13.11 ✓.
