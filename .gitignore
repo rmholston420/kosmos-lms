@@ -71,3 +71,6 @@ test-results/
 # kosmos DB credentials (gitignored; never commit)
 ops/systemd/kosmos.pg.password
 ops/systemd/kosmos-kernel.local.env
+
+# ADR-141 T8c-6 — evaluation harness output dir (donor behavior)
+evaluations/

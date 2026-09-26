@@ -5280,6 +5280,29 @@ MCP, metabolism) in ROI order.
 
 ## 2026-09-26 05:20 EDT — ADR-141 T8c-5 complete: GET /api/schedule kernel-native
 
+## 2026-09-26 05:55 EDT — ADR-141 T8c-6 complete: GET /api/evaluation/status kernel-native
+
+- **Substrate:** donor `runtime/evaluation_framework.py` (417 LOC,
+  self-contained, stdlib-only) verbatim port →
+  `kernel/evaluation_framework.py`. Generic benchmark/quality
+  measurement infrastructure → kernel-level shared substrate (layering
+  rule), not Tektos-plugin policy.
+- **Route (app.py, after /api/embedder/status):** donor main.py:4484.
+  Consumes `get_evaluation_harness()` exactly as the donor did (fresh
+  call, module-level singleton inside the framework — donor semantics).
+  Donor wire `{status, total_evaluations, completed_evaluations,
+  average_score}`; `{status: error, error}` at 200 (donor shape).
+- **Repo hygiene:** `./evaluations/` (harness output dir, created by the
+  donor's own constructor) added to .gitignore.
+- **Tests:** `tests/kernel/test_adr141_t8c6_evaluation_status.py` — 3
+  (wire shape, harness-state reflection via the same singleton, error
+  degrade at 200). 3/3 pass.
+- **Live :8000:** `{"status":"initialized","total_evaluations":0,
+  "completed_evaluations":0,"average_score":0.0}` — donor wire exact.
+- **Gate progress (ADR-141):** P 75→76. Remaining T8c: plugins toggle,
+  dreamtime ×4, schema (6 rows). Then D-bucket (Stage 13), /health ×3,
+  ADR-140 WS, ADR-109 gateway retirement.
+
 - **Donor defect (T8c-2 class):** donor main.py:5266 built a FRESH
   `BackupScheduler()` per request — in-memory `backup_records` starts
   `[]`, so the route ALWAYS returned `[]`. Kernel referent scans the

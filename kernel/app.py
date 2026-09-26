@@ -4288,6 +4288,31 @@ async def embedder_status() -> dict[str, Any]:
     }
 
 
+@app.get("/api/evaluation/status")
+async def evaluation_status() -> dict[str, Any]:
+    """Evaluation harness status (donor main.py:4484; ADR-141 T8c-6).
+
+    Donor wire (preserved): ``{status: "initialized",
+    total_evaluations, completed_evaluations, average_score}``;
+    ``{status: "error", error: str}`` at 200 on failure (donor shape:
+    error dict in the body, never an HTTP error).
+    """
+    try:
+        from kernel.evaluation_framework import get_evaluation_harness
+
+        harness = get_evaluation_harness()
+        status = harness.get_status()
+        return {
+            "status": "initialized",
+            "total_evaluations": status["total_evaluations"],
+            "completed_evaluations": status["completed_evaluations"],
+            "average_score": status["average_score"],
+        }
+    except Exception as exc:  # noqa: BLE001 — donor shape: error at 200
+        logger.warning("Evaluation status failed: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+
 @app.post("/api/embedder/embed")
 async def embedder_embed(payload: dict[str, Any]) -> dict[str, Any]:
     """Generate an embedding for the supplied text (donor main.py:4464)."""

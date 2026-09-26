@@ -33,7 +33,7 @@ an equivalent kernel mechanism.
 
 | Disposition | Count | Meaning |
 |---|---|---|
-| **P — Preserved** | 75 (35 + T6 2 + T7 2 + T8a 24 + T8b-1 2 + T8b-2 1 + T8b-3 1 + T8b-4 1 + T8c-1 2 + T8c-2 1 + T8c-3 1 + T8c-4 2 + T8c-5 1, 2026-09-26) | kernel/plugin referent exists and is live |
+| **P — Preserved** | 76 (35 + T6 2 + T7 2 + T8a 24 + T8b-1 2 + T8b-2 1 + T8b-3 1 + T8b-4 1 + T8c-1 2 + T8c-2 1 + T8c-3 1 + T8c-4 2 + T8c-5 1 + T8c-6 1, 2026-09-26) | kernel/plugin referent exists and is live |
 | **D — Deferred** | 70 + 2 WS | recorded path; functionality lost until the named port lands |
 | **T — To-port** | 10 | no referent yet; each becomes a work item before deletion (T8 scope; orchestrator ×2 folded into T8c) |
 
@@ -178,7 +178,7 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `POST /api/dreamtime/trigger-skill-generation` | no referent |
 | `POST /api/embedder/embed` | **P (2026-09-26, T7)** — kernel-native, donor shape (wired to registry.embeddings) |
 | `GET /api/embedder/status` | **P (2026-09-26, T7)** — kernel-native, donor shape (wired to registry.embeddings) |
-| `GET /api/evaluation/status` | no referent — evaluation harness status |
+| `GET /api/evaluation/status` | **P (2026-09-26, T8c-6)** — kernel-native: donor main.py:4484. Substrate = donor `runtime/evaluation_framework.py` (417 LOC, self-contained, stdlib-only) verbatim port → `kernel/evaluation_framework.py` (generic benchmark/quality-measurement infra → kernel-level per layering rule). Route consumes `get_evaluation_harness()` exactly as the donor did (fresh call, module singleton). Donor wire `{status, total_evaluations, completed_evaluations, average_score}`; `{status: error, error}` at 200 (donor shape). 3 tests; live :8000 → `initialized`, 0 evals |
 | `GET /api/hooks` | **P (2026-09-26, T8c-4)** — kernel-native: donor main.py:5101. Substrate = donor `runtime/hooks.py` (325 LOC, self-contained, stdlib-only) verbatim port → `kernel/hooks.py`; booted as `registry.hook_manager` (app.py, resource monitor = kernel thermal watchdog — lacks `check_thermal_limit`, so the donor's own hasattr guard skips the thermal builtins: 4 not 6). Donor wire `{hooks: [{event_type, handlers[]}]}`; `{error}` at 200 when off (donor shape). 8 tests; live :8000 → 4 builtin events listed |
 | `POST /api/hooks/fire` | **P (2026-09-26, T8c-4)** — kernel-native: donor main.py:5117. Donor wire `{event_type, results: [{outcome, message, blocking, data}]}` verbatim; 422 missing event_type (donor pydantic), 503 system off, 500 fire failure; `stop_on_abort=False` (donor). Live :8000 → `tool.before` fire → `continue` |
 | `GET /api/keys` | **P (2026-09-26, T8b-2)** — kernel-native: `tektos_list_api_keys` (app.py); donor wire `{keys: [{name,key,value,configured}]}` — KOSMOS_* secret set + DATABASE_URL/OPENAI_API_KEY, values masked (`••••••••`/`not configured`); test `tests/kernel/test_adr141_t8b2_keys_surface.py` |
@@ -411,6 +411,16 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
      (`test_adr141_t8c5_schedule.py`); live :8000 → 106 real backups.
      Remaining T8c: evaluation, plugins toggle, dreamtime ×4, schema
      (7 rows).
+     **T8c-6 (2026-09-26)** — `GET /api/evaluation/status` kernel-native
+     (donor main.py:4484). Donor `runtime/evaluation_framework.py`
+     (417 LOC, self-contained) verbatim port → `kernel/evaluation_framework.py`
+     (kernel-level: generic benchmark/quality infra, layering rule). Route
+     consumes `get_evaluation_harness()` as the donor did; donor wire
+     verbatim + `{status: error}` at 200 degrade. `./evaluations/`
+     (harness output dir, donor behavior) gitignored. 3 tests
+     (`test_adr141_t8c6_evaluation_status.py`, incl. harness-state
+     reflection + error degrade); live :8000 → `initialized`. Remaining
+     T8c: plugins toggle, dreamtime ×4, schema (6 rows).
 
 3. **D-bucket ports ride the plan's Stage 13** in its own order
    (13.1 schema_evolution → 13.2 db_manager → … → 13.7 voice), each with its own
