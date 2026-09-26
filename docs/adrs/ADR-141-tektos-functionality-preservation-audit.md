@@ -183,8 +183,8 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `POST /api/hooks/fire` | no referent — hooks fire |
 | `GET /api/keys` | no referent — keys list |
 | `POST /api/llm/probe` | no referent — LLM probe action |
-| `POST /api/memory/decay` | no referent — memory decay action |
-| `DELETE /api/memory/{tier}/{entry_id}` | no referent — memory entry delete |
+| `POST /api/memory/decay` | **P (2026-09-26, T6)** — kernel-native, donor shape |
+| `DELETE /api/memory/{tier}/{entry_id}` | **P (2026-09-26, T6)** — kernel-native, donor shape |
 | `GET /api/multi-agent-orchestrator/agents` | TO-PORT: engine.agents roster dict exists, /agents route missing |
 | `GET /api/multi-agent-orchestrator/status` | TO-PORT: engine + bundle exist (ADR-114), /stats present, /status route missing |
 | `GET /api/planner/language-games` | no referent |
@@ -285,6 +285,21 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
      full `tests/kernel/` 566 passed. Donor Terminal-Bench Docker proxying
      + web/rag/delegate handlers are separate subsystems (out of T5 scope).
    - **T6 — memory actions** (2: decay, entry delete) — pairs with ADR-135.
+     **P (2026-09-26)** — donor `MemoryPersistence` (3-tier cognitive store:
+     working/long_term/procedural + transfer log + decay scheduler) ported
+     donor-verbatim to `plugins/tektos/memory/persistence.py` (T6a,
+     `e579fa2`; 14 tests + donor-vs-kernel behavioral parity CLEAN across
+     all tiers/search/transfer/log/stats/import-export — only diff is the
+     `created_at` wall-clock, a known false positive). T6b: the 2 donor
+     routes (main.py:2324-2349) at the donor paths in `kernel/app.py` —
+     `POST /api/memory/decay` (per-tier counts, long/proc always 0) and
+     `DELETE /api/memory/{tier}/{entry_id}` (`{"deleted": bool}`, 400
+     unknown tier, `{"error": ...}` degraded at 200 — all donor shapes);
+     boot gate `KOSMOS_TEKTOS_MEMORY=on` (donor booted unconditionally at
+     120 s decay; env default `off` so the gate stays honest) + registry
+     slot + shutdown stop/close. 7 route tests (full-lifespan boot proves
+     the real gate path). The ops-tab decay button is now live (was the
+     ADR-135 honest degrade). Full `tests/kernel/` 573 passed.
    - **T7 — embedder surface** (2: status :8091, embed) — pairs with the ADR-132
      LLM lanes.
    - **T8 — misc singletons**: config GET/PATCH, keys, hooks list/fire, schedule,

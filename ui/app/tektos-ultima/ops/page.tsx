@@ -15,9 +15,11 @@
  *             only); donor's tektos.db SQLite controls retired with
  *             main.py deletion (stores are systemd-managed infra)
  *   memory    (kernel-native, ADR-135) GET /api/memory · /api/memory/stats
- *             POST /api/memory/decay → honest degrade (no kernel referent:
- *             kernel memory is a MemoryEvent graph, tier decay is Tektos
- *             plugin policy — landing later)
+ *             POST /api/memory/decay — kernel-native (ADR-141 T6: 3-tier
+ *             cognitive store, KOSMOS_TEKTOS_MEMORY=on; degraded → honest
+ *             n/a message) · DELETE /api/memory/{tier}/{entry_id}
+ *             (route-level donor parity; the entries table above stays the
+ *             graph referent per ADR-135)
  *   skills    (kernel-native, ADR-136) GET /api/skills/stats — Tektos Manager
  *             archetype tracker (skill candidates); registry list + toggles
  *             deferred (ADR-108 D9), not ported
@@ -307,6 +309,26 @@ function MemoryTab() {
   const entries = Array.isArray(mem) ? mem : isObj(mem) && Array.isArray(mem["entries"]) ? mem["entries"] : [];
   const statsObj = isObj(stats) ? stats : null;
 
+  const [decaying, setDecaying] = useState(false);
+  const runDecay = async () => {
+    if (decaying) return;
+    setDecaying(true);
+    try {
+      if (!window.confirm("Run decay on all cognitive-memory tiers? (expired working entries are removed)")) return;
+      const res = await act("/api/memory/decay", {}, "");
+      if (res.ok && isObj(res.data) && str(res.data["error"])) {
+        setMsg(`decay unavailable: ${str(res.data["error"])} (KOSMOS_TEKTOS_MEMORY=on required)`);
+      } else if (res.ok && isObj(res.data)) {
+        const d = res.data as Record<string, unknown>;
+        setMsg(`decay complete — removed: working=${str(d["working"])} long_term=${str(d["long_term"])} procedural=${str(d["procedural"])}`);
+      } else {
+        setMsg(`decay failed: ${res.error ?? "unknown error"}`);
+      }
+    } finally {
+      setDecaying(false);
+    }
+  };
+
   return (
     <div data-testid="tektos-ops-memory">
       <div style={{ ...panelStyle, display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center" }}>
@@ -316,20 +338,19 @@ function MemoryTab() {
               .map(([k, v]) => <Metric key={k} label={k} value={typeof v === "object" ? JSON.stringify(v) : String(v)} />)
           : <span style={{ fontSize: "var(--font-sm, 0.8125rem)", color: "var(--color-text-dim, #888)" }}>stats unavailable</span>}
         <span style={{ flex: 1 }} />
-        {/* ADR-135 honest degrade: the donor's tier decay has no kernel
-            referent — the kernel memory is a MemoryEvent graph (no tiers,
-            no decay value function). Tier/decay policy lands later as
-            Tektos plugin policy against registry.memory. */}
+        {/* ADR-141 T6: donor's tier decay is now kernel-native — POST
+            /api/memory/decay against the 3-tier cognitive store
+            (KOSMOS_TEKTOS_MEMORY=on). The degraded response
+            {"error": "Memory persistence not initialized"} renders as
+            an honest n/a message, donor shape at 200. */}
         <button
           data-testid="tektos-ops-memory-decay-btn"
-          style={{ ...btnStyle, opacity: 0.45, cursor: "not-allowed" }}
-          disabled
-          title="Kernel-native memory has no tier decay (arrives with Tektos plugin policy)"
-          onClick={() => {
-            setMsg("decay unavailable: kernel memory is a MemoryEvent graph — no tier decay (Tektos plugin policy, coming)");
-          }}
+          style={{ ...btnStyle, opacity: decaying ? 0.6 : 1 }}
+          disabled={decaying}
+          title="Manual decay of the cognitive-memory tiers (expired working entries removed)"
+          onClick={() => { void runDecay(); }}
         >
-          Decay (kernel: n/a)
+          {decaying ? "Decaying…" : "Decay (cognitive tiers)"}
         </button>
       </div>
 

@@ -4982,3 +4982,71 @@ MCP, metabolism) in ROI order.
   ADR-140 WS, ADR-109 gateway deletion + :8020 retirement.
 - **Stop-condition status:** met — T5 complete; next T6 (memory actions,
   2 routes — pairs with ADR-135 memory read-side).
+
+## 2026-09-26 01:02 EDT — ADR-141 T6 complete: memory actions (2 routes) kernel-native
+
+- **T6a — substrate** (`plugins/tektos/memory/persistence.py`, commit
+  `e579fa2`): donor `MemoryPersistence` (tektos-ultima-v1
+  `src/tektos/memory/persistence.py`) ported donor-verbatim — the 3-tier
+  cognitive store (working/long_term/procedural) + transfer log + decay
+  value function + background decay scheduler (120 s donor default) +
+  import/export + stats. Documented divergences only: `db_path` is a
+  required constructor arg (donor defaulted to CWD — kernel must be
+  explicit, the systemd unit runs from the repo root) and a namespaced
+  logger. 14 tests in `plugins/tektos/memory/test_persistence.py`
+  (standalone, tmp DBs) + donor-vs-kernel behavioral parity run: **CLEAN**
+  across all tiers, search, transfer, log, stats, import/export — the only
+  diff is `created_at` wall-clock (known false positive; both sides stamp
+  at call time).
+- **T6b — routes + boot** (`kernel/app.py`): the 2 donor routes
+  (main.py:2324-2349) at the donor paths — `POST /api/memory/decay`
+  (`{"working": N, "long_term": 0, "procedural": 0}` donor shape; donor's
+  per-tier counts, long/procedural decay is a no-op → always 0) and
+  `DELETE /api/memory/{tier}/{entry_id}` (`{"deleted": bool}`, 400
+  `Unknown tier: {tier}`, degraded `{"error": "Memory persistence not
+  initialized"}` at 200 — all byte-matching the donor). Boot: `_boot_tektos_memory_persistence`
+  gate `KOSMOS_TEKTOS_MEMORY` (default `off`; donor booted unconditionally
+  — the gate keeps the kernel honest when the env is unset) →
+  `MemoryPersistence(data/memory.db)` (donor's canonical `<root>/data/`
+  location, overridable via `KOSMOS_MEMORY_DB_PATH`) + scheduler start at
+  `KOSMOS_MEMORY_DECAY_INTERVAL` (120 s donor default) → registry slot
+  `tektos_memory_persistence`. Shutdown: `stop_decay_scheduler()` +
+  `close()` before teardown (donor let the thread die with the process).
+- **UI repoint** (`ui/app/tektos-ultima/ops/page.tsx`): the memory-tab
+  decay button was the ADR-135 honest degrade (disabled, "kernel memory
+  is a MemoryEvent graph — no tier decay") — now LIVE: `POST
+  /api/memory/decay` with a `confirm()` gate (page's destructive-action
+  convention), per-tier counts in the success message, and the degraded
+  `{"error": ...}` rendered as an honest n/a hint (gate off). The entries
+  table above stays the ADR-135 graph referent — the two referents
+  coexist at distinct routes, which is the point of the T6 pairing.
+  `tsc --noEmit` clean (only the pre-existing 03-tektos-plan-workflow spec
+  error); `next build` clean; Playwright 22-tektos-ultima-ops asserts
+  button visibility only — still passes.
+- **Live verification (:8000, systemd unit):** gate OFF → both routes
+  return the donor degraded shape at 200 (honest). Gate ON
+  (`KOSMOS_TEKTOS_MEMORY=on` added to `kosmos-kernel.local.env`,
+  gitignored — the donor ran the store unconditionally, so production
+  parity means on) → `data/memory.db` created with the 4-table schema
+  (working/long_term/procedural/transfer_log), decay returns real counts,
+  delete absent id → `{"deleted": false}`. **Scheduler proven live:**
+  restart with a 2 s interval, seeded 1 expired + 1 future working row —
+  after one cycle only the future row survived (auto-decay confirmed;
+  interval then restored to 120 s). Python threads inherit
+  `comm=uvicorn` (no prctl rename), so `/proc/comm` grep is a false
+  negative — behavior, not thread listing, is the proof.
+- **Verification:** 7 route tests in
+  `tests/kernel/test_adr141_t6_memory_actions.py` (one module-scoped
+  TestClient lifespan boot with the gate ON + tmp db proves the real
+  boot path: gate, construction, scheduler; decay shape + effect, delete
+  round-trip, 400 unknown tier, degraded slot-None shapes, ADR-135
+  read-route coexistence, idempotent no-op decay). Full
+  `tests/kernel/`: **573 passed, 0 failed** (was 566).
+- **PORTING_LEDGER / ADR updated:** ADR-141 T6 rows (2 routes) →
+  **P (2026-09-26)**; T6 checklist row expanded with the full narrative.
+- **Gate progress (ADR-141):** T1 ✓, T2 ✓, T3 ✓, T4 ✓, T5 ✓, **T6 ✓**.
+  Remaining before `main.py` deletion: T7 (embedder surface, 2 routes),
+  T8 (misc singletons), D-route Stage 13 subsystem ports, `/health` probe
+  removal ×3, ADR-140 WS, ADR-109 gateway deletion + :8020 retirement.
+- **Stop-condition status:** met — T6 complete; next T7 (embedder
+  surface: status :8091 + embed — pairs with the ADR-132 LLM lanes).

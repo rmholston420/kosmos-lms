@@ -304,6 +304,18 @@ class _BootRegistry:
         # Proposals are HUMAN_REQUIRED (never auto-applied); execution
         # (repair execution) stays on the standalone engine.
         self.tektos_self_repair: Any = None
+        # ADR-141 T6: Tektos cognitive memory store (donor
+        # ``MemoryPersistence`` — working/long_term/procedural tiers +
+        # transfer log + decay scheduler). Tektos cognitive POLICY, not
+        # kernel substrate (ADR-135 user decision): ``registry.memory``
+        # is the DozerDB MemoryEvent graph; this is the 3-tier SQLite
+        # store the donor's /api/memory/{decay,*} actions operate on.
+        # Env-gated via ``KOSMOS_TEKTOS_MEMORY={off,on}`` (default
+        # ``off``); db path via ``KOSMOS_MEMORY_DB_PATH`` (default
+        # ``<repo>/data/memory.db`` — the donor's own location), decay
+        # interval via ``KOSMOS_MEMORY_DECAY_INTERVAL`` (default 120 s,
+        # donor main.py:1082). No port prerequisites — pure SQLite.
+        self.tektos_memory_persistence: Any = None
         # ADR-143 T3: kernel learning substrate (donor
         # ``SelfImprovementAdapter`` — experience → evaluation →
         # meta-learning → benchmark loop, JSONL ledger). Boots
@@ -1554,6 +1566,49 @@ async def lifespan(app: FastAPI):
         )
         return proposer
 
+    @_try("tektos_memory_persistence")
+    def _boot_tektos_memory_persistence():
+        import logging as _kl
+        import os as _os
+        from pathlib import Path as _Path
+
+        from plugins.tektos.memory import MemoryPersistence
+
+        _log = _kl.getLogger(__name__)
+        _env = "KOSMOS_TEKTOS_MEMORY"
+        _mode = _os.environ.get(_env, "off").lower().strip()
+        _ALLOWED = ("off", "on")
+        if _mode not in _ALLOWED:
+            raise RuntimeError(
+                "%s=%r is not one of %s (ADR-141 T6)." % (_env, _mode, _ALLOWED)
+            )
+        if _mode == "off":
+            return None
+
+        db_path = _os.environ.get("KOSMOS_MEMORY_DB_PATH")
+        if not db_path:
+            # Donor's canonical location: <project root>/data/memory.db.
+            # The kernel's WorkingDirectory is the repo root (systemd unit);
+            # derive it from __file__ so manual starts from other cwds
+            # still land in the same place.
+            db_path = str(_Path(__file__).resolve().parent.parent / "data" / "memory.db")
+
+        interval = 120.0  # donor main.py:1082
+        try:
+            interval = float(_os.environ.get("KOSMOS_MEMORY_DECAY_INTERVAL", "120"))
+        except ValueError:
+            pass
+
+        store = MemoryPersistence(db_path)
+        store.start_decay_scheduler(interval=interval)
+        _log.info(
+            "kosmos.tektos_memory_persistence: wired (ADR-141 T6); db=%s "
+            "decay_interval=%ss",
+            db_path,
+            interval,
+        )
+        return store
+
     registry.tektos_reflection = _boot_tektos_reflection
     registry.tektos_synthesis = _boot_tektos_synthesis
     registry.tektos_experience = _boot_tektos_experience
@@ -1563,6 +1618,7 @@ async def lifespan(app: FastAPI):
     registry.tektos_executor = _boot_tektos_executor
     registry.tektos_manager = _boot_tektos_manager
     registry.tektos_self_repair = _boot_tektos_self_repair
+    registry.tektos_memory_persistence = _boot_tektos_memory_persistence
     registry.tektos_orchestrator = _boot_tektos_orchestrator
 
     # --- Gnosis boot seeder (ADR-064) ----------------------------------------
@@ -1996,6 +2052,14 @@ async def lifespan(app: FastAPI):
         )
 
     yield
+
+    # ADR-141 T6: stop the cognitive-memory decay scheduler (background
+    # thread) + close the SQLite store before teardown.
+    if getattr(registry, "tektos_memory_persistence", None) is not None:
+        try:
+            registry.tektos_memory_persistence.close()
+        except Exception:  # noqa: BLE001
+            pass
 
     # ADR-141 R6: stop the self-repair engine daemon (donor had no
     # explicit stop — main.py let it die with the process; we stop it
@@ -4074,6 +4138,59 @@ async def memory_stats() -> dict[str, Any]:
         "errors": (s or {}).get("errors", []),
         "timestamp": now.isoformat(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Memory ACTIONS (ADR-141 T6b) — donor paths, donor shapes, at the kernel.
+#
+# The two remaining donor memory routes (main.py:2324-2349):
+#   POST   /api/memory/decay              — manual decay of all tiers
+#   DELETE /api/memory/{tier}/{entry_id}  — delete one entry from a tier
+#
+# These operate on the 3-tier cognitive store (registry.
+# tektos_memory_persistence, booted env-gated at KOSMOS_TEKTOS_MEMORY=on),
+# NOT on registry.memory (the DozerDB MemoryEvent graph, which is the
+# referent of GET /api/memory + /api/memory/stats above — ADR-135).
+#
+# Donor-faithful shapes:
+#   decay:  {"working": N, "long_term": 0, "procedural": 0} — the donor's
+#            decay_all() counts (long-term/procedural have no decay by
+#            donor design).
+#   delete: {"deleted": bool} — False (still 200) when the id is absent.
+#   degraded (gate off / boot failure): {"error": "Memory persistence
+#            not initialized"} at 200 — the donor's own fail shape; the
+#            ops MemoryTab renders it as an honest n/a state.
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/memory/decay")
+async def memory_trigger_decay() -> dict[str, Any]:
+    """Manually trigger decay on all memory tiers (donor main.py:2324)."""
+    store = registry.tektos_memory_persistence
+    if store is None:
+        return {"error": "Memory persistence not initialized"}
+    removed = store.decay_all()
+    return removed
+
+
+@app.delete("/api/memory/{tier}/{entry_id}")
+async def memory_delete_entry(tier: str, entry_id: str) -> dict[str, Any]:
+    """Delete a memory entry from the specified tier (donor main.py:2333)."""
+    store = registry.tektos_memory_persistence
+    if store is None:
+        return {"error": "Memory persistence not initialized"}
+
+    delete_map = {
+        "working": store.delete_working,
+        "long_term": store.delete_long_term,
+        "procedural": store.delete_procedural,
+    }
+    fn = delete_map.get(tier)
+    if fn is None:
+        raise HTTPException(400, detail=f"Unknown tier: {tier}")
+
+    deleted = fn(entry_id)
+    return {"deleted": deleted}
 
 
 # ---------------------------------------------------------------------------
