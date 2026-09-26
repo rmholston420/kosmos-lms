@@ -6021,3 +6021,48 @@ ADR-140 WS, ADR-109 gateway deletion (14.5 exit gate).
   restart the service with `--mmproj <file>`.
 - **Docs:** ADR-141 vision ×3 rows → P (Stage 13.11); README ADR-141
   row gains Stage 13.11 ✓.
+
+## 2026-09-26 — Stage 13.12: voice ×3 substrate port + 3 routes (ADR-141)
+- **Substrate:** donor `tektos/voice.py` (310 LOC, all third-party deps
+  lazy — edge-tts / faster-whisper / pydub / numpy; zero `tektos.*`
+  imports — "tektos" strings are the logger name, wake word, and
+  error messages) → `kernel/voice.py` BYTE-VERBATIM (generic
+  STT/TTS/VAD/wake-word orchestration → kernel per the governing
+  layering rule).
+- **Deps:** installed in the kernel venv at donor parity via uv:
+  edge-tts, pydub, faster-whisper 1.2.1 (donor's exact version).
+  Whisper base + large-v3-turbo models already cached in
+  ~/.cache/huggingface (donor uses them on this box).
+- **Boot:** `registry.tektos_voice` booted at the composition root
+  with the donor's non-fatal `await initialize()` semantics
+  (main.py:899-910: failure → slot None → routes in their
+  "not initialized" state; Whisper large-v3-turbo on CPU per donor
+  defaults) + kernel-side `KOSMOS_TEKTOS_VOICE` gate (default on —
+  donor had no gate, its manager always existed). The async
+  initialize runs as a scheduled task on the running loop
+  (documented divergence: `_try` boot fns are sync).
+- **Routes:** `GET /api/voice/state` (200 `{"error": ...}` when slot
+  None — NOT 503, donor-verbatim), `POST /api/voice/stt` (multipart
+  'audio' → {text, wake_word_detected}; 503 pair), `POST
+  /api/voice/tts` (JSON {text} → audio/mpeg MP3 stream with donor's
+  `attachment; filename=tektos_speech.mp3` header; 503 pair) — all
+  wire-verbatim from donor main.py:2229-2301.
+- **Tests:** `tests/kernel/test_adr141_s1312_voice_routes.py` 4 tests,
+  REAL substrate no mocks: Whisper (faster-whisper-base, cached —
+  the donor's own TEKTOS_WHISPER_MODEL env knob) transcribing a
+  real generated silence WAV through pydub → faster-whisper; edge-tts
+  (real Microsoft neural voice over the network) synthesizing a real
+  MP3 (magic-byte verified, donor attachment header, state
+  last_tts_text recorded); state 5-field envelope; gate-off
+  surfaces (200-error vs 503 pair).
+- **Suite:** 823 passed (819 + 4).
+- **Live-verified on :8000:** TTS → 200 audio/mpeg, 16,992-byte real
+  MP3 in 0.5s, state `last_tts_text` recorded; STT → 200 in 4.9s
+  (Whisper large-v3-turbo warm) with state `last_transcript`
+  recorded, `wake_word_detected:false`; state envelope 5 fields at
+  t0; regressions 13.3–13.11 all clean (axioms 29, nervous-system
+  active, observability active, thermal, metabolism,
+  contextCurator/repoMap/ragRetriever initialized, vision healthy,
+  self-repair healthy).
+- **Docs:** ADR-141 voice ×3 rows → P (Stage 13.12); README ADR-141
+  row gains Stage 13.12 ✓.

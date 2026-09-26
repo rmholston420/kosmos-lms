@@ -370,6 +370,9 @@ class _BootRegistry:
         # substrate → kernel/vision_client.py; the kernel's
         # KOSMOS_VISION_* env lane (ADR-132) feeds it.
         self.tektos_vision: Any = None
+        # ADR-141 Stage 13.12 (voice ×3): donor VoiceManager (voice.py
+        # byte-verbatim → kernel/voice.py). Slot holds the manager.
+        self.tektos_voice: Any = None
         # ADR-143 T3: kernel learning substrate (donor
         # ``SelfImprovementAdapter`` — experience → evaluation →
         # meta-learning → benchmark loop, JSONL ledger). Boots
@@ -2036,6 +2039,46 @@ async def lifespan(app: FastAPI):
         asyncio.get_running_loop().create_task(_probe())
         return client
 
+    @ _try("tektos_voice")
+    def _boot_tektos_voice():
+        import os as _os
+
+        # ADR-141 Stage 13.12 (voice ×3): donor boot (main.py:899-910)
+        # created the VoiceManager singleton and `await initialize()`
+        # it NON-FATAL — any failure (missing extra, no Whisper model)
+        # logged a warning and set _voice_manager = None, leaving the
+        # 3 routes in their 503 "Voice system not initialized" state.
+        # Kernel-honest equivalent: sibling gate
+        # KOSMOS_TEKTOS_VOICE (default on, donor had none — its
+        # manager always existed; the gate is a kernel-side parity
+        # escape hatch alongside 13.9/13.10/13.11).
+        if _os.environ.get("KOSMOS_TEKTOS_VOICE", "on").lower() not in ("on", "true", "1"):
+            return None
+        from kernel.voice import VoiceManager
+
+        manager = VoiceManager()
+
+        # Donor `await _voice_manager.initialize()` (loads Whisper
+        # large-v3-turbo on CPU — minutes on first run). The _try boot
+        # fn executes sync inside the async lifespan, so initialize
+        # runs as a scheduled task with the donor's exact
+        # failure→None semantics (documented divergence: slot may be
+        # None briefly during boot, or None permanently if the
+        # initialize fails — the donor's non-fatal path).
+        async def _init() -> None:
+            try:
+                await manager.initialize()
+                logger.info(
+                    "kosmos.tektos_voice: connected (ADR-141 Stage 13.12)"
+                )
+            except Exception as exc:  # noqa: BLE001 — donor parity (main.py:905-908)
+                logger.warning("Voice system initialization failed (non-fatal): %s", exc)
+                if registry.tektos_voice is manager:
+                    registry.tektos_voice = None
+
+        asyncio.get_running_loop().create_task(_init())
+        return manager
+
     registry.tektos_reflection = _boot_tektos_reflection
     registry.tektos_synthesis = _boot_tektos_synthesis
     registry.tektos_experience = _boot_tektos_experience
@@ -2055,6 +2098,7 @@ async def lifespan(app: FastAPI):
     registry.tektos_repo_map = _boot_tektos_repo_map
     registry.tektos_rag_retriever = _boot_tektos_rag_retriever
     registry.tektos_vision = _boot_tektos_vision
+    registry.tektos_voice = _boot_tektos_voice
     registry.tektos_orchestrator = _boot_tektos_orchestrator
 
     # --- Gnosis boot seeder (ADR-064) ----------------------------------------
@@ -4582,6 +4626,84 @@ async def vision_status():
             "model": client.model,
             "base_url": client.base_url,
         }
+
+
+# ---------------------------------------------------------------------------
+# /api/voice — ADR-141 Stage 13.12 (voice ×3)
+#
+# Donor main.py:2229-2301, byte-verbatim wire contract over
+# registry.tektos_voice (donor module-global _voice_manager).
+# state → 200 {"error": ...} when slot None (donor-verbatim, NOT 503);
+# stt/tts → 503 pair when slot None (donor-verbatim).
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/voice/state")
+async def voice_state():
+    """Get current voice system state (donor main.py:2229)."""
+    manager = registry.tektos_voice
+    if manager is None:
+        return {"error": "Voice system not initialized"}
+    return manager.get_state()
+
+
+@app.post("/api/voice/stt")
+async def voice_stt(request: Request):
+    """Transcribe audio to text using Whisper (donor main.py:2237).
+
+    Accepts multipart form data with 'audio' file (WAV/MP3).
+    Returns transcribed text.
+    """
+    manager = registry.tektos_voice
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Voice system not initialized")
+
+    try:
+        form = await request.form()
+        audio_file = form.get("audio")
+        if not audio_file:
+            raise HTTPException(status_code=400, detail="No audio file provided")
+
+        # audio_file is UploadFile from multipart form
+        audio_bytes = await audio_file.read()  # type: ignore[union-attr]
+        if not audio_bytes:
+            raise HTTPException(status_code=400, detail="Empty audio file")
+
+        text = await manager.transcribe(audio_bytes)
+        return {"text": text, "wake_word_detected": manager.state.is_wake_word_detected}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
+
+@app.post("/api/voice/tts")
+async def voice_tts(request: Request):
+    """Synthesize text to speech using edge-tts (donor main.py:2266).
+
+    Accepts JSON body with 'text' field.
+    Returns audio stream (MP3).
+    """
+    manager = registry.tektos_voice
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Voice system not initialized")
+
+    try:
+        body = await request.json()
+        text = body.get("text", "")
+        if not text:
+            raise HTTPException(status_code=400, detail="No text provided")
+
+        audio_bytes = await manager.speak(text)
+        return StreamingResponse(
+            iter([audio_bytes]),
+            media_type="audio/mpeg",
+            headers={"Content-Disposition": "attachment; filename=tektos_speech.mp3"},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"TTS synthesis failed: {str(e)}")
 
 
 # ---------------------------------------------------------------------------
