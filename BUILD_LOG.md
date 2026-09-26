@@ -5867,3 +5867,31 @@ MCP, metabolism) in ROI order.
   (rag/status already P via ADR-124; ragRetriever open), repoMap ×1,
   vision ×3, voice ×3, `/health` ×3, ADR-140 WS, ADR-109 gateway
   deletion.
+
+## 2026-09-26 — Stage 13.7: metabolism + context status routes (ADR-141)
+- **Substrate:** donor `tektos/metabolism.py` (572 LOC, 100% stdlib, zero
+  `tektos.*` imports) → `kernel/metabolism.py` **byte-verbatim** (generic
+  resource-monitoring substrate → kernel per governing layering rule).
+- **Boot:** `registry.tektos_metabolism` slot + `_boot_tektos_metabolism`
+  in the composition root; `KOSMOS_TEKTOS_METABOLISM=on` (default on);
+  3-arg→envelope publish adapter wraps `registry.event_bus` (ADR-007:
+  substrate untouched, event translation in app.py); no bus → None →
+  gate-off degrade.
+- **Routes (4 donor-verbatim, main.py:2961/2970/2978/4432):**
+  - `GET /api/metabolism` → `assess_health().to_dict()` (timestamp,
+    overall_health, gpu, system, context_budget, inference, latency)
+  - `GET /api/metabolism/context` → `get_stats()` (max_tokens,
+    current_tokens, token_pct, tool_calls, sessions, history count)
+  - `GET /api/metabolism/history?limit=` → bounded deque snapshots
+  - `GET /api/context/status` → rides `assess_health()`; donor
+    `not_initialized` when gate-off; metabolism gate-off → donor-verbatim
+    `{"error": "Metabolism engine not initialized"}` at 200 (13.2e convention)
+- **Tests:** `tests/kernel/test_adr141_s137_metabolism_routes.py` — 6 tests
+  (4 routes over lifespan-booted engine with real nvidia-smi + /proc reads;
+  2 substrate units: ContextBudget alert/action bands verbatim,
+  bus-less engine lifecycle). 6/6 green; full suite **805 passed**.
+- **Live-verified on :8000:** overall `critical` (VRAM 90.9% — 27B model
+  resident), gpu temp 68.0, memory 45.2%, context_budget max 262144,
+  history tracking, context/status `active` + remaining_tokens; regression
+  probes 13.4/13.5/13.6 clean.
+- **Docs:** ADR-141 rows metabolism ×3 + context ×1 → P; README 13.7 ✓.

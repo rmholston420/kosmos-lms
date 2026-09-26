@@ -347,6 +347,10 @@ class _BootRegistry:
         self.tektos_schema_evolution: Any = None
         self.tektos_db: Any = None
         self.tektos_axioms: Any = None
+        # ADR-141 Stage 13.7: donor MetabolismEngine (resource monitor:
+        # GPU VRAM / system RAM / disk / context budget / thermal bands →
+        # resource events). Generic substrate → kernel/metabolism.py.
+        self.tektos_metabolism: Any = None
         # ADR-143 T3: kernel learning substrate (donor
         # ``SelfImprovementAdapter`` — experience → evaluation →
         # meta-learning → benchmark loop, JSONL ledger). Boots
@@ -1807,6 +1811,58 @@ async def lifespan(app: FastAPI):
         )
         return system
 
+    # ADR-141 Stage 13.7 (metabolism). Donor substrate
+    # (kernel/metabolism.py, donor tektos/metabolism.py byte-verbatim)
+    # calls the donor's 3-arg sync publish(event_type, source, payload);
+    # the kernel bus is envelope-first + async. This thin adapter is the
+    # composition-root DI seam (ADR-007): substrate stays verbatim, the
+    # event translation lives here — same shape as the vendor
+    # _EventBusShim (adapters/session/tektos/vendor_bindings.py).
+    class _MetabolismBus:
+        def __init__(self, bus: Any) -> None:
+            self._bus = bus
+
+        def publish(self, event_type: str, source: str, payload: Any = None) -> None:
+            try:
+                from ports.event_envelope import EventEnvelope
+
+                envelope = EventEnvelope(
+                    event_type=event_type,
+                    producer_plugin=source or "tektos_metabolism",
+                    payload=payload if isinstance(payload, dict) else {"value": payload},
+                )
+                result = self._bus.publish(envelope)
+                if asyncio.iscoroutine(result):
+                    try:
+                        asyncio.get_running_loop().create_task(result)
+                    except RuntimeError:
+                        asyncio.run(result)
+            except Exception:  # noqa: BLE001 — bus degrade, never crash the sampler
+                logger.exception("metabolism: publish failed (%s)", event_type)
+
+    @_try("tektos_metabolism")
+    def _boot_tektos_metabolism():
+        import os as _os
+
+        if _os.environ.get("KOSMOS_TEKTOS_METABOLISM", "on").lower() not in ("on", "true", "1"):
+            return None
+        from kernel.metabolism import MetabolismEngine
+
+        bus = registry.event_bus
+        if bus is None:
+            return None  # no bus → nothing to alert through; routes degrade
+        engine = MetabolismEngine(
+            event_bus=_MetabolismBus(bus),
+            max_tokens=262144,  # donor main.py:897 boot value (256k + headroom)
+        )
+        logger.info(
+            "kosmos.tektos_metabolism: wired (ADR-141 Stage 13.7); "
+            "max_tokens=%d, power_limit_w=%.0f",
+            engine.max_tokens,
+            engine.power_limit_w,
+        )
+        return engine
+
     registry.tektos_reflection = _boot_tektos_reflection
     registry.tektos_synthesis = _boot_tektos_synthesis
     registry.tektos_experience = _boot_tektos_experience
@@ -1821,6 +1877,7 @@ async def lifespan(app: FastAPI):
     registry.tektos_schema_evolution = _boot_tektos_schema_evolution
     registry.tektos_db = _boot_tektos_db
     registry.tektos_axioms = _boot_tektos_axioms
+    registry.tektos_metabolism = _boot_tektos_metabolism
     registry.tektos_orchestrator = _boot_tektos_orchestrator
 
     # --- Gnosis boot seeder (ADR-064) ----------------------------------------
@@ -4104,6 +4161,65 @@ async def thermal_reset() -> dict[str, Any]:
         return {"error": "Thermal monitor not initialized"}
     watchdog.reset()
     return {"status": "reset", "snapshot": watchdog.snapshot()}
+
+
+# ---------------------------------------------------------------------------
+# Metabolism (ADR-141 Stage 13.7, donor main.py:2961/2970/2978 + context/status 4432)
+#
+# Donor substrate `tektos/metabolism.py` (572 LOC, stdlib-only) →
+# `kernel/metabolism.py` byte-verbatim (governing layering rule: generic
+# resource-monitoring substrate → kernel; it carries no Tektos-specific
+# data). `registry.tektos_metabolism` booted at the composition root with
+# a 3-arg→envelope publish adapter (ADR-007). Gate-off → donor-verbatim
+# error envelope at 200 (13.2e convention).
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/metabolism")
+async def get_metabolism() -> dict[str, Any]:
+    """Get full metabolism assessment: GPU, system, context, health (donor main.py:2961)."""
+    engine = registry.tektos_metabolism
+    if engine is None:
+        return {"error": "Metabolism engine not initialized"}
+    state = engine.assess_health()
+    return state.to_dict()
+
+
+@app.get("/api/metabolism/context")
+async def get_context_budget() -> dict[str, Any]:
+    """Get current context budget status (donor main.py:2970)."""
+    engine = registry.tektos_metabolism
+    if engine is None:
+        return {"error": "Metabolism engine not initialized"}
+    return engine.get_stats()
+
+
+@app.get("/api/metabolism/history")
+async def get_metabolism_history(limit: int = 100) -> Any:
+    """Get recent metabolism metrics history (donor main.py:2978)."""
+    engine = registry.tektos_metabolism
+    if engine is None:
+        return {"error": "Metabolism engine not initialized"}
+    return engine.get_metrics_history(limit)
+
+
+@app.get("/api/context/status")
+async def context_status() -> dict[str, Any]:
+    """Context management status (donor main.py:4432)."""
+    engine = registry.tektos_metabolism
+    if engine is not None:
+        try:
+            state = engine.assess_health()
+            return {
+                "status": "active",
+                "context_budget": state.context_budget.to_dict() if state.context_budget else None,
+                "gpu": state.gpu.to_dict() if state.gpu else None,
+                "system": state.system.to_dict() if state.system else None,
+                "overall_health": state.overall_health.value,
+            }
+        except Exception as exc:
+            return {"status": "error", "error": str(exc)}
+    return {"status": "not_initialized"}
 
 
 # ---------------------------------------------------------------------------
