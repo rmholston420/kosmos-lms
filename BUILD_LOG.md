@@ -5514,3 +5514,42 @@ MCP, metabolism) in ROI order.
 - **Docs:** ADR-141 propose row → P (Stage 13.1b); README progress line.
 - **Gate progress (ADR-141):** Stage 13.1a ✓, 13.1b ✓. Remaining 13.1:
   apply (13.1c — the only DDL-executing route).
+
+## 2026-09-26 — ADR-141 Stage 13.1c: POST /api/schema/apply kernel-native (schema-evolution surface COMPLETE)
+
+- **Slice:** ADR-141 Stage 13.1c (schema-evolution DDL action route)
+- **What changed:** `POST /api/schema/apply` at the donor path
+  (main.py:3297), donor wire verbatim — body `_ApplySchemaProposalBody`
+  (reason, action, table, column, column_type, column_default,
+  proposed_sql) → SchemaProposal → `validate(engine)` → only-if-valid
+  `apply_proposal` (executes DDL, bumps schema version, writes a
+  `_schema_evolution_log` row) → `{success, version}` /
+  `{success:false, errors}`. Engine referent
+  `registry.tektos_schema_evolution`; 503 + "not initialized" when
+  env-gated off.
+- **Documented divergences:**
+  1. body `table` default "working" (donor "sessions" — tektos.db
+     retired, ADR-137).
+  2. **DONOR LATENT BUG preserved verbatim (not fixed):** default body
+     (no proposed_sql) executes the literal string
+     `"ALTER TABLE placeholder"` — the donor's fallback line
+     `if not proposal.proposed_sql:` is dead code because
+     `body.proposed_sql or "ALTER TABLE placeholder"` is always truthy.
+     **Proven against the donor itself**: drove the donor's own
+     `SchemaEvolutionEngine` + `tektos.db` (events table) → validate
+     True → `sqlite3.OperationalError: incomplete input`. Only an
+     EXPLICIT `proposed_sql` works in the donor; this port reproduces
+     that 1:1 (500 on default body, test-locked).
+  3. Donor behavior: route-built proposals store no `rollback_sql`, so
+     `rollback_last()` returns False for them (test-locked).
+- **Verified:** 6 route tests green (module-scoped real boot, gate on,
+  tmp db: explicit-SQL apply adds column + bumps version, invalid table
+  rejected, duplicate column rejected by validation, rollback_last
+  donor no-op locked, default body → 500 donor bug locked, engine-None
+  503). Full suite green. Live :8000 — explicit DDL on long_term →
+  `{"success":true,"version":1}` + PRAGMA confirms column; invalid table
+  → `{success:false}`; default body → 500. Probe column dropped after.
+- **Docs:** ADR-141 apply row → P (Stage 13.1c) with all three
+  divergences; README progress line.
+- **Gate progress (ADR-141):** Stage 13.1 COMPLETE (schema / patterns /
+  propose / apply all P). Next: remaining Stage 13 D-routes.

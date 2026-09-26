@@ -4585,6 +4585,63 @@ async def propose_schema_change(body: _ProposeSchemaChangeBody):
 
 
 # ---------------------------------------------------------------------------
+# ADR-141 Stage 13.1c — schema-evolution action surface (DDL): apply
+# ---------------------------------------------------------------------------
+# Donor main.py:3297 (D → P): build a SchemaProposal from the request body,
+# validate against the current schema, and — only if valid — execute the
+# DDL through engine.apply_proposal (bumps the schema version + writes a
+# rollback-bearing row to _schema_evolution_log). Engine referent =
+# registry.tektos_schema_evolution (T8c-9 verbatim port). Documented
+# divergence: body `table` default "working" (donor "sessions" — tektos.db
+# retired, ADR-137). Wire shape otherwise donor-verbatim:
+# {success, errors} on invalid / {success, version} on applied.
+
+class _ApplySchemaProposalBody(BaseModel):
+    reason: str = Field(default="Manual schema evolution", description="Reason for change")
+    action: str = Field(default="add_column", description="Action type")
+    table: str = Field(default="working", description="Target table")
+    column: str | None = Field(default=None, description="Column name")
+    column_type: str = Field(default="TEXT", description="Column type")
+    column_default: str | None = Field(default=None, description="Column default")
+    proposed_sql: str | None = Field(default=None, description="Custom SQL")
+
+
+@app.post("/api/schema/apply")
+async def apply_schema_proposal(body: _ApplySchemaProposalBody):
+    """Apply a validated schema change (donor main.py:3297)."""
+    engine = registry.tektos_schema_evolution
+    if engine is None:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Schema-evolution engine not initialized "
+                         "(KOSMOS_TEKTOS_MEMORY=off)"
+            },
+        )
+    from kernel.schema_evolution import SchemaProposal
+
+    proposal = SchemaProposal(
+        reason=body.reason,
+        action=body.action,
+        table=body.table,
+        column=body.column,
+        column_type=body.column_type,
+        column_default=body.column_default,
+        proposed_sql=body.proposed_sql or "ALTER TABLE placeholder",
+    )
+    if not proposal.proposed_sql:
+        proposal.proposed_sql = (
+            f"ALTER TABLE {proposal.table} ADD COLUMN {proposal.column} {proposal.column_type}"
+        )
+    if not proposal.validate(engine):
+        return {"success": False, "errors": proposal.validation_errors}
+    result = engine.apply_proposal(proposal)
+    return {"success": result, "version": engine.get_current_version()}
+
+
+# ---------------------------------------------------------------------------
 # Embedder surface (ADR-141 T7, donor main.py:4448/4464) — kernel-native.
 # The donor ran a private EmbedderClient (_embedder_client, :8091) behind
 # two routes. Per the layering rule (governing, 2026-09-25) the embedder
