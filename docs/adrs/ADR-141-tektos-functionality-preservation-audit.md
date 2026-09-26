@@ -33,9 +33,9 @@ an equivalent kernel mechanism.
 
 | Disposition | Count | Meaning |
 |---|---|---|
-| **P — Preserved** | 39 (35 + T6 2 + T7 2, 2026-09-26) | kernel/plugin referent exists and is live |
+| **P — Preserved** | 63 (35 + T6 2 + T7 2 + T8a 24, 2026-09-26) | kernel/plugin referent exists and is live |
 | **D — Deferred** | 70 + 2 WS | recorded path; functionality lost until the named port lands |
-| **T — To-port** | 43 (was 47) | no referent yet; each becomes a work item before deletion |
+| **T — To-port** | 19 | no referent yet; each becomes a work item before deletion (T8 scope; orchestrator ×2 folded into T8c) |
 
 The deferral buckets are **honest temporary losses**, not permanent omissions:
 every D route names the stage or ADR that carries its functionality. The Stage 11
@@ -159,19 +159,19 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `POST /api/voice/stt` | Stage 13.7 (voice) |
 | `POST /api/voice/tts` | Stage 13.7 (voice) |
 
-### To-port — no referent yet (47 routes)
+### To-port — no referent yet (47 routes at audit time; 23 remain — 24 reconciled to P in T8a, 2026-09-26)
 
 | Donor route (on :8020) | Disposition / referent |
 |---|---|
-| `GET /api/archive/sessions` | no referent — archive session list |
-| `GET /api/archive/sessions/{session_id}` | no referent |
-| `GET /api/archive/sessions/{session_id}/messages` | no referent |
-| `POST /api/archive/sessions/{session_id}/rename` | no referent |
-| `POST /api/archive/sessions/{session_id}/tag` | no referent |
+| `GET /api/archive/sessions` | **P (2026-09-26, T8a)** — kernel-native (ADR-141 T2c — registry.session ADR-103 port, app.py:5625; test_adr141_t2_session_surfaces.py) |
+| `GET /api/archive/sessions/{session_id}` | **P (2026-09-26, T8a)** — kernel-native (T2c, app.py:5644) |
+| `GET /api/archive/sessions/{session_id}/messages` | **P (2026-09-26, T8a)** — kernel-native (T2c, app.py:5670) |
+| `POST /api/archive/sessions/{session_id}/rename` | **P (2026-09-26, T8a)** — kernel-native (T2c, app.py:5682) |
+| `POST /api/archive/sessions/{session_id}/tag` | **P (2026-09-26, T8a)** — kernel-native (T2c, app.py:5697) |
 | `GET /api/config` | no referent — config read |
 | `PATCH /api/config` | no referent — config write |
 | `POST /api/delegate` | no referent — delegate action (kernel has delegation via subagents, no HTTP surface) |
-| `GET /api/directory_list` | no referent — directory listing helper |
+| `GET /api/directory_list` | **P (2026-09-26, T8a)** — kernel-native (Stage 11.14 ADR-130, app.py:5293; test_stage_11_14_adr_130_directory_list.py) |
 | `GET /api/dreamtime/history` | no referent |
 | `POST /api/dreamtime/run` | no referent |
 | `GET /api/dreamtime/summary` | no referent — dreamtime read |
@@ -185,31 +185,31 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `POST /api/llm/probe` | no referent — LLM probe action |
 | `POST /api/memory/decay` | **P (2026-09-26, T6)** — kernel-native, donor shape |
 | `DELETE /api/memory/{tier}/{entry_id}` | **P (2026-09-26, T6)** — kernel-native, donor shape |
-| `GET /api/multi-agent-orchestrator/agents` | TO-PORT: engine.agents roster dict exists, /agents route missing |
-| `GET /api/multi-agent-orchestrator/status` | TO-PORT: engine + bundle exist (ADR-114), /stats present, /status route missing |
-| `GET /api/planner/language-games` | no referent |
-| `POST /api/planner/plan` | no referent |
-| `GET /api/planner/status` | no referent |
-| `GET /api/planner/templates` | no referent — planner read (planner router exists, templates surface unverified) |
+| `GET /api/multi-agent-orchestrator/agents` | TO-PORT (T8c): engine.agents roster dict exists (ADR-114), /agents route missing |
+| `GET /api/multi-agent-orchestrator/status` | TO-PORT (T8c): engine + bundle exist (ADR-114), /stats present, /status route missing |
+| `GET /api/planner/language-games` | **P (2026-09-26, T8a)** — kernel-native (ADR-141 T4, app.py:5821; test_adr141_t4_planner_surface.py) |
+| `POST /api/planner/plan` | **P (2026-09-26, T8a)** — kernel-native (T4, app.py:5840) |
+| `GET /api/planner/status` | **P (2026-09-26, T8a)** — kernel-native (T4, app.py:5877) |
+| `GET /api/planner/templates` | **P (2026-09-26, T8a)** — kernel-native (T4, app.py:5806) |
 | `POST /api/plugins/{name}/toggle` | no referent — plugin toggle |
 | `GET /api/routing/decide` | no referent — routing decision |
 | `GET /api/schedule` | no referent — schedule read |
 | `GET /api/schema` | no referent — schema read (kernel has /api/kernel/schema, different surface) |
 | `GET /api/search` | no referent — search (kernel has /api/memory/search-semantic + zetesis) |
-| `POST /api/self_improvement/enqueue` | no referent |
-| `GET /api/self_improvement/experiences` | no referent |
-| `GET /api/self_improvement/metrics` | no referent — self-improvement read |
-| `GET /api/self_improvement/report` | no referent |
-| `GET /api/self_improvement/status` | no referent |
-| `GET /api/sessions/{session_id}/events` | no referent — session events stream (see ADR-140 WS parity) |
-| `GET /api/state/{session_id}` | no referent — session state read |
-| `POST /api/state/{session_id}/save` | no referent |
-| `POST /api/state/{session_id}/snapshot` | no referent |
-| `POST /api/tools/register` | no referent — tool registration |
-| `GET /api/tools/schema` | no referent — tool schema surface |
-| `POST /api/tools/{tool_name}/disable` | no referent |
-| `POST /api/tools/{tool_name}/enable` | no referent |
-| `POST /api/tools/{tool_name}/execute` | no referent |
+| `POST /api/self_improvement/enqueue` | **P (2026-09-26, T8a)** — kernel-native (ADR-143 S5, app.py:5033; test_adr143_s5_self_improve_routes.py) |
+| `GET /api/self_improvement/experiences` | **P (2026-09-26, T8a)** — kernel-native (ADR-143 S5, app.py:5007) |
+| `GET /api/self_improvement/metrics` | **P (2026-09-26, T8a)** — kernel-native (ADR-143 S5, app.py:4994) |
+| `GET /api/self_improvement/report` | **P (2026-09-26, T8a)** — kernel-native (ADR-143 S5, app.py:5021) |
+| `GET /api/self_improvement/status` | **P (2026-09-26, T8a)** — kernel-native (ADR-143 S5, app.py:5062) |
+| `GET /api/sessions/{session_id}/events` | **P (2026-09-26, T8a)** — kernel-native (ADR-141 T2b — tektos_replay.get_events, app.py:5735; WS parity is ADR-140) |
+| `GET /api/state/{session_id}` | **P (2026-09-26, T8a)** — kernel-native (ADR-141 T2a — kernel/session_state.py, app.py:5141) |
+| `POST /api/state/{session_id}/save` | **P (2026-09-26, T8a)** — kernel-native (T2a, app.py:5169) |
+| `POST /api/state/{session_id}/snapshot` | **P (2026-09-26, T8a)** — kernel-native (T2a, app.py:5222) |
+| `POST /api/tools/register` | **P (2026-09-26, T8a)** — kernel-native (ADR-141 T5, app.py:4597; honest 501 — in-process registration only; test_adr141_t5_tools_surface.py) |
+| `GET /api/tools/schema` | **P (2026-09-26, T8a)** — kernel-native (T5, app.py:4581) |
+| `POST /api/tools/{tool_name}/disable` | **P (2026-09-26, T8a)** — kernel-native (T5, app.py:4633) |
+| `POST /api/tools/{tool_name}/enable` | **P (2026-09-26, T8a)** — kernel-native (T5, app.py:4621) |
+| `POST /api/tools/{tool_name}/execute` | **P (2026-09-26, T8a)** — kernel-native (T5, app.py:4651) |
 
 ## WebSocket disposition (2 routes)
 
@@ -315,8 +315,25 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
      the real :8091 llama-server embedder (no mocks). Full `tests/kernel/`
      580 passed.
    - **T8 — misc singletons**: config GET/PATCH, keys, hooks list/fire, schedule,
-     search, routing/decide, delegate, llm/probe, evaluation/status, directory_list,
+     search, routing/decide, delegate, llm/probe, evaluation/status,
      plugins/{name}/toggle, schema GET, dreamtime (4).
+     **T8a (2026-09-26)** — table reconciliation, no code: re-verifying the
+     audit-time to-port list against the live kernel (2026-09-26, :8000) found
+     24 of the 47 rows **already kernel-native** — the "no referent" marks
+     predate the T2/T4/T5, ADR-130 and ADR-143 S5 slices that landed since the
+     audit. Each was live-probed (GETs + safe error-path POSTs) and carries an
+     existing test file: archive/sessions ×5 (T2c), state ×3 (T2a,
+     kernel/session_state.py), sessions/{id}/events (T2b,
+     tektos_replay.get_events), planner ×4 (T4), self_improvement ×5 (ADR-143
+     S5), tools ×5 (T5), directory_list (ADR-130). Rows → **P (T8a)**; counts
+     P 39→63, T 43→19 (orchestrator ×2 folded into T8c). The 19 genuinely
+     missing routes split into sub-slices by referent substrate: **T8b** —
+     thin surfaces over existing kernel substrate (config GET/PATCH, keys,
+     llm/probe over registry.llm, search over the T2c session search);
+     **T8c** — missing routes over existing engines (routing/decide, delegate,
+     orchestrator status/agents, plugins/{name}/toggle); **T8d** — substrate
+     ports where none exists (hooks list/fire, schedule over the donor
+     BackupScheduler, evaluation/status, schema GET, dreamtime ×4).
 
 3. **D-bucket ports ride the plan's Stage 13** in its own order
    (13.1 schema_evolution → 13.2 db_manager → … → 13.7 voice), each with its own

@@ -5101,3 +5101,35 @@ MCP, metabolism) in ROI order.
   removal ×3, ADR-140 WS, ADR-109 gateway deletion + :8020 retirement.
 - **Stop-condition status:** met — T7 complete; next T8 (misc
   singletons — 15 routes, the final T-bucket).
+
+## 2026-09-26 01:45 EDT — ADR-141 T8a complete: to-port table reconciliation
+- **What:** T8's first slice is a docs reconciliation, no code. Before
+  "porting" any T8 route I re-verified the audit-time to-port list against
+  the LIVE kernel (:8000) — the same re-verify-before-port discipline from
+  T6/T7. The ADR-141 to-port table was **stale**: 24 of the 47 "no referent"
+  rows are already kernel-native. The "no referent" marks predate the
+  T2/T4/T5, ADR-130 and ADR-143 S5 slices that landed after the 2026-09-25
+  audit.
+- **Verification (live :8000, GETs + safe error-path POSTs):** each of the 24
+  rows returns its kernel-native shape and carries an existing test file:
+  archive/sessions ×5 (T2c, app.py:5625–5697), state ×3 (T2a,
+  kernel/session_state.py, app.py:5141–5222), sessions/{id}/events (T2b,
+  tektos_replay.get_events, app.py:5735), planner ×4 (T4, app.py:5806–5877),
+  self_improvement ×5 (ADR-143 S5, app.py:4994–5062), tools ×5 (T5,
+  app.py:4581–4651 — register is the honest 501), directory_list (ADR-130,
+  app.py:5293). 65 test functions already cover these families.
+- **Doc changes:** ADR-141 to-port rows → **P (2026-09-26, T8a)** with
+  per-family referent + line + test-file citation; disposition counts
+  **P 39→63, T 43→19**; section header notes the reconciliation (47 at audit
+  time, 23 remain); orchestrator ×2 folded into **T8c**. T8 section now
+  records T8a and splits the 19 genuinely-missing routes into **T8b** (thin
+  surfaces over existing substrate: config GET/PATCH, keys, llm/probe,
+  search), **T8c** (missing routes over existing engines: routing/decide,
+  delegate, orchestrator status/agents, plugins/{name}/toggle), **T8d**
+  (substrate ports where none exists: hooks list/fire, schedule over donor
+  BackupScheduler, evaluation/status, schema GET, dreamtime ×4). ADR README
+  progress line → T8a ✓.
+- **Tests:** unchanged (no code touched); no new tests this slice.
+- **Gate progress (ADR-141):** T1 ✓, T2 ✓, T3 ✓, T4 ✓, T5 ✓, T6 ✓,
+  T7 ✓, **T8a ✓**. T8b next.
+- **Stop-condition status:** met — T8a complete; next T8b.
