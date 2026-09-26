@@ -172,10 +172,10 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `PATCH /api/config` | **P (2026-09-26, T8b-1)** — kernel-native: `tektos_config_patch`; donor wire `ok`/`key`/`value`/`note` preserved + honest `applied` flag (configured lanes not live-mutated — documented divergence) |
 | `POST /api/delegate` | **P (2026-09-26, T8c-3)** — kernel-native: donor main.py:4065. Fresh sub-session via `registry.session.create_session` + `await registry.tektos_turn_loop.run_turn` (ADR-104 turn loop = kernel referent for the donor's `runtime_sdk.submit_prompt`); donor's verbatim GOAL/CONTEXT/WORKFLOW subagent prompt + donor system prompt; donor wire `{subagent_id, status: started, goal}`. Donor quirk preserved: request's session_id/timeout accepted but unused (fresh sub-session, turn awaited before reply). 5 tests; live :8000 → sub-session `ec041f3e` ran a real LLM turn, retrievable via /api/sessions |
 | `GET /api/directory_list` | **P (2026-09-26, T8a)** — kernel-native (Stage 11.14 ADR-130, app.py:5293; test_stage_11_14_adr_130_directory_list.py) |
-| `GET /api/dreamtime/history` | no referent |
-| `POST /api/dreamtime/run` | no referent |
-| `GET /api/dreamtime/summary` | no referent — dreamtime read |
-| `POST /api/dreamtime/trigger-skill-generation` | no referent |
+| `GET /api/dreamtime/history` | **P (2026-09-26, T8c-8b)** — kernel-native (app.py dreamtime block, after T6 memory actions). Donor main.py:2392, wire `{"dreams": [DreamResult]}` verbatim. Rides `registry.tektos_dreamtime` (donor DreamtimeEngine verbatim, T8c-8a → plugins/tektos/memory/dreamtime.py) booted over the T6 3-tier store (same KOSMOS_TEKTOS_MEMORY gate, same db). Degraded shape `{"error": "Dreamtime engine not initialized"}` @200 (donor's own fail shape) |
+| `POST /api/dreamtime/run` | **P (2026-09-26, T8c-8b)** — kernel-native (donor main.py:2418). Full contemplation cycle: donor body `{max_memories=50, focus_area=None}`, donor wire `{id, source_count, insight_count, is_novel, novelty_score, insights, timestamp}` verbatim; insights persist back into the shared T6 store by novelty score. Live :8000: 3 seeded memories → 4 insights (2 connection, 1 synthesis, 1 gap), novelty 0.6, 4 rows persisted |
+| `GET /api/dreamtime/summary` | **P (2026-09-26, T8c-8b)** — kernel-native (donor main.py:2365), `engine.get_summary()` verbatim (`{state, total_dreams, total_insights, recent_dreams[]}`) |
+| `POST /api/dreamtime/trigger-skill-generation` | **Deferred (T8c-8c)** — donor main.py:2430 needs the donor SkillManager (skills/manager.py 830 LOC + skills/registry.py 777 LOC — a SQLite skill store). The kernel has no skill-store referent (only ADR-125 `/api/skills/stats` read surface); the kernel learning engine's `skill_creator` DI seam exists but is unpopulated. A follow-up skills ADR (skill-store port + `skill_creator` wiring) is the honest path; degraded shape would otherwise be fabricated |
 | `POST /api/embedder/embed` | **P (2026-09-26, T7)** — kernel-native, donor shape (wired to registry.embeddings) |
 | `GET /api/embedder/status` | **P (2026-09-26, T7)** — kernel-native, donor shape (wired to registry.embeddings) |
 | `GET /api/evaluation/status` | **P (2026-09-26, T8c-6)** — kernel-native: donor main.py:4484. Substrate = donor `runtime/evaluation_framework.py` (417 LOC, self-contained, stdlib-only) verbatim port → `kernel/evaluation_framework.py` (generic benchmark/quality-measurement infra → kernel-level per layering rule). Route consumes `get_evaluation_harness()` exactly as the donor did (fresh call, module singleton). Donor wire `{status, total_evaluations, completed_evaluations, average_score}`; `{status: error, error}` at 200 (donor shape). 3 tests; live :8000 → `initialized`, 0 evals |
@@ -434,6 +434,29 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
      ADR-127's committed endpoint. Reverted the first-attempt code
      (duplicate shadowed GET + no-op toggle) before commit. Remaining
      T8c: dreamtime ×4, schema (5 rows).
+     **T8c-8 (2026-09-26)** — dreamtime: **3 of 4 P (T8c-8a + T8c-8b),
+     1 deferred (T8c-8c)**. T8c-8a: donor `DreamtimeEngine`
+     (memory_system.py:735-993) + its models (MemoryTier/Hemisphere/
+     MemoryEntry/DreamState/DreamResult) ported VERBATIM to
+     `plugins/tektos/memory/dreamtime.py` (Tektos cognitive family, beside
+     T6's persistence.py). Documented divergence: `DictMemoryStore`
+     adapter implements exactly the 4 donor MemorySystem methods the
+     engine touches over the T6 dict store (add_procedural_memory pops
+     the `hemisphere` kwarg the verbatim engine passes — donor signature
+     has no such param). 7 unit tests (FakeStore). T8c-8b: `registry.
+     tektos_dreamtime` booted over the T6 3-tier store (same
+     KOSMOS_TEKTOS_MEMORY gate, same db — one store, two consumers);
+     3 routes at donor paths with donor wire verbatim (summary/history/
+     run) + donor degraded shape `{"error": "Dreamtime engine not
+     initialized"}` @200. Boot-ordering fix: T6 persistence slot now
+     assigned immediately after its def (not batched) because `_try`
+     executes boot fns at decoration time and the dreamtime boot reads
+     the slot at ITS decoration time. 6 route tests. Live :8000: 3
+     seeded memories → 4 insights (2 connection, 1 synthesis, 1 gap),
+     novelty 0.6, insights persisted back into the shared SQLite store.
+     T8c-8c (trigger-skill-generation) deferred — needs a skill-store
+     referent (donor SkillManager 830 LOC + registry 777 LOC; kernel has
+     none). Remaining T8c: schema, T8c-8c (1 row).
 
 3. **D-bucket ports ride the plan's Stage 13** in its own order
    (13.1 schema_evolution → 13.2 db_manager → … → 13.7 voice), each with its own

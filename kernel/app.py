@@ -329,6 +329,14 @@ class _BootRegistry:
         # interval via ``KOSMOS_MEMORY_DECAY_INTERVAL`` (default 120 s,
         # donor main.py:1082). No port prerequisites — pure SQLite.
         self.tektos_memory_persistence: Any = None
+        # ADR-141 T8c-8b: donor dreamtime/contemplation engine
+        # (memory_system.py:735-993), booted over the T6 store above —
+        # it needs the same 3-tier SQLite substrate (long_term +
+        # procedural tiers feed contemplation). Same env gate
+        # (KOSMOS_TEKTOS_MEMORY=on) and same db: one store, two
+        # consumers. The engine itself is in-memory (dream history,
+        # state) — only insights persist, back into this store.
+        self.tektos_dreamtime: Any = None
         # ADR-143 T3: kernel learning substrate (donor
         # ``SelfImprovementAdapter`` — experience → evaluation →
         # meta-learning → benchmark loop, JSONL ledger). Boots
@@ -1676,6 +1684,31 @@ async def lifespan(app: FastAPI):
         )
         return store
 
+    # Assign the slot IMMEDIATELY (not in the batch below): _try executes
+    # the boot fn at decoration time, and _boot_tektos_dreamtime (defined
+    # next) reads this slot at ITS decoration time — the batched
+    # assignment below would run too late for the reader.
+    registry.tektos_memory_persistence = _boot_tektos_memory_persistence
+
+    @_try("tektos_dreamtime")
+    def _boot_tektos_dreamtime():
+        import logging as _kl
+
+        from plugins.tektos.memory.dreamtime import DictMemoryStore, DreamtimeEngine
+
+        _log = _kl.getLogger(__name__)
+        store = registry.tektos_memory_persistence
+        if store is None:
+            # Same gate as T6 (KOSMOS_TEKTOS_MEMORY) — the engine is
+            # meaningless without the 3-tier store to contemplate over.
+            _log.info(
+                "kosmos.tektos_dreamtime: skipped (memory persistence off)"
+            )
+            return None
+        engine = DreamtimeEngine(DictMemoryStore(store))
+        _log.info("kosmos.tektos_dreamtime: wired (ADR-141 T8c-8b)")
+        return engine
+
     registry.tektos_reflection = _boot_tektos_reflection
     registry.tektos_synthesis = _boot_tektos_synthesis
     registry.tektos_experience = _boot_tektos_experience
@@ -1686,6 +1719,7 @@ async def lifespan(app: FastAPI):
     registry.tektos_manager = _boot_tektos_manager
     registry.tektos_self_repair = _boot_tektos_self_repair
     registry.tektos_memory_persistence = _boot_tektos_memory_persistence
+    registry.tektos_dreamtime = _boot_tektos_dreamtime
     registry.tektos_orchestrator = _boot_tektos_orchestrator
 
     # --- Gnosis boot seeder (ADR-064) ----------------------------------------
@@ -4258,6 +4292,95 @@ async def memory_delete_entry(tier: str, entry_id: str) -> dict[str, Any]:
 
     deleted = fn(entry_id)
     return {"deleted": deleted}
+
+
+# ---------------------------------------------------------------------------
+# Dreamtime / contemplation (ADR-141 T8c-8b) — donor paths, donor shapes, at
+# the kernel.
+#
+# Donor routes (main.py:2365-2425):
+#   GET  /api/dreamtime/summary  — engine.get_summary()
+#   GET  /api/dreamtime/history  — {dreams: [DreamResult wire]}
+#   POST /api/dreamtime/run      — full contemplation cycle (donor body:
+#                                   max_memories=50, focus_area=None)
+#
+# These ride the Tektos dreamtime engine (registry.tektos_dreamtime, booted
+# over the T6 3-tier store — same KOSMOS_TEKTOS_MEMORY gate, same db).
+# Donor-faithful degrade: {"error": "Dreamtime engine not initialized"} at
+# 200 when the gate is off or boot failed — the donor's own fail shape.
+#
+# The fourth donor route (POST /api/dreamtime/trigger-skill-generation,
+# main.py:2430) depends on the donor SkillManager (skills/manager.py 830 LOC
+# + skills/registry.py 777 LOC — SQLite skill store); the kernel has no
+# skill-store referent. Deferred to T8c-8c with a follow-up skills ADR.
+# ---------------------------------------------------------------------------
+
+
+class _DreamtimeRunBody(BaseModel):
+    max_memories: int = Field(
+        default=50, description="Max memories to gather for processing"
+    )
+    focus_area: str | None = Field(
+        default=None, description="Optional focus area for targeted processing"
+    )
+
+
+@app.get("/api/dreamtime/summary")
+async def dreamtime_summary() -> dict[str, Any]:
+    """Dreamtime system summary (donor main.py:2365 — same shape)."""
+    engine = registry.tektos_dreamtime
+    if engine is None:
+        return {"error": "Dreamtime engine not initialized"}
+    return engine.get_summary()
+
+
+@app.get("/api/dreamtime/history")
+async def dreamtime_history(limit: int = 10) -> dict[str, Any]:
+    """Recent dreamtime results (donor main.py:2392 — same shape)."""
+    engine = registry.tektos_dreamtime
+    if engine is None:
+        return {"error": "Dreamtime engine not initialized"}
+    results = engine.get_dream_history(limit=limit)
+    return {
+        "dreams": [
+            {
+                "id": d.id,
+                "source_count": d.source_count,
+                "insight_count": d.insight_count,
+                "is_novel": d.is_novel,
+                "novelty_score": d.novelty_score,
+                "insights": d.insights,
+                "timestamp": d.timestamp,
+            }
+            for d in results
+        ]
+    }
+
+
+@app.post("/api/dreamtime/run")
+async def dreamtime_run(body: _DreamtimeRunBody = _DreamtimeRunBody()) -> dict[str, Any]:
+    """Run a complete dreamtime/contemplation cycle (donor main.py:2418).
+
+    Gathers memories from long-term and procedural tiers, performs
+    associative cross-pollination, generates insights, and saves them
+    to long-term or procedural memory based on novelty score.
+    """
+    engine = registry.tektos_dreamtime
+    if engine is None:
+        return {"error": "Dreamtime engine not initialized"}
+    result = engine.run_contemplation(
+        max_memories=body.max_memories,
+        focus_area=body.focus_area,
+    )
+    return {
+        "id": result.id,
+        "source_count": result.source_count,
+        "insight_count": result.insight_count,
+        "is_novel": result.is_novel,
+        "novelty_score": result.novelty_score,
+        "insights": result.insights,
+        "timestamp": result.timestamp,
+    }
 
 
 # ---------------------------------------------------------------------------

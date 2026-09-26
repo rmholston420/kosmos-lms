@@ -5394,3 +5394,45 @@ MCP, metabolism) in ROI order.
   T8c-7 note; README progress line. P count unchanged (76).
 - **Gate progress (ADR-141):** T1–T7 ✓, T8a ✓, T8b ✓, T8c-1…T8c-6 ✓,
   T8c-7 deferred. Remaining T8c: dreamtime ×4, schema (5 rows).
+
+## 2026-09-26 07:20 EDT — ADR-141 T8c-8a complete: dreamtime engine substrate (verbatim port)
+
+- **Slice:** ADR-141 T8c-8a (commit `abddf16` + routes slice)
+- **What changed:** Donor `DreamtimeEngine` (memory_system.py:735-993) + its
+  models (MemoryTier/Hemisphere/MemoryEntry/DreamState/DreamResult) ported
+  VERBATIM to `plugins/tektos/memory/dreamtime.py` (Tektos cognitive family,
+  beside T6's persistence.py — the coding agent's own idle contemplation, so
+  plugin-level per the layering rule, not kernel).
+- **Documented divergence:** the engine consumed the donor `MemorySystem`
+  object API; the kernel's T6 store is dict-based. `DictMemoryStore`
+  adapter implements exactly the 4 donor methods the engine touches
+  (get_recent_long_term, get_procedural_memories, add_long_term_memory,
+  add_procedural_memory) over the T6 store — engine body byte-for-byte.
+  add_procedural_memory pops the `hemisphere` kwarg the verbatim engine
+  passes (donor signature has no such param).
+- **Verified:** 7 unit tests (FakeStore, no SQLite/GPU); live smoke 3 memories
+  → 4 insights (2 connection, 1 synthesis, 1 gap), tier-appropriate save, IDLE.
+
+## 2026-09-26 07:25 EDT — ADR-141 T8c-8b complete: 3 dreamtime routes kernel-native
+
+- **Slice:** ADR-141 T8c-8b (boot + routes)
+- **What changed:** `registry.tektos_dreamtime` booted over the T6 3-tier
+  store (same KOSMOS_TEKTOS_MEMORY gate, same db — one store, two consumers;
+  engine is in-memory, only insights persist). 3 routes at donor paths with
+  donor wire verbatim: GET /api/dreamtime/summary, GET /api/dreamtime/history,
+  POST /api/dreamtime/run. Degraded shape `{"error": "Dreamtime engine not
+  initialized"}` @200 (donor's own fail shape).
+- **Boot-ordering fix:** T6 persistence slot now assigned immediately after
+  its def (not batched) — `_try` executes boot fns at decoration time, and the
+  dreamtime boot reads the slot at ITS decoration time.
+- **Deferred:** T8c-8c (POST /api/dreamtime/trigger-skill-generation) needs
+  the donor SkillManager (830 LOC + registry 777 LOC — SQLite skill store);
+  the kernel has no skill-store referent. Follow-up skills ADR is the honest
+  path.
+- **Verified:** 6 route tests (module-scoped real boot, gate on, tmp db);
+  live :8000 — 3 seeded memories → 4 insights, novelty 0.6, 4 rows persisted
+  back into the shared SQLite store; history/summary advance correctly.
+- **Docs:** ADR-141 3 dreamtime rows → P, trigger-skill-generation →
+  Deferred (T8c-8c); T8 section progress note; README progress line.
+- **Gate progress (ADR-141):** T1–T7 ✓, T8a ✓, T8b ✓, T8c-1…T8c-7 ✓,
+  T8c-8 3/4 ✓. Remaining T8c: schema, T8c-8c (skill-store follow-up).
