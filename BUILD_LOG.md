@@ -5605,3 +5605,45 @@ MCP, metabolism) in ROI order.
   routes (status/tables/columns/schema/sample), 13.2c DDL (create/drop/
   rename columns+tables/indexes), 13.2d query/DML/transaction/explain,
   13.2e export/import/backup/restore/analyze/optimize.
+
+## 2026-09-26 — ADR-141 Stage 13.2b: /api/db/* READ routes kernel-native
+
+- **Slice:** ADR-141 Stage 13.2b (read routes over the 13.2a substrate)
+- **What changed:** Four donor GET routes at donor paths, wires
+  donor-verbatim, all wired to `registry.tektos_db`:
+  - `GET /api/db/schema` (donor main.py:3414) — `introspect()` →
+    tables/columns/indexes/row_count/size_bytes.
+  - `GET /api/db/tables/{table_name}/sample` (3447) —
+    `get_table_sample` → `{table, count, data}`.
+  - `GET /api/db/tables/{table_name}/analyze` (3459) —
+    `analyze_table` → donor AnalysisResult wire.
+  - `GET /api/db/analyze` (3479) — `analyze_all()` per-table wire.
+- **Documented divergences:**
+  1. **`GET /api/db` (stats, donor 3401) NOT re-added:** that path is
+     already the kernel's ops lane-status surface (ADR-137
+     `db_status`; ADR-141 line 51 "kernel /api/db (ADR-137) — status
+     only"). First-registered-wins would make a duplicate dead shadow
+     code and silently break the ADR-137 ops DbTab. The ADR keeps that
+     route's P via ADR-137.
+  2. Referent: donor built an ad-hoc `DatabaseManager(db_path)` for
+     stats/schema and used a module-global for the rest; the kernel
+     wires all four to the single `registry.tektos_db` slot (gate-off
+     → honest `{"error": "Database manager not initialized"}` 200).
+  3. **DONOR BEHAVIOR preserved 1:1 (sample):** a well-formed but
+     MISSING table raises `sqlite3.OperationalError` inside the donor's
+     SELECT; the donor route only catches `ValueError`, so it is
+     unhandled → 500 (confirmed live on the real server; TestClient
+     re-raises server exceptions, so the test catches the same
+     exception). Bad identifiers → 404 (donor `ValueError` path).
+- **Verified:** 7 route tests green (module-scoped real boot, gate on,
+  tmp db, seeded 5-row probe table: schema row_count, sample limit
+  honored, bad identifier → 404, missing table → donor 500 exception,
+  table analyze 200 + missing → 404, analyze-all includes probe table).
+  Full suite green. Live :8000 (restarted with 13.2b) — seeded table:
+  schema row_count 3, sample limit=2 → count 2, analyze 200, bad
+  identifier → 404, missing table → 500; probe table dropped after.
+- **Docs:** ADR-141 4 read rows → P (13.2b); README progress line.
+- **Gate progress (ADR-141):** 13.2a + 13.2b P. Next: 13.2c DDL
+  (create/drop/rename tables+columns, indexes), 13.2d
+  query/DML/transaction/explain, 13.2e export/import/backup/restore/
+  analyze/optimize.

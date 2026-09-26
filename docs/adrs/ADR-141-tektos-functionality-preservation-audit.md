@@ -93,7 +93,7 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `GET /api/context/status` | Stage 13 (context subsystem) |
 | `GET /api/contextCurator/status` | Stage 13 (context curator) |
 | — 13.2 substrate — | **P (Stage 13.2a, 2026-09-26).** Donor `db_manager.py` (1575 LOC, 100% stdlib) → `kernel/db_manager.py`; donor FULL schema-evolution engine `tektos/schema_evolution.py` (1644 LOC) → `kernel/schema_evolution_full.py` (distinct from the T8c-9 migrations engine). `registry.tektos_db` booted under `KOSMOS_TEKTOS_DB=on`, kernel-owned db at donor's canonical `data/tektos.db` (fresh file, no donor data carried). Donor self-import `from .schema_evolution import RelationshipDetector` fixed to absolute (documented divergence). The 19 routes below ride on this substrate. |
-| `GET /api/db/analyze` | Stage 13.2 db_manager |
+| `GET /api/db/analyze` | **P (Stage 13.2b, 2026-09-26)** — kernel /api/db/analyze (registry.tektos_db.analyze_all, donor wire verbatim) |
 | `POST /api/db/backup` | Stage 13.2 db_manager |
 | `GET /api/db/backups` | Stage 13.2 db_manager |
 | `POST /api/db/dml` | Stage 13.2 db_manager |
@@ -105,15 +105,15 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `POST /api/db/optimize` | Stage 13.2 db_manager |
 | `POST /api/db/query` | Stage 13.2 db_manager |
 | `POST /api/db/restore` | Stage 13.2 db_manager |
-| `GET /api/db/schema` | Stage 13.2 db_manager |
+| `GET /api/db/schema` | **P (Stage 13.2b, 2026-09-26)** — kernel /api/db/schema (registry.tektos_db.introspect, donor wire verbatim) |
 | `POST /api/db/tables` | Stage 13.2 db_manager |
 | `DELETE /api/db/tables/{table_name}` | Stage 13.2 db_manager |
-| `GET /api/db/tables/{table_name}/analyze` | Stage 13.2 db_manager |
+| `GET /api/db/tables/{table_name}/analyze` | **P (Stage 13.2b, 2026-09-26)** — kernel (registry.tektos_db.analyze_table; missing table → 404 donor ValueError) |
 | `POST /api/db/tables/{table_name}/columns` | Stage 13.2 db_manager |
 | `DELETE /api/db/tables/{table_name}/columns/{column_name}` | Stage 13.2 db_manager |
 | `PATCH /api/db/tables/{table_name}/columns/{old_name}/rename` | Stage 13.2 db_manager |
 | `PATCH /api/db/tables/{table_name}/rename` | Stage 13.2 db_manager |
-| `GET /api/db/tables/{table_name}/sample` | Stage 13.2 db_manager |
+| `GET /api/db/tables/{table_name}/sample` | **P (Stage 13.2b, 2026-09-26)** — kernel (registry.tektos_db.get_table_sample; bad identifier → 404 donor ValueError; missing well-formed table → 500 donor unhandled OperationalError, test-locked + live-confirmed) |
 | `POST /api/db/transaction` | Stage 13.2 db_manager |
 | `POST /api/hindsight/recall` | ADR-134 honest limit (kernel /api/memory/search-semantic is the read-side referent) |
 | `POST /api/hindsight/reflect` | ADR-134 honest limit |

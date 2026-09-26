@@ -4678,6 +4678,105 @@ async def apply_schema_proposal(body: _ApplySchemaProposalBody):
 
 
 # ---------------------------------------------------------------------------
+# Database-manager READ surface (ADR-141 Stage 13.2b, donor main.py:3414–3492).
+# Four donor GET routes over the substrate ported in 13.2a
+# (registry.tektos_db → kernel.db_manager.DatabaseManager).
+# NOTE: the donor's `GET /api/db` (stats, main.py:3401) is NOT re-added here —
+# that path is already the kernel's ops lane-status surface (ADR-137,
+# db_status above; the donor's SQLite stats were retired in favor of it,
+# ADR-141 line 51 "kernel /api/db (ADR-137) — status only"). First-registered-
+# wins, so a second /api/db would be dead shadow code. Wires are donor-verbatim.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/db/schema")
+async def get_db_schema() -> dict[str, Any]:
+    """Get full database schema with column types and indexes (donor 3414)."""
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized (KOSMOS_TEKTOS_DB=off)"}
+    try:
+        snapshot = mgr.introspect()
+        return {
+            "tables": {
+                name: {
+                    "columns": [
+                        {
+                            "name": c.name,
+                            "type": c.col_type,
+                            "notnull": c.notnull,
+                            "pk": c.pk,
+                            "default": c.default_value,
+                        }
+                        for c in t.columns
+                    ],
+                    "indexes": [i.name for i in t.indexes],
+                    "row_count": t.row_count,
+                    "size_bytes": t.size_bytes,
+                }
+                for name, t in snapshot.tables.items()
+            }
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+
+
+@app.get("/api/db/tables/{table_name}/sample")
+async def get_table_sample(table_name: str, limit: int = 100) -> dict[str, Any]:
+    """Get a sample of records from a table (donor main.py:3447)."""
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized"}
+    try:
+        sample = mgr.get_table_sample(table_name, limit)
+        return {"table": table_name, "count": len(sample), "data": sample}
+    except ValueError as e:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/api/db/tables/{table_name}/analyze")
+async def analyze_table(table_name: str) -> dict[str, Any]:
+    """Analyze a table: data quality, distribution, optimization (donor 3459)."""
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized"}
+    try:
+        result = mgr.analyze_table(table_name)
+        return {
+            "table": result.table_name,
+            "row_count": result.row_count,
+            "column_stats": result.column_stats,
+            "missing_indexes": result.missing_indexes,
+            "duplicate_indexes": result.duplicate_indexes,
+            "suggestions": result.suggestions,
+            "data_quality_issues": result.data_quality_issues,
+        }
+    except ValueError as e:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/api/db/analyze")
+async def analyze_all_tables() -> dict[str, Any]:
+    """Analyze all tables in the database (donor main.py:3479)."""
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized"}
+    results = mgr.analyze_all()
+    return {
+        table: {
+            "row_count": r.row_count,
+            "suggestions": r.suggestions,
+            "data_quality_issues": r.data_quality_issues,
+        }
+        for table, r in results.items()
+    }
+
+
+# ---------------------------------------------------------------------------
 # Embedder surface (ADR-141 T7, donor main.py:4448/4464) — kernel-native.
 # The donor ran a private EmbedderClient (_embedder_client, :8091) behind
 # two routes. Per the layering rule (governing, 2026-09-25) the embedder
