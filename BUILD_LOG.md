@@ -5895,3 +5895,28 @@ MCP, metabolism) in ROI order.
   history tracking, context/status `active` + remaining_tokens; regression
   probes 13.4/13.5/13.6 clean.
 - **Docs:** ADR-141 rows metabolism ×3 + context ×1 → P; README 13.7 ✓.
+
+## 2026-09-26 — Stage 13.8: context curator status route (ADR-141)
+- **Substrate:** donor `tektos/runtime/context_curator.py` (110 LOC, 100%
+  stdlib, zero `tektos.*` imports) → `kernel/context_curator.py`
+  **byte-verbatim** (generic context-window lifecycle substrate → kernel
+  per governing layering rule).
+- **Boot:** `registry.tektos_context_curator` slot + `_boot_tektos_context_curator`
+  in the composition root; `KOSMOS_TEKTOS_CONTEXT_CURATOR=on` (default on);
+  donor boot values main.py:1434 (max_tokens=262144,
+  compaction_threshold=0.75); donor's log-only `await start()` scheduled on
+  the running loop via `create_task` (the `_try` boot fn executes sync
+  inside the async lifespan — `asyncio.run` would raise; start() changes
+  no state, so the schedule is functionally identical).
+- **Route (donor main.py:4639 verbatim):** `GET /api/contextCurator/status`
+  → `{"status": "initialized", "stats": get_compaction_stats()}` /
+  gate-off → `{"status": "not_initialized"}` at 200.
+- **Tests:** `tests/kernel/test_adr141_s138_context_curator_status.py` — 3
+  tests (route over lifespan-booted curator, monkeypatched gate-off,
+  substrate unit: compaction bands — strictly-above threshold flip,
+  budget_remaining floor at 0, active_tiers=4 on compaction). 3/3 green;
+  full suite **808 passed**.
+- **Live-verified on :8000:** initialized, max_tokens 262144, threshold
+  0.75, should_compact false, budget_remaining 262144, full stats
+  envelope; regression probes 13.7/13.4/13.5/13.6 clean.
+- **Docs:** ADR-141 row contextCurator → P; README 13.8 ✓.

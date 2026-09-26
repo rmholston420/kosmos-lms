@@ -351,6 +351,10 @@ class _BootRegistry:
         # GPU VRAM / system RAM / disk / context budget / thermal bands →
         # resource events). Generic substrate → kernel/metabolism.py.
         self.tektos_metabolism: Any = None
+        # ADR-141 Stage 13.8: donor ContextCurator (context-window
+        # lifecycle + compaction decisions). Generic substrate →
+        # kernel/context_curator.py.
+        self.tektos_context_curator: Any = None
         # ADR-143 T3: kernel learning substrate (donor
         # ``SelfImprovementAdapter`` — experience → evaluation →
         # meta-learning → benchmark loop, JSONL ledger). Boots
@@ -1863,6 +1867,29 @@ async def lifespan(app: FastAPI):
         )
         return engine
 
+    @ _try("tektos_context_curator")
+    def _boot_tektos_context_curator():
+        import os as _os
+
+        if _os.environ.get("KOSMOS_TEKTOS_CONTEXT_CURATOR", "on").lower() not in ("on", "true", "1"):
+            return None
+        from kernel.context_curator import ContextCurator
+
+        # Donor boot values (main.py:1434): 256k budget, 75% compaction
+        # threshold. Donor's `await curator.start()` (main.py:1435) is
+        # LOG-ONLY — no state change — so it's scheduled on the running
+        # loop (the _try boot fn executes sync inside the async lifespan;
+        # asyncio.run would raise) and the boot is functionally identical.
+        curator = ContextCurator(max_tokens=262144, compaction_threshold=0.75)
+        asyncio.get_running_loop().create_task(curator.start())
+        logger.info(
+            "kosmos.tektos_context_curator: wired (ADR-141 Stage 13.8); "
+            "max_tokens=%d, threshold=%.2f",
+            curator.max_tokens,
+            curator.compaction_threshold,
+        )
+        return curator
+
     registry.tektos_reflection = _boot_tektos_reflection
     registry.tektos_synthesis = _boot_tektos_synthesis
     registry.tektos_experience = _boot_tektos_experience
@@ -1878,6 +1905,7 @@ async def lifespan(app: FastAPI):
     registry.tektos_db = _boot_tektos_db
     registry.tektos_axioms = _boot_tektos_axioms
     registry.tektos_metabolism = _boot_tektos_metabolism
+    registry.tektos_context_curator = _boot_tektos_context_curator
     registry.tektos_orchestrator = _boot_tektos_orchestrator
 
     # --- Gnosis boot seeder (ADR-064) ----------------------------------------
@@ -4220,6 +4248,18 @@ async def context_status() -> dict[str, Any]:
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
     return {"status": "not_initialized"}
+
+
+@app.get("/api/contextCurator/status")
+async def context_curator_status() -> dict[str, Any]:
+    """Context curator status (donor main.py:4639)."""
+    curator = registry.tektos_context_curator
+    if curator is None:
+        return {"status": "not_initialized"}
+    return {
+        "status": "initialized",
+        "stats": curator.get_compaction_stats(),
+    }
 
 
 # ---------------------------------------------------------------------------
