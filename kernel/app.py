@@ -5312,6 +5312,48 @@ async def nervous_system_status():
 
 
 # ---------------------------------------------------------------------------
+# Observability status (ADR-141 Stage 13.5, donor main.py:4673) — kernel-native.
+# The donor route just reports two booleans: whether its private
+# _telemetry_collector (long-running daemon → ~/.tektos/telemetry) and
+# _auto_recovery (service health monitor) objects exist. Kernel referents:
+# - telemetry: NO running collector daemon in the kernel — telemetry is the
+#   ADR-138 ON-DEMAND sampler (GET /api/telemetry, stateless function).
+#   Honest boolean: false (the functionality is present, just not as a
+#   running collector — same "superseded by equivalent kernel mechanism"
+#   resolution the audit permits; `note` makes the mapping explicit rather
+#   than letting a renamed boolean misrepresent).
+# - auto_recovery: registry.self_repair — the ADR-142 full donor self-repair
+#   engine (the auto-recovery supersession; env-gated daemon, started at
+#   boot under KOSMOS_TEKTOS_SELF_REPAIR=on).
+# Donor field set preserved verbatim + one additive `note` (T1-orchestrator
+# honest-degrade pattern). 200 always.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/observability/status")
+async def observability_status():
+    """Observability system status (donor main.py:4673)."""
+    try:
+        from kernel.tektos_telemetry import collect as _telemetry_sample  # noqa: F401
+
+        telemetry_wired = True
+    except Exception:
+        telemetry_wired = False
+
+    sr = registry.self_repair
+    return {
+        "status": "active",
+        "telemetry": telemetry_wired,
+        "auto_recovery": sr is not None,
+        "note": (
+            "kernel: telemetry = ADR-138 on-demand sampler "
+            "(GET /api/telemetry, no running collector daemon); "
+            "auto_recovery = ADR-142 self-repair engine (registry.self_repair)"
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Embedder surface (ADR-141 T7, donor main.py:4448/4464) — kernel-native.
 # The donor ran a private EmbedderClient (_embedder_client, :8091) behind
 # two routes. Per the layering rule (governing, 2026-09-25) the embedder

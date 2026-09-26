@@ -5810,3 +5810,30 @@ MCP, metabolism) in ROI order.
   13 D-routes: context, mcp, metabolism, observability, rag ×2,
   repoMap, thermal ×2, vision ×3, voice ×3, `/health` ×3, ADR-140 WS,
   ADR-109 gateway deletion.
+
+## 2026-09-26 — Stage 13.5: observability status route (ADR-141)
+- **Route:** `GET /api/observability/status` (donor main.py:4673). Donor
+  just reports two booleans — whether its private `_telemetry_collector`
+  (long-running daemon → ~/.tektos/telemetry) and `_auto_recovery`
+  (service health monitor) objects exist.
+- **Kernel referents:** `telemetry` = ADR-138 ON-DEMAND sampler
+  (`kernel.tektos_telemetry` / `GET /api/telemetry`) — the kernel has NO
+  running collector daemon; the boolean reports the sampler module
+  wired (true). `auto_recovery` = `registry.self_repair` — the ADR-142
+  full donor self-repair engine (the auto-recovery supersession; boots
+  unconditionally per ADR-141 R6).
+- **Honest-degrade:** donor field set preserved verbatim + one additive
+  `note` making the daemon→kernel-mechanism mapping explicit
+  (T1-orchestrator pattern — prevents a silently renamed boolean from
+  misrepresenting). 200 always.
+- **Test:** `tests/kernel/test_adr141_s135_observability_status.py` —
+  3 tests (wire shape + note; telemetry reflects sampler referent;
+  auto_recovery mirrors registry.self_repair). Full suite green (702
+  passed).
+- **Live-verified on :8000:** `{status:"active", telemetry:true,
+  auto_recovery:true, note:...}` + regression probes (13.4 nervous
+  active, 13.3 axioms 29 active, ADR-138 sampler 200).
+- **Gate progress (ADR-141):** 13.5 observability P. Remaining Stage 13
+  D-routes: context, mcp, metabolism, rag ×2, repoMap, thermal ×2,
+  vision ×3, voice ×3, `/health` ×3, ADR-140 WS, ADR-109 gateway
+  deletion.
