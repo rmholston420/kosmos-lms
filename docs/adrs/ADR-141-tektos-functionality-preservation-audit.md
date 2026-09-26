@@ -33,9 +33,9 @@ an equivalent kernel mechanism.
 
 | Disposition | Count | Meaning |
 |---|---|---|
-| **P — Preserved** | 70 (35 + T6 2 + T7 2 + T8a 24 + T8b-1 2 + T8b-2 1 + T8b-3 1 + T8b-4 1 + T8c-1 2, 2026-09-26) | kernel/plugin referent exists and is live |
+| **P — Preserved** | 71 (35 + T6 2 + T7 2 + T8a 24 + T8b-1 2 + T8b-2 1 + T8b-3 1 + T8b-4 1 + T8c-1 2 + T8c-2 1, 2026-09-26) | kernel/plugin referent exists and is live |
 | **D — Deferred** | 70 + 2 WS | recorded path; functionality lost until the named port lands |
-| **T — To-port** | 12 | no referent yet; each becomes a work item before deletion (T8 scope; orchestrator ×2 folded into T8c) |
+| **T — To-port** | 11 | no referent yet; each becomes a work item before deletion (T8 scope; orchestrator ×2 folded into T8c) |
 
 The deferral buckets are **honest temporary losses**, not permanent omissions:
 every D route names the stage or ADR that carries its functionality. The Stage 11
@@ -192,7 +192,7 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `GET /api/planner/status` | **P (2026-09-26, T8a)** — kernel-native (T4, app.py:5877) |
 | `GET /api/planner/templates` | **P (2026-09-26, T8a)** — kernel-native (T4, app.py:5806) |
 | `POST /api/plugins/{name}/toggle` | no referent — plugin toggle |
-| `GET /api/routing/decide` | no referent — routing decision |
+| `GET /api/routing/decide` | **P (2026-09-26, T8c-2)** — kernel-native: donor `src/tektos/routing.py` (396 LOC, generic multi-model routing) verbatim → `kernel/routing.py` substrate + `registry.model_router` boot slot (kernel primary-lane env, donor BALANCED/general profile) + `_decide_routing` thin surface (donor wire `{task, category, recommended_model, confidence, fallback_models, estimated_cost}` + honest `reason`). Documented divergence: donor route ALWAYS failed (wrong route() kwargs + .get() on dataclass → stuck 0.5-confidence fallback); kernel calls route() correctly (length→complexity 1-5, unknown category→MISC). 7 tests; live :8000 → `Selected qwen3.8-27b-code for refactoring (tier=fast)` |
 | `GET /api/schedule` | no referent — schedule read |
 | `GET /api/schema` | no referent — schema read (kernel has /api/kernel/schema, different surface) |
 | `GET /api/search` | **P (2026-09-26, T8b-4)** — kernel-native: `tektos_search_sessions` (app.py) + `search_events_global` (kernel/tektos_replay.py): donor wire `{sessions: [{id, title, tag}], events: [{session_id, seq, type, payload, created_at}]}` — sessions via the T2c session port, events via cross-session substring search over the replay substrate (donor FTS5-fallback semantics); 4 tests; live :8000 (empty + `turn` probe → 200) |
@@ -370,6 +370,16 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
      UI re-pointed). Counts P 68→70 / T 14→12. Remaining T8c: routing/decide,
      delegate, hooks ×2, schedule, evaluation, plugins toggle, dreamtime ×4,
      schema (10 rows).
+     **T8c-2 (2026-09-26)** — `GET /api/routing/decide` kernel-native (donor
+     main.py:5297): donor `routing.py` → `kernel/routing.py` substrate
+     (verbatim, layering rule), router booted from primary-lane env, thin
+     surface with donor wire + honest `reason`. Divergence (donor defect
+     fixed): the donor route always hit its except-path (wrong kwargs +
+     .get() on a dataclass) → 0.5-confidence fallback every time; kernel
+     calls `route(task_category, complexity)` correctly. 7 tests; live :8000
+     (`Selected qwen3.8-27b-code for refactoring (tier=fast)`). Remaining
+     T8c: delegate, hooks ×2, schedule, evaluation, plugins toggle,
+     dreamtime ×4, schema (11 rows).
 
 3. **D-bucket ports ride the plan's Stage 13** in its own order
    (13.1 schema_evolution → 13.2 db_manager → … → 13.7 voice), each with its own

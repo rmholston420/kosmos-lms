@@ -243,6 +243,11 @@ class _BootRegistry:
         # and ``registry.relational_memory`` (block records). Downstream
         # call sites MUST tolerate ``None`` (ADR-101 degrade pattern).
         self.immune: Any = None
+        # ADR-141 T8c-2 (2026-09-26): kernel-owned ModelRouter (kernel/routing.py)
+        # — donor routing substrate, seeded from the active LLM lane at boot
+        # (mirrors the donor's main.py:188-207, which seeded TEKTOS_LLM_* env).
+        # Consumed by GET /api/routing/decide; call sites tolerate None.
+        self.model_router: Any = None
         # ADR-141 R6 + ADR-142 (2026-09-25): kernel-owned self-repair
         # engine daemon — the full donor port, now the kernel RELIABILITY
         # SUBSTRATE (kernel.reliability.engine) with FULL donor execution
@@ -665,6 +670,43 @@ async def lifespan(app: FastAPI):
         return LlamaEmbeddingsAdapter()
 
     registry.embeddings = _boot_embeddings
+
+    # --- Model router (ADR-141 T8c-2a) --------------------------------------
+    # Donor main.py:188-207 seeded ModelRouter from the running-LLM env
+    # (TEKTOS_LLM_BASE_URL / TEKTOS_LLM_MODEL). Kernel equivalent: the
+    # ADR-116 primary-lane env (KOSMOS_LLAMA_SWAP_*), tier BALANCED,
+    # category general, is_default — the donor's exact profile. GET
+    # /api/routing/decide degrades gracefully to the 0.5-confidence
+    # fallback when the router is absent (donor except-path wire).
+    @_try("model_router")
+    def _boot_model_router():
+        import os
+
+        from kernel.routing import ModelProfile, ModelRouter, ModelTier
+
+        base_url = (
+            os.environ.get("KOSMOS_LLAMA_SWAP_BASE_URL")
+            or "http://127.0.0.1:8080"
+        ).rstrip("/")
+        model = (
+            os.environ.get("KOSMOS_LLAMA_SWAP_DEFAULT_MODEL") or "qwen3:14b-q8_0"
+        )
+        router = ModelRouter()
+        router.register_model(
+            ModelProfile(
+                name=model,
+                api_base=base_url,
+                model_name=model,
+                tier=ModelTier.BALANCED,
+                category="general",
+                is_default=True,
+                context_window=262144,
+                max_tokens=8192,
+            )
+        )
+        return router
+
+    registry.model_router = _boot_model_router
 
     # --- Vector (QdrantVectorAdapter) ---------------------------------------
     # Stage 1.6 Phase 1 addition (ADR-074 D2): kernel-owned VectorPort.
@@ -4419,6 +4461,101 @@ async def tektos_search_sessions(query: str = "", limit: int = 100) -> dict[str,
         }
     except Exception as exc:  # noqa: BLE001 — donor shape: error at 200
         return {"error": str(exc), "sessions": [], "events": []}
+
+
+def _decide_routing(task: str, category: str) -> dict[str, Any]:
+    """Routing decision dict — donor wire (donor main.py:5297).
+
+    Documented divergence (donor defect, fixed): the donor called
+    ``router.route(task=task, category=category)`` — but the substrate
+    signature is ``route(task_category, complexity, ...)`` and the donor
+    then invoked ``dict.get()`` on the returned dataclass. Both raise
+    (TypeError / AttributeError), so the donor route ALWAYS took its
+    except-path and returned the 0.5-confidence fallback with
+    ``recommended_model = runtime_sdk._llm_model``. Kernel wiring calls
+    ``route()`` correctly: task-text length → complexity (1-5, heuristic
+    below), category string → TaskCategory (unknown → MISC, the donor's
+    general bucket). Donor wire preserved on success:
+    ``{task, category, recommended_model, confidence, fallback_models,
+    estimated_cost}`` — plus the honest extra field ``reason``. The
+    except-path wire (0.5 confidence, fallback_models=[]) is kept
+    verbatim as the degrade shape.
+    """
+    import os
+
+    router = registry.model_router
+    if router is None:
+        # Donor except-path wire, verbatim (0.5-confidence fallback).
+        return {
+            "task": task,
+            "category": category,
+            "recommended_model": os.environ.get(
+                "KOSMOS_LLAMA_SWAP_DEFAULT_MODEL", "qwen3:14b-q8_0"
+            ),
+            "confidence": 0.5,
+            "fallback_models": [],
+            "estimated_cost": 0.0,
+            "reason": "model router not booted",
+        }
+    from kernel.routing import TaskCategory
+
+    def _complexity(text: str) -> int:
+        # task-text length → 1-5 complexity (documented heuristic).
+        n = len(text)
+        if n <= 40:
+            return 1
+        if n <= 120:
+            return 2
+        if n <= 400:
+            return 3
+        if n <= 1200:
+            return 4
+        return 5
+
+    try:
+        task_cat = TaskCategory(category)
+    except ValueError:
+        task_cat = TaskCategory.MISC  # donor's "general" bucket
+
+    try:
+        decision = router.route(
+            task_category=task_cat,
+            complexity=_complexity(task),
+        )
+    except Exception as exc:  # noqa: BLE001 — donor shape: error at 200
+        return {
+            "task": task,
+            "category": category,
+            "recommended_model": os.environ.get(
+                "KOSMOS_LLAMA_SWAP_DEFAULT_MODEL", "qwen3:14b-q8_0"
+            ),
+            "confidence": 0.5,
+            "fallback_models": [],
+            "estimated_cost": 0.0,
+            "reason": f"routing decision failed: {exc}",
+        }
+    return {
+        "task": task,
+        "category": category,
+        "recommended_model": decision.selected_model,
+        "confidence": decision.confidence,
+        "fallback_models": [decision.fallback_model]
+        if decision.fallback_model
+        else [],
+        "estimated_cost": decision.cost_estimate,
+        "reason": decision.reason,
+    }
+
+
+@app.get("/api/routing/decide")
+async def tektos_routing_decide(task: str = "", category: str = "general") -> dict[str, Any]:
+    """Route a task to the best model (donor main.py:5297).
+
+    Thin surface over the kernel ``ModelRouter`` (``kernel/routing.py``,
+    ADR-141 T8c-2a). Donor wire preserved; see ``_decide_routing`` for the
+    documented divergence from the donor's always-failing call.
+    """
+    return _decide_routing(task, category)
 
 
 # Donor listed its own TEKTOS_* secret env vars (main.py:5328). Kernel

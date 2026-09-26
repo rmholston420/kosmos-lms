@@ -5246,3 +5246,30 @@ MCP, metabolism) in ROI order.
 - **Gate progress (ADR-141):** T1–T7 ✓, T8a ✓, T8b ✓ (config, keys,
   llm/probe, search), T8c-1 ✓. Remaining T8c: routing/decide, delegate,
   hooks ×2, schedule, evaluation, plugins toggle, dreamtime ×4, schema (12 rows).
+
+## 2026-09-26 03:30 EDT — ADR-141 T8c-2 complete: GET /api/routing/decide kernel-native
+- **What:** Donor `GET /api/routing/decide` (main.py:5297) ported. Donor
+  `src/tektos/routing.py` (396 LOC, generic multi-model routing: tiers,
+  scoring, cost, fallback chains) → verbatim kernel substrate
+  `kernel/routing.py` (layering rule: generic/shared → kernel). Boot slot
+  `registry.model_router` seeds one BALANCED/general model from the kernel
+  primary-lane env (donor seeded TEKTOS_LLM_* — same profile). Thin surface
+  `_decide_routing()` in app.py preserves the donor wire
+  `{task, category, recommended_model, confidence, fallback_models,
+  estimated_cost}` + honest `reason`.
+- **Divergence (donor defect, fixed + documented):** the donor route ALWAYS
+  hit its except-path — it called `route(task=..., category=...)` but the
+  signature is `route(task_category, complexity, ...)` and then did `.get()`
+  on a dataclass → stuck 0.5-confidence fallback every time. Kernel calls
+  `route(task_category, complexity)` correctly: length→complexity 1-5,
+  unknown category→MISC. Real decisions now (discriminator: `reason` starts
+  with "Selected").
+- **Verified:** `test_adr141_t8c2_routing_decide.py` 7/7 passed; live :8000
+  → `{"recommended_model":"qwen3.8-27b-code","reason":"Selected
+  qwen3.8-27b-code for refactoring (tier=fast)","confidence":0.5...}` (200);
+  full suite green.
+- **Docs:** ADR-141 row → P (T8c-2), counts P 70→71 / T 12→11, T8 section
+  T8c-2 line; ADR README progress → T8c-2 ✓.
+- **Gate progress (ADR-141):** T1–T7 ✓, T8a ✓, T8b ✓, T8c-1 ✓, T8c-2 ✓.
+  Remaining T8c: delegate, hooks ×2, schedule, evaluation, plugins toggle,
+  dreamtime ×4, schema (11 rows).
