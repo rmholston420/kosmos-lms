@@ -5209,3 +5209,25 @@ MCP, metabolism) in ROI order.
 - **Gate progress (ADR-141):** T1–T7 ✓, T8a ✓, T8b-1 ✓, T8b-2 ✓, **T8b-3 ✓**.
   Next: T8b-4 (search) — last T8b slice.
 - **Stop-condition status:** met — T8b-3 complete; next T8b-4.
+
+## 2026-09-26 02:52 EDT — ADR-141 T8b-4 complete: /api/search kernel-native (T8b done)
+- **What:** Donor `main.py:4203` `GET /api/search` → kernel-native
+  `tektos_search_sessions` in `kernel/app.py` + new
+  `search_events_global` in `kernel/tektos_replay.py`.
+- **Design (layering rule):** donor wire preserved: `{sessions: [{id, title,
+  tag}], events: [{session_id, seq, type, payload, created_at}]}` (error path
+  `{error, sessions: [], events: []}` at 200 — donor shape). Sessions come
+  from the T2c session port (`registry.session.search_sessions`); events from
+  the T2b replay substrate via new `search_events_global` — cross-session
+  substring match over `type` + serialized payload (donor FTS5-fallback
+  semantics), newest-first, cap `min(limit, 10000)`. No new event store.
+- **Tests:** `tests/kernel/test_adr141_t8b4_search_surface.py` — 4 tests
+  (sessions+events match, empty query, no-match, limit cap + newest-first).
+  Full `tests/kernel/` 594 passed.
+- **Live verify (:8000):** `query=` → `{"sessions":[],"events":[]}` 200;
+  `query=turn&limit=3` → 200 (fresh kernel, no events yet — correct empty).
+- **Docs:** ADR-141 search row → P (T8b-4), counts P 67→68 / T 15→14, T8
+  section T8b-3 + T8b-4 lines ("T8b complete"); ADR README → T8b-4 ✓.
+- **Gate progress (ADR-141):** T1–T7 ✓, T8a ✓, **T8b-1/2/3/4 ✓ (T8b
+  complete)**. Next: T8c (hooks, schedule, routing/decide, delegate,
+  evaluation, plugins toggle, dreamtime).

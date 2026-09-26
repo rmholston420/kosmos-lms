@@ -225,3 +225,49 @@ async def get_events(
         rows = [r for r in rows if r["seq"] > since_seq]
     cap = min(limit, 10000)
     return rows[:cap]
+
+
+async def search_events_global(
+    event_bus: Any,
+    query: str,
+    *,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """Cross-session event search, donor row shape (ADR-141 T8b-4).
+
+    Kernel referent for the donor ``event_store.search_events``
+    (tektos-ultima-v1 src/tektos/store/event_store.py:187). Reads the
+    same bus rows as :func:`_collect_mapped` but WITHOUT a session filter,
+    and matches ``query`` as a case-insensitive substring against the
+    mapped row's ``type`` + serialized ``payload`` (the donor's FTS5
+    fallback semantics). Rows newest-first (``created_at DESC``), donor
+    shape ``{session_id, seq, type, payload, created_at}``, capped at
+    ``min(limit, 10000)``.
+    """
+    query_lower = query.lower()
+    hits: list[dict[str, Any]] = []
+    for et in REPLAY_EVENT_TYPES:
+        try:
+            items = await event_bus.read_recent(event_type=et, count=None)
+        except Exception:  # noqa: BLE001 — one bad stream shouldn't kill search
+            continue
+        for _, envelope in items:
+            mapped = _map_envelope(envelope)
+            if mapped is None:
+                continue
+            payload = mapped["payload"] or {}
+            session_id = str(envelope.payload.get("session_id", ""))
+            haystack = (mapped["type"] + " " + repr(payload)).lower()
+            if query_lower and query_lower not in haystack:
+                continue
+            hits.append(
+                {
+                    "session_id": session_id,
+                    "seq": 0,  # global search: no per-session renumbering
+                    "type": mapped["type"],
+                    "payload": payload,
+                    "created_at": int(envelope.occurred_at.timestamp() * 1000),
+                }
+            )
+    hits.sort(key=lambda r: r["created_at"], reverse=True)
+    return hits[: min(limit, 10000)]

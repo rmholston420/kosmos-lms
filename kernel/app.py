@@ -4386,6 +4386,41 @@ async def tektos_llm_probe() -> dict[str, Any]:
     }
 
 
+@app.get("/api/search")
+async def tektos_search_sessions(query: str = "", limit: int = 100) -> dict[str, Any]:
+    """Search sessions and events (donor main.py:4203).
+
+    Donor wire preserved: ``{sessions: [{id, title, tag}], events: [...]}``
+    (donor also returned ``{error, sessions: [], events: []}`` on failure —
+    same envelope, 200). Sessions come from the T2c session port
+    (``registry.session.search_sessions``); events from the ADR-141 T2b
+    replay substrate — ``search_events_global`` cross-session substring
+    search over the bus (donor's FTS5 fallback semantics).
+    """
+    try:
+        from kernel.tektos_replay import search_events_global
+
+        port = registry.session
+        sessions = (
+            await port.search_sessions(query=query)
+            if port is not None and query
+            else []
+        )
+        events = (
+            await search_events_global(registry.event_bus, query, limit=limit)
+            if query
+            else []
+        )
+        return {
+            "sessions": [
+                {"id": s.id, "title": s.title, "tag": s.tag} for s in sessions
+            ],
+            "events": events,
+        }
+    except Exception as exc:  # noqa: BLE001 — donor shape: error at 200
+        return {"error": str(exc), "sessions": [], "events": []}
+
+
 # Donor listed its own TEKTOS_* secret env vars (main.py:5328). Kernel
 # equivalent: the KOSMOS_* secret set the kernel actually reads, plus the
 # shared DB/OPENAI vars the donor surfaced. Values never leave as plaintext.

@@ -33,9 +33,9 @@ an equivalent kernel mechanism.
 
 | Disposition | Count | Meaning |
 |---|---|---|
-| **P — Preserved** | 67 (35 + T6 2 + T7 2 + T8a 24 + T8b-1 2 + T8b-2 1 + T8b-3 1, 2026-09-26) | kernel/plugin referent exists and is live |
+| **P — Preserved** | 68 (35 + T6 2 + T7 2 + T8a 24 + T8b-1 2 + T8b-2 1 + T8b-3 1 + T8b-4 1, 2026-09-26) | kernel/plugin referent exists and is live |
 | **D — Deferred** | 70 + 2 WS | recorded path; functionality lost until the named port lands |
-| **T — To-port** | 15 | no referent yet; each becomes a work item before deletion (T8 scope; orchestrator ×2 folded into T8c) |
+| **T — To-port** | 14 | no referent yet; each becomes a work item before deletion (T8 scope; orchestrator ×2 folded into T8c) |
 
 The deferral buckets are **honest temporary losses**, not permanent omissions:
 every D route names the stage or ADR that carries its functionality. The Stage 11
@@ -195,7 +195,7 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `GET /api/routing/decide` | no referent — routing decision |
 | `GET /api/schedule` | no referent — schedule read |
 | `GET /api/schema` | no referent — schema read (kernel has /api/kernel/schema, different surface) |
-| `GET /api/search` | no referent — search (kernel has /api/memory/search-semantic + zetesis) |
+| `GET /api/search` | **P (2026-09-26, T8b-4)** — kernel-native: `tektos_search_sessions` (app.py) + `search_events_global` (kernel/tektos_replay.py): donor wire `{sessions: [{id, title, tag}], events: [{session_id, seq, type, payload, created_at}]}` — sessions via the T2c session port, events via cross-session substring search over the replay substrate (donor FTS5-fallback semantics); 4 tests; live :8000 (empty + `turn` probe → 200) |
 | `POST /api/self_improvement/enqueue` | **P (2026-09-26, T8a)** — kernel-native (ADR-143 S5, app.py:5033; test_adr143_s5_self_improve_routes.py) |
 | `GET /api/self_improvement/experiences` | **P (2026-09-26, T8a)** — kernel-native (ADR-143 S5, app.py:5007) |
 | `GET /api/self_improvement/metrics` | **P (2026-09-26, T8a)** — kernel-native (ADR-143 S5, app.py:4994) |
@@ -349,6 +349,20 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
      kernel's actual KOSMOS_* secret env set + DATABASE_URL/OPENAI_API_KEY;
      values masked, never plaintext. 1 test; live :8000 (DOZERDB configured →
      masked, rest `not configured`).
+     **T8b-3 (2026-09-26)** — `POST /api/llm/probe` kernel-native (donor
+     main.py:4590): donor wire `{llm_available, base_url, model}` over the
+     existing `registry.llm.is_healthy()` — the ADR-132 FailoverLLMAdapter
+     already runs the real per-backend probe and engages the fallback, so no
+     new probe logic (layering rule). 3 tests; live :8000 (available=true,
+     lane `qwen3.8-27b-code @ :8090` = /api/llm/status).
+     **T8b-4 (2026-09-26)** — `GET /api/search` kernel-native (donor
+     main.py:4203): donor wire `{sessions: [{id, title, tag}], events: [...]}`
+     — sessions via the T2c session port (`registry.session.search_sessions`),
+     events via new `kernel/tektos_replay.search_events_global` (cross-session
+     substring search over the replay bus, donor FTS5-fallback semantics,
+     donor row shape). 4 tests; live :8000 (empty + `turn` probe → 200).
+     **T8b complete** — next: T8c (hooks, schedule, routing/decide, delegate,
+     evaluation, plugins toggle, dreamtime).
 
 3. **D-bucket ports ride the plan's Stage 13** in its own order
    (13.1 schema_evolution → 13.2 db_manager → … → 13.7 voice), each with its own
