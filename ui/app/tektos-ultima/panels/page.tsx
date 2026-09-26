@@ -1444,9 +1444,9 @@ function DrillTab() {
     if (!id) return;
     setDrilled(true);
     const [d, e, st] = await Promise.all([
-      g(`/api/sessions/${encodeURIComponent(id)}`),
-      g(`/api/sessions/${encodeURIComponent(id)}/events?limit=50`),
-      g(`/api/state/${encodeURIComponent(id)}`),
+      g(`/api/sessions/${encodeURIComponent(id)}`, ""),
+      g(`/api/sessions/${encodeURIComponent(id)}/events?limit=50`, ""),
+      g(`/api/state/${encodeURIComponent(id)}`, ""),
     ]);
     setSessionDetail(d);
     setSessionEvents(e);
