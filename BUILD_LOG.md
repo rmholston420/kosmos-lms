@@ -5681,3 +5681,29 @@ MCP, metabolism) in ROI order.
 - **Gate progress (ADR-141):** 13.2a + 13.2b + 13.2c P. Next: 13.2d
   query/DML/transaction/explain, 13.2e export/import/backup/restore/
   analyze/optimize.
+
+## 2026-09-26 — Stage 13.2d: /api/db/* query/DML/transaction/explain (ADR-141)
+- **Routes:** 4 donor POST routes (`/api/db/query`, `/dml`, `/transaction`,
+  `/explain`) + 2 donor bodies (`_DBQueryBody`, `_DBDMLBody`; transaction
+  body is donor's bare `_BaseModel`) at donor paths, donor-verbatim
+  wiring over `registry.tektos_db` (gate-off → 503 honest-degrade,
+  ValueError → 400, other Exception → 500).
+- **DONOR LATENT BUG preserved 1:1 (new):** `POST /api/db/transaction`
+  takes a bare `BaseModel`; pydantic 2.13.4 refuses to instantiate it,
+  so EVERY request 500s before any logic runs. Proven identical against
+  the live donor at :8020 (same detail, same fastapi 0.141.1 / pydantic
+  2.13.4) — the route is broken in both environments. Same class as the
+  13.1c placeholder-SQL bug. Test-locked across 3 payload shapes; the
+  underlying `db_manager.execute_transaction` works (13.2a smoke).
+- **Test:** `tests/kernel/test_adr141_s132d_db_query_routes.py` — 9 tests
+  (query select/non-SELECT 400/missing-table 500; dml insert/no-WHERE
+  400/with-WHERE; transaction latent-bug 500 ×3 payloads; explain
+  select shape/non-SELECT 400). Full suite green (678 passed).
+- **Live-verified on :8000:** 9-probe sweep all green (query rows=2,
+  non-SELECT 400, missing-table 500, dml 1/400/1, tx 500 donor-bug
+  detail, explain plan+estimated_rows+uses_index, explain non-SELECT
+  400).
+- **Docs:** ADR-141 4 rows → P (13.2d); README progress line.
+- **Gate progress (ADR-141):** 13.2a + 13.2b + 13.2c + 13.2d P.
+  13 of 19 /api/db/* routes P (`GET /api/db` via ADR-137). Next:
+  13.2e export/import/backup/restore/optimize (remaining 5).

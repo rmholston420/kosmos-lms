@@ -96,14 +96,14 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `GET /api/db/analyze` | **P (Stage 13.2b, 2026-09-26)** — kernel /api/db/analyze (registry.tektos_db.analyze_all, donor wire verbatim) |
 | `POST /api/db/backup` | Stage 13.2 db_manager |
 | `GET /api/db/backups` | Stage 13.2 db_manager |
-| `POST /api/db/dml` | Stage 13.2 db_manager |
-| `POST /api/db/explain` | Stage 13.2 db_manager |
+| `POST /api/db/dml` | **P (Stage 13.2d, 2026-09-26)** — kernel (registry.tektos_db.execute_dml; `{"rows_affected": n}`; UPDATE/DELETE without WHERE + require_confirmation=True → 400) |
+| `POST /api/db/explain` | **P (Stage 13.2d, 2026-09-26)** — kernel (registry.tektos_db.explain_query; SELECT → `{plan, estimated_rows, uses_index}`; non-SELECT → 400) |
 | `POST /api/db/export` | Stage 13.2 db_manager |
 | `POST /api/db/import` | Stage 13.2 db_manager |
 | `POST /api/db/indexes` | **P (Stage 13.2c, 2026-09-26)** — kernel (registry.tektos_db.create_index; existing index → `{"created": false}` 200 donor if-exists; bad table identifier → 400) |
 | `DELETE /api/db/indexes/{index_name}` | **P (Stage 13.2c, 2026-09-26)** — kernel (registry.tektos_db.drop_index; missing index → `{"dropped": false}` 200) |
 | `POST /api/db/optimize` | Stage 13.2 db_manager |
-| `POST /api/db/query` | Stage 13.2 db_manager |
+| `POST /api/db/query` | **P (Stage 13.2d, 2026-09-26)** — kernel (registry.tektos_db.execute_query; non-SELECT → 400 donor ValueError; malformed/missing table → 500 donor unhandled sqlite3) |
 | `POST /api/db/restore` | Stage 13.2 db_manager |
 | `GET /api/db/schema` | **P (Stage 13.2b, 2026-09-26)** — kernel /api/db/schema (registry.tektos_db.introspect, donor wire verbatim) |
 | `POST /api/db/tables` | **P (Stage 13.2c, 2026-09-26)** — kernel (registry.tektos_db.create_table; bad name → 400; existing → `{"created": false}` 200 donor if-not-exists) |
@@ -114,7 +114,7 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `PATCH /api/db/tables/{table_name}/columns/{old_name}/rename` | **P (Stage 13.2c, 2026-09-26)** — kernel (registry.tektos_db.rename_column; missing source table → 400) |
 | `PATCH /api/db/tables/{table_name}/rename` | **P (Stage 13.2c, 2026-09-26)** — kernel (registry.tektos_db.rename_table; missing source → 400; bad new name → 400) |
 | `GET /api/db/tables/{table_name}/sample` | **P (Stage 13.2b, 2026-09-26)** — kernel (registry.tektos_db.get_table_sample; bad identifier → 404 donor ValueError; missing well-formed table → 500 donor unhandled OperationalError, test-locked + live-confirmed) |
-| `POST /api/db/transaction` | Stage 13.2 db_manager |
+| `POST /api/db/transaction` | **P (Stage 13.2d, 2026-09-26)** — kernel (registry.tektos_db.execute_transaction). **DONOR LATENT BUG preserved 1:1**: donor takes a bare `BaseModel` body; pydantic 2.13 refuses to instantiate it → EVERY request 500s ("BaseModel cannot be instantiated directly"). Proven against live donor :8020 (same detail, fastapi 0.141.1 / pydantic 2.13.4) — route broken in both environments, same class as 13.1c placeholder-SQL bug. Test-locked (3 payload shapes) |
 | `POST /api/hindsight/recall` | ADR-134 honest limit (kernel /api/memory/search-semantic is the read-side referent) |
 | `POST /api/hindsight/reflect` | ADR-134 honest limit |
 | `POST /api/hindsight/retain` | ADR-134 honest limit: kernel hindsight is read-side; retain/recall/reflect actions deferred |

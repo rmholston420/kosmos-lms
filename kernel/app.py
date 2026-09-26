@@ -4939,6 +4939,111 @@ async def db_drop_index(index_name: str):
 
 
 # ---------------------------------------------------------------------------
+# Database-manager query/DML/transaction/explain surface (ADR-141 Stage
+# 13.2d, donor main.py:3365–3374, 3599–3655). Four donor routes over
+# registry.tektos_db (the 13.2a substrate). Wires are donor-verbatim:
+# gate-off → {"error": "Database manager not initialized"} 200,
+# ValueError → 400, other Exception → 500 (donor _HTTPException).
+# Note: the donor's /api/db/transaction uses a BARE _BaseModel and pulls
+# body["statements"] via model_dump() — preserved 1:1.
+# ---------------------------------------------------------------------------
+
+class _DBQueryBody(BaseModel):
+    sql: str
+    params: list | None = None
+    limit: int = 1000
+
+
+class _DBDMLBody(BaseModel):
+    sql: str
+    params: list | None = None
+    require_confirmation: bool = True
+
+
+@app.post("/api/db/query")
+async def db_execute_query(body: _DBQueryBody):
+    """Execute a SELECT query. Returns results as list of dicts (donor main.py:3599)."""
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized"}
+    try:
+        params = tuple(body.params) if body.params else None
+        results = mgr.execute_query(body.sql, params, body.limit)
+        return {"rows": len(results), "data": results}
+    except ValueError as e:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+    except Exception as e:  # donor: unhandled → 500
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+@app.post("/api/db/dml")
+async def db_execute_dml(body: _DBDMLBody):
+    """Execute a DML statement (INSERT/UPDATE/DELETE) (donor main.py:3614)."""
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized"}
+    try:
+        params = tuple(body.params) if body.params else None
+        rowcount = mgr.execute_dml(body.sql, params, body.require_confirmation)
+        return {"rows_affected": rowcount}
+    except ValueError as e:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+    except Exception as e:  # donor: unhandled → 500
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+@app.post("/api/db/transaction")
+async def db_execute_transaction(body: BaseModel):
+    """Execute multiple statements in a single transaction (donor main.py:3629).
+
+    DONOR VERBATIM: the body is a bare BaseModel and the donor pulls
+    body["statements"] via model_dump(). DONOR LATENT BUG (preserved
+    1:1, proven against live :8020 on fastapi 0.141.1 / pydantic
+    2.13.4): pydantic 2.13 refuses to instantiate a bare BaseModel, so
+    EVERY request 500s before any logic runs — the route is broken in
+    both environments (same class as the 13.1c placeholder-SQL bug).
+    """
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized"}
+    try:
+        statements = [
+            (s["sql"], tuple(s.get("params", [])))
+            for s in body.model_dump().get("statements", [])
+        ]
+        results = mgr.execute_transaction(statements)
+        return {"results": results}
+    except Exception as e:  # donor: unhandled → 500
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+@app.post("/api/db/explain")
+async def db_explain_query(body: _DBQueryBody):
+    """Get query plan for a SELECT statement (donor main.py:3644)."""
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized"}
+    try:
+        params = tuple(body.params) if body.params else None
+        plan = mgr.explain_query(body.sql, params)
+        return plan
+    except ValueError as e:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+
+
+# ---------------------------------------------------------------------------
 # Embedder surface (ADR-141 T7, donor main.py:4448/4464) — kernel-native.
 # The donor ran a private EmbedderClient (_embedder_client, :8091) behind
 # two routes. Per the layering rule (governing, 2026-09-25) the embedder
