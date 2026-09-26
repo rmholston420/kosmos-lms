@@ -6099,3 +6099,17 @@ ADR-140 WS, ADR-109 gateway deletion (14.5 exit gate).
   T8c-8c trigger-skill-generation.
 - **Docs:** ADR-141 three rows → P (Stage 13.13) + counts table; README
   ADR-141 row gains Stage 13.13 ✓.
+
+## 2026-09-26 — Stage 13.14: `rag/status` + `self_repair/{history,repair}` reconciliation + ADR-141 count re-derivation (ADR-141)
+- **No new code.** All three routes already live on :8000:
+  - `GET /api/rag/status` — kernel-native since ADR-124 D1 / Stage 11.8 (app.py:6527). Donor wire `{status, stats}` is a SUBSET of the kernel wire (additive `healthy`/`embedder`/`vector` blocks over the :8091 embeddings lane + vector store; `stats` retained; `not_initialized` gate preserved).
+  - `GET /api/self_repair/history` + `POST /api/self_repair/repair` — landed with the self-repair daemon port (ADR-141 R7 `5cb5f46`), donor-verbatim envelopes `{"history":[...]}` (`?limit=` honored) / `{"record":...}` over the ADR-142 engine (8 strategies + 6 healing workflows).
+- **Live-verified :8000:** rag/status → 200 `{status:"initialized", healthy:true, embedder:{available:true, model:qwen3-embedding-0.6b, base_url::8091}, vector:{available}, stats…}`; history → 200 `{"history":[]}`; repair(thermal, sev-1) → 200 real record `repair_d20a40fa` (`strategy_used:"escalate_to_user"` per policy conservative default).
+- **Tests:** no new tests — all three routes already covered (`test_stage_11_8_adr_124_rag_status.py`, `test_adr141_r7_self_repair_routes.py` history + repair sections).
+- **ADR-139 split CLOSED** (history + trigger are now kernel-native; ADR-142 R8 had already re-pointed the ops tab).
+- **ADR-141 corrections this slice:**
+  - 3 rows promoted to P (rag/status, self_repair/history, self_repair/repair).
+  - Disposition counts re-derived directly from the route table → **129 P / 23 D / 2 T = 154** (152 HTTP + 2 WS). The 13.13 header's "125/25/2=152" was a miscount.
+  - D composition (23): hindsight ×3 (ADR-134 honest limit), skills ×15 (ADR-108 D9 ratified), inference/metrics ×1 (partial), trigger-skill-gen ×1 (T8c-8c), plugins-toggle ×1 (T8c-7), WS ×2 (ADR-140 + Stage 13 sandbox).
+  - **Session-claim correction:** "mcp ×2 DONE (committed before 13.8)" is FALSE — no MCP route code, test, or commit exists anywhere; the kernel's vendored `adapters/sandbox/tektos/vendor/tool_registry_donor.py` (136 LOC) is a partial vendor that omits `MCPClient` (donor `tools/registry.py:319`, 553-LOC file). The 2 MCP rows (`POST /api/mcp/connect` + `GET /api/mcp/status`) are the ONLY real unported surface remaining.
+- **Next: Stage 13.15 = MCP ×2 port** (donor `MCPClient` → kernel per the layering rule — generic external-tool-integration substrate, with Tektos-specific policy at the composition root), then ADR-140 WS decision + ADR-109 gateway deletion.
