@@ -150,8 +150,8 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `POST /api/skills/{skill_id}/improve/from-execution` | ADR-108 D9 |
 | `POST /api/skills/{skill_id}/prune` | ADR-108 D9 |
 | `POST /api/skills/{skill_id}/toggle` | ADR-108 D9 |
-| `GET /api/thermal/health` | Stage 13 thermal subsystem; kernel has /api/thermal/status (ADR-121) — health/reset action surface rides with it |
-| `POST /api/thermal/reset` | Stage 13 thermal subsystem |
+| `GET /api/thermal/health` | **P (Stage 13.6, 2026-09-26)** — kernel route over the ADR-121 ThermalWatchdog (the kernel's thermal referent; same class as the donor's ThermalMonitor). Donor `get_health_score()` bands (monitor.py:174) verbatim as `watchdog.get_health_score()` — pure temp→score map (None/0 → 1.0, <60→1.0 … ≥85→0.1). Gate-off → donor-verbatim `{"error": "Thermal monitor not initialized"}` at 200 (13.2e convention). Live-verified: 73°C → 0.7. |
+| `POST /api/thermal/reset` | **P (Stage 13.6, 2026-09-26)** — kernel route; donor `reset()` (monitor.py:218, `regulator.reset()` → optimal) kernel-side equivalent: clear the SustainedCooldownRule at/above window + restore NOMINAL_POWER_CAP_W via `apply_cap` when cooldown is active. `watchdog.reset()` then returns the `:8020`-shaped `snapshot()`. Gate-off → same donor-verbatim error. Live-verified: `{"status":"reset", snapshot with real gpu temp}`. |
 | `GET /api/toolRouter/status` | kernel tool_router router (executor/api.py) — status surface unverified |
 | `POST /api/vision/analyze` | Stage 13.7 (vision :8094) |
 | `POST /api/vision/analyze-url` | Stage 13.7 (vision :8094) |

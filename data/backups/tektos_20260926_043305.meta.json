@@ -1,0 +1,9 @@
+{
+  "path": "/home/rmholston/dev/kosmos-lms/data/backups/tektos_20260926_043305.db",
+  "timestamp": 1790411585.9921868,
+  "size_bytes": 12288,
+  "source_db": "/home/rmholston/dev/kosmos-lms/data/tektos.db",
+  "table_count": 1,
+  "row_count": 1,
+  "checksum": "1593b34a867e0ca7"
+}

@@ -4082,6 +4082,30 @@ async def thermal_status() -> dict[str, Any]:
     }
 
 
+@app.get("/api/thermal/health")
+async def thermal_health() -> dict[str, Any]:
+    """Thermal health score 0.0–1.0 (donor main.py:3122).
+
+    ADR-141 Stage 13.6: the donor's ``ThermalMonitor.get_health_score()``
+    bands, served from the ADR-121 watchdog state. Gate-off returns the
+    donor-verbatim error envelope at 200 (13.2e convention).
+    """
+    watchdog = registry.thermal_watchdog
+    if watchdog is None:
+        return {"error": "Thermal monitor not initialized"}
+    return {"health_score": watchdog.get_health_score()}
+
+
+@app.post("/api/thermal/reset")
+async def thermal_reset() -> dict[str, Any]:
+    """Reset thermal regulator to optimal settings (donor main.py:3130)."""
+    watchdog = registry.thermal_watchdog
+    if watchdog is None:
+        return {"error": "Thermal monitor not initialized"}
+    watchdog.reset()
+    return {"status": "reset", "snapshot": watchdog.snapshot()}
+
+
 # ---------------------------------------------------------------------------
 # /api/telemetry — ADR-138 (v2 Stage 11.22, telemetry family)
 #

@@ -383,3 +383,47 @@ class ThermalWatchdog:
             "regulation_count": s.regulation_count,
             "history": list(s.history),
         }
+
+    # -- ADR-141 Stage 13.6 (donor ThermalMonitor surface) -------------------
+
+    def get_health_score(self) -> float:
+        """GPU health score for HealthMonitor integration (donor monitor.py:174).
+
+        Returns 1.0 (healthy) to 0.0 (critical) based on GPU temperature.
+        Donor bands verbatim; kernel None (no sample yet) maps to the
+        donor's no-data case (assume healthy).
+        """
+        temp = self._state.gpu_temp
+        if temp is None or temp == 0.0:
+            return 1.0  # no data yet — assume healthy
+
+        if temp < 60.0:
+            return 1.0
+        elif temp < 70.0:
+            return 0.9
+        elif temp < 72.0:
+            return 0.8
+        elif temp < 75.0:
+            return 0.7
+        elif temp < 80.0:
+            return 0.5
+        elif temp < 85.0:
+            return 0.3
+        else:
+            return 0.1
+
+    def reset(self) -> None:
+        """Reset regulator to optimal settings (donor monitor.py:218).
+
+        Kernel-side equivalent of the donor's ``regulator.reset()``: clear
+        the sustained-cooldown rule's at/above window and restore the
+        nominal power cap if cooldown is active.
+        """
+        self.rule.reset()
+        if self._state.cooldown_active:
+            self._state.cooldown_active = False
+            self._state.power_limit = NOMINAL_POWER_CAP_W
+            self._state.action = "relax"
+            self._state.reason = "reset to optimal settings"
+            self._apply_cap(NOMINAL_POWER_CAP_W)
+        logger.info("thermal watchdog: reset to optimal settings")

@@ -5837,3 +5837,33 @@ MCP, metabolism) in ROI order.
   D-routes: context, mcp, metabolism, rag ×2, repoMap, thermal ×2,
   vision ×3, voice ×3, `/health` ×3, ADR-140 WS, ADR-109 gateway
   deletion.
+
+## 2026-09-26 — Stage 13.6: thermal health + reset routes (ADR-141)
+- **Routes:** `GET /api/thermal/health` + `POST /api/thermal/reset`
+  (donor main.py:3122/3130), over the ADR-121 ThermalWatchdog — the
+  kernel's thermal referent (`registry.thermal_watchdog`), the same
+  class as the donor's `ThermalMonitor` (already serves
+  /api/thermal/status since Stage 11.5).
+- **Watchdog gains:** `get_health_score()` — donor monitor.py:174 temp
+  bands VERBATIM (None/0 → 1.0, <60→1.0, <70→0.9, <72→0.8, <75→0.7,
+  <80→0.5, <85→0.3, else 0.1). `reset()` — donor monitor.py:218
+  (`regulator.reset()` → optimal) as its kernel-side equivalent: clear
+  the SustainedCooldownRule at/above window; when cooldown is active,
+  restore the 400W nominal cap via the watchdog's own `apply_cap`
+  seam (so tests inject a recorder).
+- **Gate-off:** donor-verbatim `{"error": "Thermal monitor not
+  initialized"}` at 200 (13.2e convention).
+- **Tests:** `tests/kernel/test_adr141_s136_thermal_health_reset.py` —
+  5 tests (live health envelope, live reset envelope, band unit-test
+  covering all 9 donor thresholds, reset-clears-cooldown unit,
+  reset-noop-outside-cooldown unit — cap recorder proves no spurious
+  nvidia-smi write). Full suite 799 passed.
+- **Live-verified on :8000:** health `{health_score: 0.7}` (GPU at
+  73°C), reset `{"status":"reset"}` + real snapshot (gpu temp 73.0);
+  regression probes clean (nervous active, observability
+  telemetry+auto_recovery true, axioms 29, thermal/status envelope).
+- **Gate progress (ADR-141):** thermal ×3 all P. Remaining Stage 13
+  D-routes: context ×1 (+metabolism ×3), mcp ×2, metabolism ×3, rag ×2
+  (rag/status already P via ADR-124; ragRetriever open), repoMap ×1,
+  vision ×3, voice ×3, `/health` ×3, ADR-140 WS, ADR-109 gateway
+  deletion.
