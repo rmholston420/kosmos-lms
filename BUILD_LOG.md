@@ -5167,3 +5167,24 @@ MCP, metabolism) in ROI order.
 - **Gate progress (ADR-141):** T1–T7 ✓, T8a ✓, **T8b-1 ✓**. Next: T8b-2
   (keys), T8b-3 (llm/probe), T8b-4 (search).
 - **Stop-condition status:** met — T8b-1 complete; next T8b-2.
+
+## 2026-09-26 02:22 EDT — ADR-141 T8b-2 complete: /api/keys kernel-native
+- **What:** Donor `main.py:5328` `GET /api/keys` → kernel-native
+  `tektos_list_api_keys` in `kernel/app.py`.
+- **Design (layering rule):** donor listed its own TEKTOS_* secret env vars;
+  kernel lists the KOSMOS_* secret set it actually reads
+  (KOSMOS_LLM_API_KEY, KOSMOS_LLM_FALLBACK_API_KEY, KOSMOS_VLM_API_KEY,
+  KOSMOS_QDRANT_API_KEY, KOSMOS_DOZERDB_PASSWORD) + the shared DATABASE_URL /
+  OPENAI_API_KEY the donor surfaced. Donor wire preserved:
+  `{keys: [{name, key, value, configured}]}`; values masked (`••••••••` /
+  `not configured`), never plaintext.
+- **Live verify (:8000):** 200 — KOSMOS_DOZERDB_PASSWORD configured → masked;
+  all others `not configured`. No plaintext in response.
+- **Tests:** `tests/kernel/test_adr141_t8b2_keys_surface.py` — 1 test
+  (shape + masking + configured/unconfigured states). Full `tests/kernel/`
+  587 passed.
+- **Docs:** ADR-141 row → P (T8b-2), counts P 65→66 / T 17→16, T8 section
+  T8b-2 line; ADR README → T8b-2 ✓.
+- **Gate progress (ADR-141):** T1–T7 ✓, T8a ✓, T8b-1 ✓, **T8b-2 ✓**. Next:
+  T8b-3 (llm/probe), T8b-4 (search).
+- **Stop-condition status:** met — T8b-2 complete; next T8b-3.

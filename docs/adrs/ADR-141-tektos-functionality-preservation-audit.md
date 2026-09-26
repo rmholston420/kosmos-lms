@@ -33,9 +33,9 @@ an equivalent kernel mechanism.
 
 | Disposition | Count | Meaning |
 |---|---|---|
-| **P — Preserved** | 65 (35 + T6 2 + T7 2 + T8a 24 + T8b-1 2, 2026-09-26) | kernel/plugin referent exists and is live |
+| **P — Preserved** | 66 (35 + T6 2 + T7 2 + T8a 24 + T8b-1 2 + T8b-2 1, 2026-09-26) | kernel/plugin referent exists and is live |
 | **D — Deferred** | 70 + 2 WS | recorded path; functionality lost until the named port lands |
-| **T — To-port** | 17 | no referent yet; each becomes a work item before deletion (T8 scope; orchestrator ×2 folded into T8c) |
+| **T — To-port** | 16 | no referent yet; each becomes a work item before deletion (T8 scope; orchestrator ×2 folded into T8c) |
 
 The deferral buckets are **honest temporary losses**, not permanent omissions:
 every D route names the stage or ADR that carries its functionality. The Stage 11
@@ -181,7 +181,7 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `GET /api/evaluation/status` | no referent — evaluation harness status |
 | `GET /api/hooks` | no referent — hooks list |
 | `POST /api/hooks/fire` | no referent — hooks fire |
-| `GET /api/keys` | no referent — keys list |
+| `GET /api/keys` | **P (2026-09-26, T8b-2)** — kernel-native: `tektos_list_api_keys` (app.py); donor wire `{keys: [{name,key,value,configured}]}` — KOSMOS_* secret set + DATABASE_URL/OPENAI_API_KEY, values masked (`••••••••`/`not configured`); test `tests/kernel/test_adr141_t8b2_keys_surface.py` |
 | `POST /api/llm/probe` | no referent — LLM probe action |
 | `POST /api/memory/decay` | **P (2026-09-26, T6)** — kernel-native, donor shape |
 | `DELETE /api/memory/{tier}/{entry_id}` | **P (2026-09-26, T6)** — kernel-native, donor shape |
@@ -344,6 +344,11 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
      live-mutated (restart required), unconfigured env keys are written back
      for the next boot. 6 tests, all live against :8000. Full `tests/kernel/`
      586 passed.
+     **T8b-2 (2026-09-26)** — `GET /api/keys` kernel-native (donor
+     main.py:5328): donor wire `{keys:[{name,key,value,configured}]}` over the
+     kernel's actual KOSMOS_* secret env set + DATABASE_URL/OPENAI_API_KEY;
+     values masked, never plaintext. 1 test; live :8000 (DOZERDB configured →
+     masked, rest `not configured`).
 
 3. **D-bucket ports ride the plan's Stage 13** in its own order
    (13.1 schema_evolution → 13.2 db_manager → … → 13.7 voice), each with its own

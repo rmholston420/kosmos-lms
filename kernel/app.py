@@ -4363,6 +4363,37 @@ class _T8BUpdateConfigBody(BaseModel):
     value: Any
 
 
+# Donor listed its own TEKTOS_* secret env vars (main.py:5328). Kernel
+# equivalent: the KOSMOS_* secret set the kernel actually reads, plus the
+# shared DB/OPENAI vars the donor surfaced. Values never leave as plaintext.
+_T8B_SECRET_VARS = (
+    "KOSMOS_LLM_API_KEY",
+    "KOSMOS_LLM_FALLBACK_API_KEY",
+    "KOSMOS_VLM_API_KEY",
+    "KOSMOS_QDRANT_API_KEY",
+    "KOSMOS_DOZERDB_PASSWORD",
+    "DATABASE_URL",
+    "OPENAI_API_KEY",
+)
+
+
+@app.get("/api/keys")
+async def tektos_list_api_keys() -> dict[str, Any]:
+    """List configured API keys, values masked (donor main.py:5328)."""
+    keys = []
+    for var in _T8B_SECRET_VARS:
+        value = os.environ.get(var)
+        keys.append(
+            {
+                "name": var.replace("KOSMOS_", "").replace("_", " ").title(),
+                "key": var,
+                "value": "••••••••" if value else "not configured",
+                "configured": bool(value),
+            }
+        )
+    return {"keys": keys}
+
+
 @app.patch("/api/config")
 async def tektos_config_patch(body: _T8BUpdateConfigBody) -> dict[str, Any]:
     """Update a configuration value (donor main.py:5232).
