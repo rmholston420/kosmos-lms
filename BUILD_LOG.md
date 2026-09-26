@@ -5436,3 +5436,34 @@ MCP, metabolism) in ROI order.
   Deferred (T8c-8c); T8 section progress note; README progress line.
 - **Gate progress (ADR-141):** T1–T7 ✓, T8a ✓, T8b ✓, T8c-1…T8c-7 ✓,
   T8c-8 3/4 ✓. Remaining T8c: schema, T8c-8c (skill-store follow-up).
+
+## 2026-09-26 08:10 EDT — ADR-141 T8c-9 complete: GET /api/schema kernel-native
+
+- **Slice:** ADR-141 T8c-9 (schema introspection)
+- **What changed:** Donor `SchemaEvolutionEngine` (migrations/
+  schema_evolution.py, 758 LOC) ported VERBATIM → `kernel/schema_evolution.py`.
+  Layering rule: generic SQLite schema-introspection infra → kernel-level (not
+  Tektos policy). `escape_sql_identifier` helper inlined from donor
+  `db_utils.py` (the engine's only external dep). `registry.
+  tektos_schema_evolution` booted over the T6 memory store (same
+  KOSMOS_TEKTOS_MEMORY gate, same db). `GET /api/schema` at donor path, donor
+  wire verbatim (main.py:4747): composite referent — schema half → the engine
+  (get_schema/get_evolution_history/introspect/get_current_version),
+  self_improvement half → `registry.tektos_learning` (ADR-143 T3, same method
+  names; honest zero-shape when env-gated off). Donor degraded shape
+  `{"error": "Schema evolution engine not initialized"}` @200 when gate off.
+- **Documented DB divergence:** donor introspected its event-store SQLite
+  `data/tektos.db` (retired with main.py, ADR-137); the kernel's only
+  in-process SQLite file is the T6 memory store (`data/memory.db`).
+- **Scope:** the 3 action routes (patterns/propose/apply) stay D (Stage
+  13.1) — this engine is their substrate (no action-route code ported).
+- **Verified:** 5 route tests (module-scoped real boot, gate on, tmp db:
+  engine wired over T6 store, donor wire keys, real T6 tables introspected,
+  self_improvement half incl. gated-off zero shape, degraded shape). Live
+  :8000 — 5 tables introspected (working/long_term/procedural/transfer_log +
+  _schema_evolution_log), learning metrics populated (10 experiences, 90
+  tasks, velocity 0.778, best_model "test-model").
+- **Docs:** ADR-141 schema row → P; T8 section progress note; README progress
+  line.
+- **Gate progress (ADR-141):** T1–T7 ✓, T8a ✓, T8b ✓, T8c-1…T8c-9 ✓.
+  Remaining T8c: T8c-8c (skill-store follow-up — deferred).

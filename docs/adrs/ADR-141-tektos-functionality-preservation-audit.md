@@ -194,7 +194,7 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `POST /api/plugins/{name}/toggle` | **Deferred (2026-09-26, T8c-7)** — no honest kernel referent *today*. The donor toggled 4 swappable search-provider plugins (`tektos-ultima/plugins/{searxng,duckduckgo,farfalle,tavily}_plugin/`). The kernel has no runtime loadable-plugin loader — its `plugins/` packages are fixed composition-root subsystems (ADR-127) and its only wired search adapter is `adapters/search/searxng`. ADR-127's `GET /api/plugins` already reports the functional-plugin registry as "pending (follow-up ADR)". T8c-7 considered (a) a `registry.plugin_enabled` toggle flag and (b) a 4-subsystem manifest — both rejected: (a) is read by nothing (no-op = fabricated functionality); (b) duplicates ADR-127's committed `GET` and would report fixed subsystems as togglable. No functionality lost: kernel search works via the searxng adapter; only runtime-toggle-across-N-providers is deferred until the functional-registry follow-up ADR lands (out of ADR-141 gate scope — re-opening ADR-127's decision here would be scope creep). |
 | `GET /api/routing/decide` | **P (2026-09-26, T8c-2)** — kernel-native: donor `src/tektos/routing.py` (396 LOC, generic multi-model routing) verbatim → `kernel/routing.py` substrate + `registry.model_router` boot slot (kernel primary-lane env, donor BALANCED/general profile) + `_decide_routing` thin surface (donor wire `{task, category, recommended_model, confidence, fallback_models, estimated_cost}` + honest `reason`). Documented divergence: donor route ALWAYS failed (wrong route() kwargs + .get() on dataclass → stuck 0.5-confidence fallback); kernel calls route() correctly (length→complexity 1-5, unknown category→MISC). 7 tests; live :8000 → `Selected qwen3.8-27b-code for refactoring (tier=fast)` |
 | `GET /api/schedule` | **P (2026-09-26, T8c-5)** — kernel-native: donor main.py:5266. Donor defect fixed (T8c-2 class): donor built a FRESH `BackupScheduler()` per request (in-memory `backup_records` starts `[]`) → route ALWAYS returned `[]`. Kernel referent scans the REAL on-disk backup dir (`KOSMOS_BACKUP_DIR`, default `~/.tektos/backups`) for donor's own `{postgresql,redis,sqlite,neo4j}_{ts}.{ext}` artifacts → donor wire `[{id,name,type,status,last_run,next_run,interval,enabled}]`, newest first; `[]` degrade on failure (donor shape). 4 tests; live :8000 → 106 real backups |
-| `GET /api/schema` | no referent — schema read (kernel has /api/kernel/schema, different surface) |
+| `GET /api/schema` | **P (2026-09-26, T8c-9)** — kernel-native (app.py, after dreamtime block). Composite referent, donor wire verbatim (main.py:4747): schema half → `registry.tektos_schema_evolution` (donor `SchemaEvolutionEngine` verbatim port → `kernel/schema_evolution.py`, 758 LOC; `escape_sql_identifier` helper inlined from donor `db_utils.py`); self_improvement half → `registry.tektos_learning` (ADR-143 T3, same method names). **DB divergence (documented):** donor introspected its event-store SQLite `data/tektos.db` (retired with main.py, ADR-137); the kernel runs the engine over the T6 memory store (`data/memory.db`, same `KOSMOS_TEKTOS_MEMORY` gate) — the kernel's only in-process SQLite file. Env-gated: returns the donor's own fail shape `{"error": "Schema evolution engine not initialized"}` (200) when the gate is off. The 3 action routes (patterns/propose/apply) stay D (Stage 13.1) — this engine is their substrate. Live-verified: 5 tables introspected, learning metrics populated. |
 | `GET /api/search` | **P (2026-09-26, T8b-4)** — kernel-native: `tektos_search_sessions` (app.py) + `search_events_global` (kernel/tektos_replay.py): donor wire `{sessions: [{id, title, tag}], events: [{session_id, seq, type, payload, created_at}]}` — sessions via the T2c session port, events via cross-session substring search over the replay substrate (donor FTS5-fallback semantics); 4 tests; live :8000 (empty + `turn` probe → 200) |
 | `POST /api/self_improvement/enqueue` | **P (2026-09-26, T8a)** — kernel-native (ADR-143 S5, app.py:5033; test_adr143_s5_self_improve_routes.py) |
 | `GET /api/self_improvement/experiences` | **P (2026-09-26, T8a)** — kernel-native (ADR-143 S5, app.py:5007) |
@@ -457,6 +457,26 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
      T8c-8c (trigger-skill-generation) deferred — needs a skill-store
      referent (donor SkillManager 830 LOC + registry 777 LOC; kernel has
      none). Remaining T8c: schema, T8c-8c (1 row).
+     **T8c-9 (2026-09-26)** — schema: **P**. Donor `SchemaEvolutionEngine`
+     (migrations/schema_evolution.py, 758 LOC) ported VERBATIM to
+     `kernel/schema_evolution.py` — layering rule: it's generic SQLite
+     schema-introspection infra (not Tektos-policy-specific), so kernel-level;
+     `escape_sql_identifier` helper inlined from donor `db_utils.py` (its only
+     external dep). `registry.tektos_schema_evolution` booted over the T6
+     memory store (same KOSMOS_TEKTOS_MEMORY gate, same db). Documented DB
+     divergence: donor introspected its event-store SQLite `data/tektos.db`
+     (retired with main.py, ADR-137) — the kernel's only in-process SQLite
+     file is the T6 store. `GET /api/schema` at donor path, donor wire
+     verbatim (main.py:4747): composite referent — schema half → the engine
+     (get_schema/get_evolution_history/introspect/get_current_version),
+     self_improvement half → `registry.tektos_learning` (ADR-143 T3, same
+     method names; zero-shape when env-gated off). Donor degraded shape
+     `{"error": "Schema evolution engine not initialized"}` @200 when the gate
+     is off. The 3 action routes (patterns/propose/apply) stay D (Stage 13.1) —
+     this engine is their substrate. 5 route tests. Live :8000: 5 tables
+     introspected (working/long_term/procedural/transfer_log +
+     _schema_evolution_log), learning metrics populated (10 experiences,
+     velocity 0.778). Remaining T8c: T8c-8c (1 row).
 
 3. **D-bucket ports ride the plan's Stage 13** in its own order
    (13.1 schema_evolution → 13.2 db_manager → … → 13.7 voice), each with its own

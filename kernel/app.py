@@ -337,6 +337,14 @@ class _BootRegistry:
         # consumers. The engine itself is in-memory (dream history,
         # state) — only insights persist, back into this store.
         self.tektos_dreamtime: Any = None
+        # ADR-141 T8c-9: donor schema-evolution engine (verbatim port →
+        # kernel/schema_evolution.py). Donor introspected its event-store
+        # SQLite (data/tektos.db, retired ADR-137); the kernel runs it
+        # over the T6 memory store (same gate, same db) — the kernel's
+        # only in-process SQLite file. Read-introspection referent for
+        # GET /api/schema; the propose/apply action routes stay D
+        # (Stage 13.1) with this engine as their substrate.
+        self.tektos_schema_evolution: Any = None
         # ADR-143 T3: kernel learning substrate (donor
         # ``SelfImprovementAdapter`` — experience → evaluation →
         # meta-learning → benchmark loop, JSONL ledger). Boots
@@ -1709,6 +1717,29 @@ async def lifespan(app: FastAPI):
         _log.info("kosmos.tektos_dreamtime: wired (ADR-141 T8c-8b)")
         return engine
 
+    @_try("tektos_schema_evolution")
+    def _boot_tektos_schema_evolution():
+        import logging as _kl
+
+        from kernel.schema_evolution import SchemaEvolutionEngine
+
+        _log = _kl.getLogger(__name__)
+        store = registry.tektos_memory_persistence
+        if store is None:
+            # Donor introspected its event-store SQLite (data/tektos.db),
+            # retired with main.py (ADR-137). The kernel's only in-process
+            # SQLite file is the T6 memory store — same gate, same db.
+            _log.info(
+                "kosmos.tektos_schema_evolution: skipped (memory persistence off)"
+            )
+            return None
+        engine = SchemaEvolutionEngine(str(store.db_path))
+        _log.info(
+            "kosmos.tektos_schema_evolution: wired over %s (ADR-141 T8c-9)",
+            store.db_path,
+        )
+        return engine
+
     registry.tektos_reflection = _boot_tektos_reflection
     registry.tektos_synthesis = _boot_tektos_synthesis
     registry.tektos_experience = _boot_tektos_experience
@@ -1720,6 +1751,7 @@ async def lifespan(app: FastAPI):
     registry.tektos_self_repair = _boot_tektos_self_repair
     registry.tektos_memory_persistence = _boot_tektos_memory_persistence
     registry.tektos_dreamtime = _boot_tektos_dreamtime
+    registry.tektos_schema_evolution = _boot_tektos_schema_evolution
     registry.tektos_orchestrator = _boot_tektos_orchestrator
 
     # --- Gnosis boot seeder (ADR-064) ----------------------------------------
@@ -4380,6 +4412,60 @@ async def dreamtime_run(body: _DreamtimeRunBody = _DreamtimeRunBody()) -> dict[s
         "novelty_score": result.novelty_score,
         "insights": result.insights,
         "timestamp": result.timestamp,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Schema introspection (ADR-141 T8c-9) — donor path + wire
+# (tektos-ultima-v1 main.py:4747). Composite referent:
+#   schema half → registry.tektos_schema_evolution (donor
+#     SchemaEvolutionEngine verbatim → kernel/schema_evolution.py,
+#     booted over the T6 memory-store SQLite — the donor's event-store
+#     data/tektos.db is retired, ADR-137).
+#   self_improvement half → registry.tektos_learning (ADR-143 T3, donor
+#     SelfImprovementEngine's get_experience/get_learning_metrics, same
+#     method names + JSONL ledger).
+# The 3 action routes (patterns/propose/apply, audit Stage 13.1) stay D —
+# this engine is their substrate.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/schema")
+async def schema_info() -> dict[str, Any]:
+    """Expose current schema version, history, and self-model for agent introspection.
+
+    Donor wire verbatim (main.py:4755-4770). The introspection half reads
+    the kernel's SQLite store; the self_improvement half reads the
+    learning substrate — both kernel-native, no gateway.
+    """
+    engine = registry.tektos_schema_evolution
+    if engine is None:
+        # Donor's own 404-adjacent shape (main.py:4751) — engine is
+        # env-gated with the T6 memory store (KOSMOS_TEKTOS_MEMORY).
+        return {"error": "Schema evolution engine not initialized"}
+
+    schema = engine.get_schema()
+    history = engine.get_evolution_history()
+    snapshot = engine.introspect()
+
+    # Get self-improvement stats (donor: self_improvement.<...> →
+    # kernel registry.tektos_learning, same method names).
+    learning = registry.tektos_learning
+    experiences = learning.get_experience() if learning is not None else []
+    metrics = learning.get_learning_metrics() if learning is not None else {}
+
+    return {
+        "version": engine.get_current_version(),
+        "schema": schema,
+        "evolution_history": history,
+        "introspection": snapshot,
+        "self_improvement": {
+            "experiences_tracked": len(experiences),
+            "total_tasks": metrics.get("total_tasks", 0),
+            "total_improvements": metrics.get("total_improvements", 0),
+            "learning_velocity": metrics.get("learning_velocity", 0.0),
+            "best_model": metrics.get("best_model_for_coding"),
+        },
     }
 
 
