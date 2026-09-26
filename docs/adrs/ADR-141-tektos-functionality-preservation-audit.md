@@ -33,11 +33,11 @@ an equivalent kernel mechanism.
 
 | Disposition | Count | Meaning |
 |---|---|---|
-| **P — Preserved** | **131** (audit baseline 35 + T-bucket 47 reconciled/promoted + Stage 13.1–13.15 ports — reconciled live against the route table, 2026-09-26) | kernel/plugin referent exists and is live |
-| **D — Deferred** | **23** = 21 HTTP + 2 WS (all documented honest deferrals: hindsight ×3 ADR-134 honest-limit, skills ×15 ADR-108 ratified, inference/metrics ×1 partial, trigger-skill-gen ×1 T8c-8c, plugins-toggle ×1 T8c-7, WS ×2 [ADR-140 + Stage 13 sandbox]) | recorded path; functionality lost until the named port lands |
+| **P — Preserved** | **148** (audit baseline 35 + T-bucket 47 reconciled/promoted + Stage 13.1–13.15 ports + `/ws/{session_id}` resolved via ADR-140 Executed (Stage 14.2) + Stage 14.6 skills ×16 — reconciled live against the route table, 2026-09-26) | kernel/plugin referent exists and is live |
+| **D — Deferred** | **6** = 5 HTTP + 1 WS (all documented honest deferrals: hindsight ×3 ADR-134 honest-limit, inference/metrics ×1 partial, plugins-toggle ×1 T8c-7, `/ws/pty` ×1 [Stage 13 sandbox port — documented deferral]) — skills ×15 + trigger-skill-gen ×1 discharged in Stage 14.6; `/ws/{session_id}` resolved in Stage 14.2 (both were still counted D in the 13.15-era header — corrected here) | recorded path; functionality lost until the named port lands |
 | **T — To-port** | **0** (the former `POST /api/mcp/connect` + `GET /api/mcp/status` rows were ported in Stage 13.15, 2026-09-26 — `kernel/mcp_client.py` + wire-verbatim routes) | (empty) |
 
-Count reconciliation note (2026-09-26): the 13.13 header reported "125 P / 25 D / 2 T = 152" — that total was a miscount (the route table has **154** rows). Re-derived directly from the table: 129 P / 23 D / 2 T = 154. Also corrected on that pass: the session claim that "mcp ×2 was DONE / committed before 13.8" was **false** — no MCP route code, test, or commit existed; the 2 MCP rows were the only T-bucket work items. **Stage 13.15 (2026-09-26) ported them** (`kernel/mcp_client.py` byte-verbatim `MCPClient` + wire-verbatim routes + boot wiring + 4/4 live tests): final disposition **131 P / 23 D / 0 T = 154**.
+Count reconciliation note (2026-09-26): the 13.13 header reported "125 P / 25 D / 2 T = 152" — that total was a miscount (the route table has **154** rows). Re-derived directly from the table: 129 P / 23 D / 2 T = 154. Also corrected on that pass: the session claim that "mcp ×2 was DONE / committed before 13.8" was **false** — no MCP route code, test, or commit existed; the 2 MCP rows were the only T-bucket work items. **Stage 13.15 (2026-09-26) ported them** (`kernel/mcp_client.py` byte-verbatim `MCPClient` + wire-verbatim routes + boot wiring + 4/4 live tests): disposition **131 P / 23 D / 0 T = 154**. **Stage 14.6 (2026-09-26) discharged the skills deferral** — skills ×15 + trigger-skill-gen ×1 flipped D→P (`kernel/skills/` byte-verbatim + 16 wire-verbatim routes + ADR-125 `/api/skills/stats` extended); `/ws/{session_id}` also counted P (ADR-140 Executed, Stage 14.2). Final disposition **148 P / 6 D / 0 T = 154** (remaining D: hindsight ×3 ADR-134, inference/metrics ×1, plugins-toggle ×1 T8c-7, `/ws/pty` ×1).
 
 The deferral buckets are **honest temporary losses**, not permanent omissions:
 every D route names the stage or ADR that carries its functionality. The Stage 11
@@ -137,21 +137,21 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `POST /api/self_repair/health` | **P (Stage 13.13, 2026-09-26)** — landed with the self-repair daemon port (ADR-141 R7, `5cb5f46`): donor main.py:3086-3106 verbatim shape — all 10 scores optional (default 1.0 = healthy), returns `HealthSnapshot.to_dict()`; engine None → donor-verbatim `{"error": "Self-repair engine not initialized"}` at 200. The daemon that serves it (R1–R6, ADR-142 substrate → `kernel/reliability/`, policy → `plugins/tektos/self_repair/`) is ported and running (boots unconditionally per R6). Live-verified :8000 → 200 real snapshot: `overall_score:1.0 status:"healthy"` with all 5 components + repair counters. 5 tests (`tests/kernel/test_adr141_r7_self_repair_routes.py`, `/health` section). |
 | `GET /api/self_repair/history` | **P (Stage 13.14, 2026-09-26)** — landed with the self-repair daemon port (ADR-141 R7, `5cb5f46`); live-reconciled here: donor wire verbatim (`{"history": [...]}`, `?limit=` honored, engine None → donor-verbatim error at 200) over the ported ADR-142 engine. Live-verified :8000 → 200 `{"history":[]}` (fresh engine, no repairs yet). Tests: `tests/kernel/test_adr141_r7_self_repair_routes.py` (history section). ADR-139 split CLOSED. |
 | `POST /api/self_repair/repair` | **P (Stage 13.14, 2026-09-26)** — landed with the self-repair daemon port (ADR-141 R7, `5cb5f46`); live-reconciled here: donor wire verbatim (`{"record": ...}` from `repair_threat(category, severity, ctx)`, engine None → donor-verbatim error at 200, engine exception → 500) over the ported ADR-142 engine with its 8 strategies + 6 healing workflows. Live-verified :8000 → 200 real repair record (benign `thermal`/severity-1 → `strategy_used:"escalate_to_user"` per the policy's conservative default). Tests: `tests/kernel/test_adr141_r7_self_repair_routes.py` (repair section). ADR-139 "trigger retired" superseded (full port). |
-| `GET /api/skills` | ADR-108 D9: donor skills manager (830 LOC) ratified deferral |
-| `POST /api/skills` | ADR-108 D9 |
-| `POST /api/skills/dedup` | ADR-108 D9 |
-| `GET /api/skills/dedup/groups` | ADR-108 D9 |
-| `POST /api/skills/maintenance` | ADR-108 D9 |
-| `GET /api/skills/search` | ADR-108 D9 |
-| `POST /api/skills/select` | ADR-108 D9 |
-| `DELETE /api/skills/{skill_id}` | ADR-108 D9 |
-| `GET /api/skills/{skill_id}` | ADR-108 D9 |
-| `PUT /api/skills/{skill_id}` | ADR-108 D9 |
-| `POST /api/skills/{skill_id}/execute` | ADR-108 D9 |
-| `POST /api/skills/{skill_id}/improve` | ADR-108 D9 |
-| `POST /api/skills/{skill_id}/improve/from-execution` | ADR-108 D9 |
-| `POST /api/skills/{skill_id}/prune` | ADR-108 D9 |
-| `POST /api/skills/{skill_id}/toggle` | ADR-108 D9 |
+| `GET /api/skills` | **P (Stage 14.6, 2026-09-26)** — donor skills substrate → kernel: `kernel/skills/` (registry 777 + manager 830 + executor 509 LOC, byte-verbatim per the layering rule — generic reusable-procedure machinery, same class as `db_manager`/`metabolism`/`rag_retriever`). `registry.tektos_skills` (SkillManager) + `registry.tektos_skill_executor` booted in the composition root; the three donor seams fail-open: tool registry → `registry.tektos_tools` (post-lifespan `set_tool_registry`, donor main.py:293 pattern), memory → injected `DictMemoryStore` adapter (T6 3-tier store), db → `data/tektos_skills.db`. Donor routes main.py:2479-2860 ported handler-for-handler (programmatic normalized diff: all 16 identical apart from DI rename + return annotations). `check_same_thread=False` seam in the registry (ASGI worker-thread serving). Live-verified :8000 full CRUD cycle: create→get→list→update→search→dedup→toggle→execute (success, usage recorded, success_rate 1.0)→stats (donor_stats)→delete→404. 20 tests (`tests/kernel/test_stage_14_6_adr108_d9_skills_registry.py`) |
+| `POST /api/skills` | **P (Stage 14.6, 2026-09-26)** — same substrate (donor main.py:2541) |
+| `POST /api/skills/dedup` | **P (Stage 14.6, 2026-09-26)** — same substrate (donor main.py:2672) |
+| `GET /api/skills/dedup/groups` | **P (Stage 14.6, 2026-09-26)** — same substrate (donor main.py:2681); the previously-404 UI consumer (`ui/panels/page.tsx`) now resolves. Route ordering: registered before `/api/skills/{skill_id}` (Starlette first-match) |
+| `POST /api/skills/maintenance` | **P (Stage 14.6, 2026-09-26)** — same substrate (donor main.py:2775) |
+| `GET /api/skills/search` | **P (Stage 14.6, 2026-09-26)** — same substrate (donor main.py:2516); the previously-404 UI consumer now resolves |
+| `POST /api/skills/select` | **P (Stage 14.6, 2026-09-26)** — same substrate (donor main.py:2789) |
+| `DELETE /api/skills/{skill_id}` | **P (Stage 14.6, 2026-09-26)** — same substrate (donor main.py:2635) |
+| `GET /api/skills/{skill_id}` | **P (Stage 14.6, 2026-09-26)** — same substrate (donor main.py:2565); the previously-404 UI consumer now resolves |
+| `PUT /api/skills/{skill_id}` | **P (Stage 14.6, 2026-09-26)** — same substrate (donor main.py:2603) |
+| `POST /api/skills/{skill_id}/execute` | **P (Stage 14.6, 2026-09-26)** — same substrate (donor main.py:2813); `SkillExecutor` wired with the T5 ToolRegistry post-lifespan |
+| `POST /api/skills/{skill_id}/improve` | **P (Stage 14.6, 2026-09-26)** — same substrate (donor main.py:2712) |
+| `POST /api/skills/{skill_id}/improve/from-execution` | **P (Stage 14.6, 2026-09-26)** — same substrate (donor main.py:2746) |
+| `POST /api/skills/{skill_id}/prune` | **P (Stage 14.6, 2026-09-26)** — same substrate (donor main.py:2663) |
+| `POST /api/skills/{skill_id}/toggle` | **P (Stage 14.6, 2026-09-26)** — same substrate (donor main.py:2646) |
 | `GET /api/thermal/health` | **P (Stage 13.6, 2026-09-26)** — kernel route over the ADR-121 ThermalWatchdog (the kernel's thermal referent; same class as the donor's ThermalMonitor). Donor `get_health_score()` bands (monitor.py:174) verbatim as `watchdog.get_health_score()` — pure temp→score map (None/0 → 1.0, <60→1.0 … ≥85→0.1). Gate-off → donor-verbatim `{"error": "Thermal monitor not initialized"}` at 200 (13.2e convention). Live-verified: 73°C → 0.7. |
 | `POST /api/thermal/reset` | **P (Stage 13.6, 2026-09-26)** — kernel route; donor `reset()` (monitor.py:218, `regulator.reset()` → optimal) kernel-side equivalent: clear the SustainedCooldownRule at/above window + restore NOMINAL_POWER_CAP_W via `apply_cap` when cooldown is active. `watchdog.reset()` then returns the `:8020`-shaped `snapshot()`. Gate-off → same donor-verbatim error. Live-verified: `{"status":"reset", snapshot with real gpu temp}`. |
 | `GET /api/toolRouter/status` | kernel tool_router router (executor/api.py) — status surface unverified |
@@ -162,7 +162,7 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `POST /api/voice/stt` | **P (Stage 13.12, 2026-09-26)** — same substrate/route family as state (donor main.py:2229-2301). |
 | `POST /api/voice/tts` | **P (Stage 13.12, 2026-09-26)** — same substrate/route family as state (donor main.py:2229-2301). |
 
-### To-port — no referent yet (47 routes at audit time; 23 remain — 24 reconciled to P in T8a, 2026-09-26)
+### To-port — no referent yet (47 routes at audit time; 0 remain — 24 reconciled to P in T8a, the rest in Stages 13.1–13.15, 14.2, and 14.6, all 2026-09-26)
 
 | Donor route (on :8020) | Disposition / referent |
 |---|---|
@@ -178,7 +178,7 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `GET /api/dreamtime/history` | **P (2026-09-26, T8c-8b)** — kernel-native (app.py dreamtime block, after T6 memory actions). Donor main.py:2392, wire `{"dreams": [DreamResult]}` verbatim. Rides `registry.tektos_dreamtime` (donor DreamtimeEngine verbatim, T8c-8a → plugins/tektos/memory/dreamtime.py) booted over the T6 3-tier store (same KOSMOS_TEKTOS_MEMORY gate, same db). Degraded shape `{"error": "Dreamtime engine not initialized"}` @200 (donor's own fail shape) |
 | `POST /api/dreamtime/run` | **P (2026-09-26, T8c-8b)** — kernel-native (donor main.py:2418). Full contemplation cycle: donor body `{max_memories=50, focus_area=None}`, donor wire `{id, source_count, insight_count, is_novel, novelty_score, insights, timestamp}` verbatim; insights persist back into the shared T6 store by novelty score. Live :8000: 3 seeded memories → 4 insights (2 connection, 1 synthesis, 1 gap), novelty 0.6, 4 rows persisted |
 | `GET /api/dreamtime/summary` | **P (2026-09-26, T8c-8b)** — kernel-native (donor main.py:2365), `engine.get_summary()` verbatim (`{state, total_dreams, total_insights, recent_dreams[]}`) |
-| `POST /api/dreamtime/trigger-skill-generation` | **Deferred (T8c-8c)** — donor main.py:2430 needs the donor SkillManager (skills/manager.py 830 LOC + skills/registry.py 777 LOC — a SQLite skill store). The kernel has no skill-store referent (only ADR-125 `/api/skills/stats` read surface); the kernel learning engine's `skill_creator` DI seam exists but is unpopulated. A follow-up skills ADR (skill-store port + `skill_creator` wiring) is the honest path; degraded shape would otherwise be fabricated |
+| `POST /api/dreamtime/trigger-skill-generation` | **P (Stage 14.6, 2026-09-26)** — discharged with the skills-registry port (its deferral reason — "no skill-store referent" — is false since `kernel/skills/` is live). Donor main.py:2418 wire verbatim: 5 most recent dreamtime results → flattened insights → `SkillManager.create_skill_from_reflection` (rule-based, not LLM-dependent). Rides `registry.tektos_dreamtime` (T8c-8a engine) + `registry.tektos_skills`; donor's two fail shapes preserved (`Dreamtime engine not initialized` / `Skill manager not initialized`) |
 | `POST /api/embedder/embed` | **P (2026-09-26, T7)** — kernel-native, donor shape (wired to registry.embeddings) |
 | `GET /api/embedder/status` | **P (2026-09-26, T7)** — kernel-native, donor shape (wired to registry.embeddings) |
 | `GET /api/evaluation/status` | **P (2026-09-26, T8c-6)** — kernel-native: donor main.py:4484. Substrate = donor `runtime/evaluation_framework.py` (417 LOC, self-contained, stdlib-only) verbatim port → `kernel/evaluation_framework.py` (generic benchmark/quality-measurement infra → kernel-level per layering rule). Route consumes `get_evaluation_harness()` exactly as the donor did (fresh call, module singleton). Donor wire `{status, total_evaluations, completed_evaluations, average_score}`; `{status: error, error}` at 200 (donor shape). 3 tests; live :8000 → `initialized`, 0 evals |

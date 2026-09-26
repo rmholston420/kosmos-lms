@@ -25,8 +25,12 @@ from plugins.tektos.manager.archetype_tracker import ArchetypeTracker
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     from kernel.app import registry
 
-    # Isolate: no manager by default (the ADR-108 off state).
+    # Isolate: no manager by default (the ADR-108 off state) AND no donor
+    # skill registry (Stage 14.6: the substrate boots by default now, so
+    # the degraded-shape tests must explicitly turn it off — the endpoint
+    # then falls back to the "deferred (ADR-108 D9)" note).
     monkeypatch.setattr(registry, "tektos_manager", None, raising=False)
+    monkeypatch.setattr(registry, "tektos_skills", None, raising=False)
     return TestClient(app)
 
 
@@ -54,7 +58,11 @@ def test_skills_manager_off_degraded(client: TestClient) -> None:
     assert o["skills"]["threshold"] is None
     assert o["skills"]["total_events"] is None
     # Honest: the deferred-registry note is present, no fabricated counts.
-    assert "ADR-108 D9" in o["skills"]["registry"]
+    # Stage 14.6: registry is a dict now (donor substrate live) — off-state
+    # keeps the "deferred (ADR-108 D9)" note inside it.
+    assert isinstance(o["skills"]["registry"], dict)
+    assert o["skills"]["registry"]["wired"] is False
+    assert "ADR-108 D9" in o["skills"]["registry"]["note"]
     assert o["errors"] == []
 
 

@@ -365,6 +365,16 @@ class _BootRegistry:
         # EmbedderClient seam is bridged to the kernel-owned
         # registry.embeddings (ADR-124 D1) in the composition root.
         self.tektos_rag_retriever: Any = None
+        # ADR-108 D9 discharge (2026-09-26, post-freeze ADR): donor
+        # SkillManager (reusable-procedure lifecycle: create/select/
+        # execute/dedup/prune/improve/maintenance) over the SQLite
+        # SkillRegistry. Generic substrate → kernel/skills/ (registry,
+        # manager, executor — byte-verbatim; donor's `import tektos.main`
+        # memory seam → injected _memory_system per ADR-007).
+        self.tektos_skills: Any = None
+        # The executor (donor _skill_executor): steps → kernel tool
+        # dispatch via registry.tektos_tools.
+        self.tektos_skill_executor: Any = None
         # ADR-141 Stage 13.11: donor VisionClient (OpenAI-compatible
         # /chat/completions vision transport — Qwen3-VL lane). Generic
         # substrate → kernel/vision_client.py; the kernel's
@@ -2039,6 +2049,75 @@ async def lifespan(app: FastAPI):
         asyncio.get_running_loop().create_task(_probe())
         return client
 
+    @ _try("tektos_skills")
+    def _boot_tektos_skills():
+        import os as _os
+        from pathlib import Path as _Path
+
+        # ADR-108 D9 discharge (2026-09-26, post-freeze ADR): donor boot
+        # (main.py:215-240) — SkillRegistry(db_path=.../data/tektos.db,
+        # skill_dir=~/.tektos/skills/) + SkillManager(registry=...) +
+        # SkillExecutor(tool_registry=...), wired AFTER the tool registry
+        # exists. Kernel-honest equivalent: kernel-owned db file
+        # (data/tektos_skills.db — gitignored via *.db; the donor's
+        # data/tektos.db file died with main.py, ADR-137) + the same
+        # skill_dir. The manager is exposed on the registry as
+        # `tektos_skills` (routes); the executor as `tektos_skill_executor`.
+        if _os.environ.get("KOSMOS_TEKTOS_SKILLS", "on").lower() not in ("on", "true", "1"):
+            return None
+        from kernel.skills import SkillManager, SkillRegistry
+
+        # Memory-system seam (donor: `import tektos.main;
+        # memory_system.add_procedural_memory(...)`). ADR-007: the
+        # substrate cannot import the app — a two-method adapter over
+        # the T6 store (registry.tektos_memory_persistence, booted
+        # earlier at line ~1737 so it is available here) is built at the
+        # composition root. Donor add_procedural_memory(content=...,
+        # metadata=...) / add_working_memory(content=..., metadata=...) →
+        # DictMemoryStore add_* shape (metadata is a kwarg → entry dict;
+        # skill_id rides in metadata for the procedural tier).
+        store = getattr(registry, "tektos_memory_persistence", None)
+        if store is not None:
+            from plugins.tektos.memory.dreamtime import DictMemoryStore, Hemisphere
+
+            _adapter = DictMemoryStore(store)
+
+            class _SkillMemorySeam:
+                def add_procedural_memory(self, content, metadata=None):
+                    return _adapter.add_procedural_memory(content, **(metadata or {}))
+
+                def add_working_memory(self, content, metadata=None):
+                    # DictMemoryStore implements only the four dreamtime
+                    # methods (no working tier) — build the T6 entry-dict
+                    # directly and save via the persistence store.
+                    entry = _adapter._entry_dict(content, Hemisphere.RIGHT)
+                    entry["metadata"] = dict(metadata or {})
+                    store.save_working(entry)
+                    return entry
+
+            memory_seam = _SkillMemorySeam()
+        else:
+            memory_seam = None  # donor parity: no-op when memory off
+
+        db_path = _Path(__file__).parent.parent / "data" / "tektos_skills.db"
+        skill_dir = _Path.home() / ".tektos" / "skills"
+        reg = SkillRegistry(db_path=str(db_path), skill_dir=str(skill_dir))
+        # No tool_registry here — the T5 executable ToolRegistry is
+        # created later in the lifespan (line ~2505); the post-lifespan
+        # block calls manager.set_tool_registry(_tool_registry) once it
+        # exists (donor main.py:293 pattern) + constructs the executor
+        # with it (SkillExecutor has no setter).
+        manager = SkillManager(registry=reg, memory_system=memory_seam)
+        registry.tektos_skills = manager
+        logger.info(
+            "kosmos.tektos_skills: substrate wired (ADR-108 D9 discharge); "
+            "db=%s, memory_seam=%s; tool-registry seam + executor deferred "
+            "to lifespan (donor main.py:293)",
+            db_path,
+            "on" if memory_seam is not None else "off",
+        )
+        return manager
+
     @ _try("tektos_voice")
     def _boot_tektos_voice():
         import os as _os
@@ -2098,6 +2177,9 @@ async def lifespan(app: FastAPI):
     registry.tektos_repo_map = _boot_tektos_repo_map
     registry.tektos_rag_retriever = _boot_tektos_rag_retriever
     registry.tektos_vision = _boot_tektos_vision
+    registry.tektos_skills = _boot_tektos_skills
+    # (tektos_skill_executor is set inside _boot_tektos_skills, alongside
+    # tektos_skills, since it shares the tool-registry seam.)
     registry.tektos_voice = _boot_tektos_voice
     registry.tektos_orchestrator = _boot_tektos_orchestrator
 
@@ -2459,6 +2541,22 @@ async def lifespan(app: FastAPI):
             _mcp_client = None
             registry.errors["mcp_client"] = f"{type(exc).__name__}: {exc}"
 
+    # --- Tektos skills: tool-registry seam + executor (ADR-108 D9) --------
+    # Donor main.py:293: `_skill_manager.set_tool_registry(_tool_registry)`
+    # AFTER the tool registry booted. The `_boot_tektos_skills` substrate
+    # (above) has no tool registry (created here, later in the lifespan);
+    # wire it now + construct the executor with it (SkillExecutor has no
+    # setter, so it is built once the registry exists).
+    if registry.tektos_skills is not None and _tool_registry is not None:
+        try:
+            from kernel.skills import SkillExecutor
+
+            registry.tektos_skills.set_tool_registry(_tool_registry)
+            registry.tektos_skill_executor = SkillExecutor(tool_registry=_tool_registry)
+            logger.info("kosmos.tektos_skills: tool-registry seam wired (donor main.py:293)")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("kosmos.tektos_skills: tool-registry seam failed: %s", exc)
+
     # --- Tektos UI sub-app mount (ADR-065, Stage 6.5.8) -----------------------
     # Depends on ``registry.approval`` (ADR-062) + ``registry.memory``
     # (ADR-063) only. Deliberately does NOT depend on ``registry.tektos``
@@ -2566,6 +2664,16 @@ async def lifespan(app: FastAPI):
     if getattr(registry, "tektos_memory_persistence", None) is not None:
         try:
             registry.tektos_memory_persistence.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    # ADR-108 D9 (Stage 14.6): close the skills registry SQLite connection.
+    # The manager holds the registry; close it directly (the executor holds
+    # no open handles).
+    _skills = getattr(registry, "tektos_skills", None)
+    if _skills is not None:
+        try:
+            _skills.registry.close()
         except Exception:  # noqa: BLE001
             pass
 
@@ -5119,6 +5227,550 @@ async def dreamtime_run(body: _DreamtimeRunBody = _DreamtimeRunBody()) -> dict[s
 
 
 # ---------------------------------------------------------------------------
+# REST API — Skills (ADR-108 D9 discharge, Stage 14.6; donor main.py:2479-2860)
+# ---------------------------------------------------------------------------
+# Donor-faithful: the same 16 routes, same request/response shapes, same
+# guard ("Skill manager not initialized" at 200 when the substrate is
+# absent) + the donor's 4th dreamtime skill route
+# (POST /api/dreamtime/trigger-skill-generation, main.py:2418 — deferred
+# to T8c-8c as a follow-up, discharged here: it depends on the
+# SkillManager this block brings live + the T8c dreamtime engine).
+# The manager is ``registry.tektos_skills`` (boot fn above); the registry
+# access is direct (manager.registry).
+# ---------------------------------------------------------------------------
+
+
+class _CreateSkillBody(BaseModel):
+    name: str = Field(description="Skill name")
+    description: str = Field(description="What the skill does")
+    trigger_conditions: list[str] = Field(
+        default_factory=list, description="Conditions that trigger this skill"
+    )
+    steps: list[dict[str, Any]] = Field(
+        default_factory=list, description="Ordered steps to execute"
+    )
+    category: str = Field(default="", description="Skill category")
+    source: str = Field(default="user_created", description="Origin of the skill")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+
+
+class _UpdateSkillBody(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    trigger_conditions: list[str] | None = None
+    steps: list[dict[str, Any]] | None = None
+    category: str | None = None
+    enabled: bool | None = None
+    version: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class _SelectSkillsBody(BaseModel):
+    context: dict[str, Any] = Field(default_factory=dict, description="Current session context")
+    max_skills: int = Field(default=5, description="Maximum number of skills to return")
+
+
+class _ExecuteSkillBody(BaseModel):
+    context: dict[str, Any] = Field(default_factory=dict, description="Execution context")
+
+
+@app.get("/api/skills")
+async def get_skills_list(
+    category: str | None = None, active_only: bool = True
+) -> dict[str, Any]:
+    """List all skills with optional category filter (donor main.py:2479)."""
+    manager = registry.tektos_skills
+    if manager is None:
+        return {"error": "Skill manager not initialized"}
+    skills = manager.registry.list_skills(active_only=active_only, category=category)
+    return {
+        "skills": [
+            {
+                "id": s.id,
+                "name": s.name,
+                "category": s.category,
+                "description": s.description,
+                "enabled": s.is_active,
+                "version": s.version,
+                "trigger_conditions": s.trigger_conditions,
+                "steps": s.steps,
+                "usage_count": s.usage_count,
+                "last_used": s.last_used,
+                "success_rate": round(s.success_rate, 3),
+                "source": s.source,
+                "created_at": s.created_at,
+                "updated_at": s.updated_at,
+            }
+            for s in skills
+        ]
+    }
+
+
+@app.get("/api/skills/search")
+async def search_skills(query: str = "", limit: int = 20) -> dict[str, Any]:
+    """Search skills by name, description, or trigger conditions (donor main.py:2516)."""
+    manager = registry.tektos_skills
+    if manager is None:
+        return {"error": "Skill manager not initialized"}
+    skills = manager.registry.search(query, limit=limit)
+    return {
+        "skills": [
+            {
+                "id": s.id,
+                "name": s.name,
+                "category": s.category,
+                "description": s.description,
+                "enabled": s.is_active,
+                "version": s.version,
+                "trigger_conditions": s.trigger_conditions,
+                "steps": s.steps,
+                "usage_count": s.usage_count,
+                "success_rate": round(s.success_rate, 3),
+            }
+            for s in skills
+        ]
+    }
+
+
+# ---------------------------------------------------------------------------
+# /api/skills/stats — ADR-125 (v2 Stage 11.9) + ADR-108 D9 discharge
+# (Stage 14.6). REGISTERED BEFORE /api/skills/{skill_id} below — Starlette
+# matches in registration order, so the static path must precede the
+# parameterized one (it lived further down the file at ADR-125 time, when
+# no {skill_id} route existed yet). Reports BOTH skills surfaces: the
+# Tektos Manager archetype tracker (skill candidates) + the donor skill
+# registry's live stats (skills.registry.donor_stats). Honest degraded
+# shapes when either is off.
+# ---------------------------------------------------------------------------
+
+
+def _skills_archetype_dict(a: Any) -> dict[str, Any]:
+    """Serialize one Archetype (duck-typed — plugin internals, ADR-007).
+
+    ``at_threshold`` mirrors the tracker's skill-candidate semantics
+    (``should_create_structure``): count hit threshold AND no permanent
+    structure exists yet — consistent with ``get_archetypes_at_threshold``.
+    """
+    count = getattr(a, "occurrence_count", 0) or 0
+    thr = getattr(a, "threshold", 0) or 0
+    return {
+        "category": getattr(a, "category", None),
+        "occurrence_count": count,
+        "threshold": thr,
+        "at_threshold": bool(count >= thr)
+        and getattr(a, "permanent_structure_id", None) is None,
+        "permanent_structure_id": getattr(a, "permanent_structure_id", None),
+        "first_seen": getattr(a, "first_seen", None),
+        "last_seen": getattr(a, "last_seen", None),
+    }
+
+
+@app.get("/api/skills/stats")
+def skills_stats() -> dict[str, Any]:
+    """Tektos skill-candidate status from the Manager archetype tracker
+    + the donor skill-registry stats (Stage 14.6).
+
+    Always 200. ``manager.wired: false`` (default — the ADR-108 engine is
+    off unless KOSMOS_TEKTOS_MANAGER=on) is a valid degraded state, not an
+    error: the card says so instead of fabricating a count.
+    """
+    errors: list[str] = []
+    manager = getattr(registry, "tektos_manager", None)
+    wired = manager is not None
+
+    archetypes: list[dict[str, Any]] = []
+    at_threshold: list[dict[str, Any]] = []
+    threshold: int | None = None
+    total_events: int | None = None
+
+    if wired:
+        try:
+            tracker = getattr(manager, "archetypes", None)
+            if tracker is not None:
+                threshold = getattr(tracker, "threshold", None)
+                total_events = len(getattr(tracker, "events", []) or [])
+                archetypes = [
+                    _skills_archetype_dict(a)
+                    for a in tracker.get_active_archetypes()
+                ]
+                at_threshold = [
+                    _skills_archetype_dict(a)
+                    for a in tracker.get_archetypes_at_threshold()
+                ]
+            else:
+                errors.append("manager has no archetype tracker")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"tracker query failed: {type(exc).__name__}: {exc}")
+
+    # ADR-108 D9 discharge (Stage 14.6): the donor skill registry is now
+    # live in the kernel (registry.tektos_skills, kernel/skills/). Report
+    # its real stats (donor main.py:2508 shape: total_skills / active_skills
+    # / top_skills / categories) instead of the static "deferred" note.
+    skill_registry = getattr(registry, "tektos_skills", None)
+    if skill_registry is not None:
+        try:
+            registry_stats: dict[str, Any] = {
+                "wired": True,
+                "donor_stats": skill_registry.get_stats(),
+            }
+        except Exception as exc:  # noqa: BLE001
+            registry_stats = {"wired": True, "error": f"{type(exc).__name__}: {exc}"}
+            errors.append(f"skills registry stats failed: {type(exc).__name__}: {exc}")
+    else:
+        registry_stats = {"wired": False, "note": "deferred (ADR-108 D9)"}
+
+    return {
+        "status": "initialized" if wired else "degraded",
+        "healthy": wired,
+        "skills": {
+            "registry": registry_stats,
+            "wired": wired,
+            "archetypes": len(archetypes),
+            "at_threshold": len(at_threshold),
+            "threshold": threshold,
+            "total_events": total_events,
+            "archetype_list": archetypes[:20],
+        },
+        "errors": errors,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.post("/api/skills")
+async def create_skill(body: _CreateSkillBody) -> dict[str, Any]:
+    """Create a new skill (donor main.py:2541)."""
+    manager = registry.tektos_skills
+    if manager is None:
+        return {"error": "Skill manager not initialized"}
+    try:
+        skill = manager.create_skill(
+            name=body.name,
+            description=body.description,
+            trigger_conditions=body.trigger_conditions,
+            steps=body.steps,
+            category=body.category,
+            source=body.source,
+            metadata=body.metadata,
+        )
+        return {
+            "id": skill.id,
+            "name": skill.name,
+            "created": True,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/skills/{skill_id}")
+async def get_skill(skill_id: str) -> dict[str, Any]:
+    """Get a single skill by ID (donor main.py:2565)."""
+    manager = registry.tektos_skills
+    if manager is None:
+        return {"error": "Skill manager not initialized"}
+    skill = manager.registry.get_by_id(skill_id)
+    if not skill:
+        raise HTTPException(status_code=404, detail=f"Skill {skill_id} not found")
+    return {
+        "id": skill.id,
+        "name": skill.name,
+        "category": skill.category,
+        "description": skill.description,
+        "enabled": skill.is_active,
+        "version": skill.version,
+        "trigger_conditions": skill.trigger_conditions,
+        "steps": skill.steps,
+        "usage_count": skill.usage_count,
+        "last_used": skill.last_used,
+        "success_rate": round(skill.success_rate, 3),
+        "source": skill.source,
+        "metadata": skill.metadata,
+        "created_at": skill.created_at,
+        "updated_at": skill.updated_at,
+    }
+
+
+@app.put("/api/skills/{skill_id}")
+async def update_skill(skill_id: str, body: _UpdateSkillBody) -> dict[str, Any]:
+    """Update an existing skill (donor main.py:2603)."""
+    manager = registry.tektos_skills
+    if manager is None:
+        return {"error": "Skill manager not initialized"}
+    skill = manager.registry.get_by_id(skill_id)
+    if not skill:
+        raise HTTPException(status_code=404, detail=f"Skill {skill_id} not found")
+    if body.name is not None:
+        skill.name = body.name
+    if body.description is not None:
+        skill.description = body.description
+    if body.trigger_conditions is not None:
+        skill.trigger_conditions = body.trigger_conditions
+    if body.steps is not None:
+        skill.steps = body.steps
+    if body.category is not None:
+        skill.category = body.category
+    if body.enabled is not None:
+        skill.is_active = body.enabled
+    if body.version is not None:
+        skill.version = body.version
+    if body.metadata is not None:
+        skill.metadata = body.metadata
+    updated = manager.registry.update(skill)
+    return {
+        "id": updated.id,
+        "name": updated.name,
+        "updated": True,
+    }
+
+
+@app.delete("/api/skills/{skill_id}")
+async def delete_skill(skill_id: str) -> dict[str, Any]:
+    """Delete a skill (donor main.py:2635)."""
+    manager = registry.tektos_skills
+    if manager is None:
+        return {"error": "Skill manager not initialized"}
+    deleted = manager.registry.delete(skill_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Skill {skill_id} not found")
+    return {"deleted": True}
+
+
+@app.post("/api/skills/{skill_id}/toggle")
+async def toggle_skill(skill_id: str) -> dict[str, Any]:
+    """Toggle a skill's enabled/disabled state (donor main.py:2646)."""
+    manager = registry.tektos_skills
+    if manager is None:
+        return {"error": "Skill manager not initialized"}
+    skill = manager.registry.get_by_id(skill_id)
+    if not skill:
+        raise HTTPException(status_code=404, detail=f"Skill {skill_id} not found")
+    skill.is_active = not skill.is_active
+    updated = manager.registry.update(skill)
+    return {
+        "id": updated.id,
+        "name": updated.name,
+        "enabled": updated.is_active,
+    }
+
+
+@app.post("/api/skills/{skill_id}/prune")
+async def prune_skills() -> dict[str, Any]:
+    """Prune inactive/low-performing skills (donor main.py:2663)."""
+    manager = registry.tektos_skills
+    if manager is None:
+        return {"error": "Skill manager not initialized"}
+    archived = manager.prune_inactive_skills()
+    return {"archived": archived}
+
+
+@app.post("/api/skills/dedup")
+async def deduplicate_skills(threshold: float = 0.6) -> dict[str, Any]:
+    """Find and merge duplicate skills (donor main.py:2672)."""
+    manager = registry.tektos_skills
+    if manager is None:
+        return {"error": "Skill manager not initialized"}
+    return manager.deduplicate(similarity_threshold=threshold)
+
+
+@app.get("/api/skills/dedup/groups")
+async def get_duplicate_groups(threshold: float = 0.6) -> dict[str, Any]:
+    """Find duplicate skill groups without merging (donor main.py:2681)."""
+    manager = registry.tektos_skills
+    if manager is None:
+        return {"error": "Skill manager not initialized"}
+    groups = manager.find_duplicate_groups(similarity_threshold=threshold)
+    return {
+        "groups": [
+            {
+                "primary": {
+                    "id": g["primary"].id,
+                    "name": g["primary"].name,
+                    "usage_count": g["primary"].usage_count,
+                    "success_rate": round(g["primary"].success_rate, 3),
+                },
+                "duplicates": [
+                    {
+                        "id": d.id,
+                        "name": d.name,
+                        "usage_count": d.usage_count,
+                        "success_rate": round(d.success_rate, 3),
+                    }
+                    for d in g["duplicates"]
+                ],
+                "similarity": round(g.get("similarity", 0), 3),
+            }
+            for g in groups
+        ]
+    }
+
+
+@app.post("/api/skills/{skill_id}/improve")
+async def improve_skill(skill_id: str, body: _UpdateSkillBody) -> dict[str, Any]:
+    """Improve a skill by updating its description, steps, or triggers (donor main.py:2712)."""
+    manager = registry.tektos_skills
+    if manager is None:
+        return {"error": "Skill manager not initialized"}
+    skill = manager.registry.get_by_id(skill_id)
+    if not skill:
+        raise HTTPException(status_code=404, detail=f"Skill {skill_id} not found")
+
+    improvements = []
+    if body.description is not None:
+        improvements.append("Updated description")
+    if body.steps is not None:
+        improvements.append(f"Updated {len(body.steps)} steps")
+    if body.trigger_conditions is not None:
+        improvements.append(f"Updated {len(body.trigger_conditions)} triggers")
+
+    improved = manager.improve_skill(
+        skill_id=skill_id,
+        new_description=body.description,
+        new_steps=body.steps,
+        new_triggers=body.trigger_conditions,
+        improvement_note="; ".join(improvements) if improvements else "Manual improvement",
+    )
+    if not improved:
+        raise HTTPException(status_code=404, detail=f"Skill {skill_id} not found")
+    return {
+        "id": improved.id,
+        "name": improved.name,
+        "version": improved.version,
+        "improved": True,
+    }
+
+
+@app.post("/api/skills/{skill_id}/improve/from-execution")
+async def improve_from_execution(skill_id: str) -> dict[str, Any]:
+    """Improve a skill based on its last execution result (donor main.py:2746)."""
+    manager = registry.tektos_skills
+    if manager is None:
+        return {"error": "Skill manager not initialized"}
+    skill = manager.registry.get_by_id(skill_id)
+    if not skill:
+        raise HTTPException(status_code=404, detail=f"Skill {skill_id} not found")
+
+    # Use the skill's metadata to reconstruct execution context
+    improved = manager.improve_from_execution(
+        skill_id=skill_id,
+        execution_result={
+            "success": skill.success_rate > 0.5,
+            "output": f"Executed {skill.usage_count} times",
+            "error": "" if skill.success_rate > 0.5 else "Some failures recorded",
+            "step_results": [],
+        },
+    )
+    if not improved:
+        raise HTTPException(status_code=404, detail=f"Skill {skill_id} not found")
+    return {
+        "id": improved.id,
+        "name": improved.name,
+        "version": improved.version,
+        "improved": True,
+    }
+
+
+@app.post("/api/skills/maintenance")
+async def run_skill_maintenance() -> dict[str, Any]:
+    """Run full skill maintenance: dedup, prune, and auto-improve (donor main.py:2775)."""
+    manager = registry.tektos_skills
+    if manager is None:
+        return {"error": "Skill manager not initialized"}
+    return manager.run_maintenance()
+
+
+@app.post("/api/skills/select")
+async def select_skills(body: _SelectSkillsBody) -> dict[str, Any]:
+    """Select skills that match the current context (donor main.py:2789)."""
+    manager = registry.tektos_skills
+    if manager is None:
+        return {"error": "Skill manager not initialized"}
+    result = manager.select_skills(context=body.context, max_skills=body.max_skills)
+    return {
+        "selected": [
+            {
+                "id": m.skill.id,
+                "name": m.skill.name,
+                "category": m.skill.category,
+                "score": round(m.score, 2),
+                "reason": m.reason,
+            }
+            for m in result.matches
+        ]
+    }
+
+
+@app.post("/api/skills/{skill_id}/execute")
+async def execute_skill(skill_id: str, body: _ExecuteSkillBody) -> dict[str, Any]:
+    """Execute a skill with given context (donor main.py:2813)."""
+    manager = registry.tektos_skills
+    if manager is None:
+        return {"error": "Skill manager not initialized"}
+    skill = manager.registry.get_by_id(skill_id)
+    if not skill:
+        raise HTTPException(status_code=404, detail=f"Skill {skill_id} not found")
+
+    try:
+        # Execute inline (simple skills)
+        await manager._execute_inline(skill, body.context)
+        manager.registry.record_usage(skill_id, success=True)
+        return {
+            "skill_id": skill_id,
+            "skill_name": skill.name,
+            "success": True,
+            "result": f"Skill '{skill.name}' executed successfully",
+        }
+    except Exception as e:
+        manager.registry.record_usage(skill_id, success=False)
+        return {
+            "skill_id": skill_id,
+            "skill_name": skill.name,
+            "success": False,
+            "error": str(e),
+        }
+
+
+@app.post("/api/dreamtime/trigger-skill-generation")
+async def trigger_dreamtime_skill_generation() -> dict[str, Any]:
+    """Trigger skill generation from recent dreamtime insights (donor main.py:2418).
+
+    T8c-8c discharge (ADR-108 D9): the donor route took the 5 most recent
+    dreamtime results, flattened their insights, and fed them through
+    ``SkillManager.create_skill_from_reflection`` (rule-based, not
+    LLM-dependent — see kernel/skills/manager.py). The kernel dreamtime
+    engine (registry.tektos_dreamtime, T8c-8) exposes the same
+    ``get_dream_history`` + ``DreamResult.insights`` shape.
+    """
+    engine = registry.tektos_dreamtime
+    manager = registry.tektos_skills
+    if engine is None or manager is None:
+        return {"error": "Dreamtime engine not initialized"}
+
+    dreams = engine.get_dream_history(limit=5)
+    insights: list[str] = []
+    for d in dreams:
+        insights.extend(d.insights)
+
+    if not insights:
+        return {
+            "message": "No recent dreamtime insights to generate skills from",
+            "skills_created": 0,
+        }
+
+    skills = manager.create_skill_from_reflection(
+        lessons=insights[:10],  # Cap at 10 lessons
+        what_worked=[],
+        what_failed=[],
+        what_to_avoid=[],
+        recommendations=[],
+    )
+
+    return {
+        "insights_processed": len(insights),
+        "skills_created": len(skills),
+        "skill_names": [s.name for s in skills],
+    }
+
+
+# ---------------------------------------------------------------------------
 # Schema introspection (ADR-141 T8c-9) — donor path + wire
 # (tektos-ultima-v1 main.py:4747). Composite referent:
 #   schema half → registry.tektos_schema_evolution (donor
@@ -6596,95 +7248,6 @@ async def rag_status() -> dict[str, Any]:
         },
         "errors": errors,
         "timestamp": now.isoformat(),
-    }
-
-
-# ---------------------------------------------------------------------------
-# /api/skills/stats — ADR-125 (v2 Stage 11.9, skills family)
-#
-# The old card proxied :8020/api/skills/stats — the standalone engine's own
-# skill manager (24 vendored skills with usage counters) that the kernel has
-# no referent for. The kernel's real skills-adjacent surface is the Tektos
-# Manager's archetype tracker (ADR-108): it watches Tektos task outcomes and
-# flags recurring patterns as *skill candidates* (archetypes at threshold).
-# The full donor skill registry (830 LOC) stays deferred per ADR-108 D9 —
-# this endpoint reports the tracker live when the manager is wired
-# (KOSMOS_TEKTOS_MANAGER=on) and says so honestly when it is not.
-# ---------------------------------------------------------------------------
-
-
-def _skills_archetype_dict(a: Any) -> dict[str, Any]:
-    """Serialize one Archetype (duck-typed — plugin internals, ADR-007).
-
-    ``at_threshold`` mirrors the tracker's skill-candidate semantics
-    (``should_create_structure``): count hit threshold AND no permanent
-    structure exists yet — consistent with ``get_archetypes_at_threshold``.
-    """
-    count = getattr(a, "occurrence_count", 0) or 0
-    thr = getattr(a, "threshold", 0) or 0
-    return {
-        "category": getattr(a, "category", None),
-        "occurrence_count": count,
-        "threshold": thr,
-        "at_threshold": bool(count >= thr)
-        and getattr(a, "permanent_structure_id", None) is None,
-        "permanent_structure_id": getattr(a, "permanent_structure_id", None),
-        "first_seen": getattr(a, "first_seen", None),
-        "last_seen": getattr(a, "last_seen", None),
-    }
-
-
-@app.get("/api/skills/stats")
-def skills_stats() -> dict[str, Any]:
-    """Tektos skill-candidate status from the Manager archetype tracker.
-
-    Always 200. ``manager.wired: false`` (default — the ADR-108 engine is
-    off unless KOSMOS_TEKTOS_MANAGER=on) is a valid degraded state, not an
-    error: the skill registry is explicitly deferred (ADR-108 D9), and the
-    card says so instead of fabricating a count.
-    """
-    errors: list[str] = []
-    manager = getattr(registry, "tektos_manager", None)
-    wired = manager is not None
-
-    archetypes: list[dict[str, Any]] = []
-    at_threshold: list[dict[str, Any]] = []
-    threshold: int | None = None
-    total_events: int | None = None
-
-    if wired:
-        try:
-            tracker = getattr(manager, "archetypes", None)
-            if tracker is not None:
-                threshold = getattr(tracker, "threshold", None)
-                total_events = len(getattr(tracker, "events", []) or [])
-                archetypes = [
-                    _skills_archetype_dict(a)
-                    for a in tracker.get_active_archetypes()
-                ]
-                at_threshold = [
-                    _skills_archetype_dict(a)
-                    for a in tracker.get_archetypes_at_threshold()
-                ]
-            else:
-                errors.append("manager has no archetype tracker")
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"tracker query failed: {type(exc).__name__}: {exc}")
-
-    return {
-        "status": "initialized" if wired else "degraded",
-        "healthy": wired,
-        "skills": {
-            "registry": "deferred (ADR-108 D9)",
-            "wired": wired,
-            "archetypes": len(archetypes),
-            "at_threshold": len(at_threshold),
-            "threshold": threshold,
-            "total_events": total_events,
-            "archetype_list": archetypes[:20],
-        },
-        "errors": errors,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
