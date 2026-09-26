@@ -33,9 +33,9 @@ an equivalent kernel mechanism.
 
 | Disposition | Count | Meaning |
 |---|---|---|
-| **P — Preserved** | 35 | kernel/plugin referent exists and is live |
+| **P — Preserved** | 39 (35 + T6 2 + T7 2, 2026-09-26) | kernel/plugin referent exists and is live |
 | **D — Deferred** | 70 + 2 WS | recorded path; functionality lost until the named port lands |
-| **T — To-port** | 47 | no referent yet; each becomes a work item before deletion |
+| **T — To-port** | 43 (was 47) | no referent yet; each becomes a work item before deletion |
 
 The deferral buckets are **honest temporary losses**, not permanent omissions:
 every D route names the stage or ADR that carries its functionality. The Stage 11
@@ -176,8 +176,8 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `POST /api/dreamtime/run` | no referent |
 | `GET /api/dreamtime/summary` | no referent — dreamtime read |
 | `POST /api/dreamtime/trigger-skill-generation` | no referent |
-| `POST /api/embedder/embed` | no referent — embed action |
-| `GET /api/embedder/status` | no referent — embedder :8091 status |
+| `POST /api/embedder/embed` | **P (2026-09-26, T7)** — kernel-native, donor shape (wired to registry.embeddings) |
+| `GET /api/embedder/status` | **P (2026-09-26, T7)** — kernel-native, donor shape (wired to registry.embeddings) |
 | `GET /api/evaluation/status` | no referent — evaluation harness status |
 | `GET /api/hooks` | no referent — hooks list |
 | `POST /api/hooks/fire` | no referent — hooks fire |
@@ -301,7 +301,19 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
      the real gate path). The ops-tab decay button is now live (was the
      ADR-135 honest degrade). Full `tests/kernel/` 573 passed.
    - **T7 — embedder surface** (2: status :8091, embed) — pairs with the ADR-132
-     LLM lanes.
+     LLM lanes. **P (2026-09-26)** — NOT a second `EmbedderClient` port:
+     per the governing layering rule the embedder is generic shared
+     infrastructure the kernel already owns as `registry.embeddings`
+     (`LlamaEmbeddingsAdapter`, ADR-124 D1 — same :8091, same
+     qwen3-embedding-0.6b, same OpenAI-compat `/v1/embeddings`). The two
+     donor routes (`main.py:4448/4464`) are a thin Tektos surface over that
+     substrate at the donor paths with donor response shapes. One real gap
+     closed cleanly: the donor's `usage` field, which the ADR-073 batch
+     contract (`embed`) deliberately discards, now surfaces via a new
+     non-breaking `embed_meta()` on the adapter (shared HTTP round-trip
+     path, `EmbeddingMeta` pydantic model). 7 route tests, all live against
+     the real :8091 llama-server embedder (no mocks). Full `tests/kernel/`
+     580 passed.
    - **T8 — misc singletons**: config GET/PATCH, keys, hooks list/fire, schedule,
      search, routing/decide, delegate, llm/probe, evaluation/status, directory_list,
      plugins/{name}/toggle, schema GET, dreamtime (4).

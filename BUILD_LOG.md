@@ -5050,3 +5050,54 @@ MCP, metabolism) in ROI order.
   removal ×3, ADR-140 WS, ADR-109 gateway deletion + :8020 retirement.
 - **Stop-condition status:** met — T6 complete; next T7 (embedder
   surface: status :8091 + embed — pairs with the ADR-132 LLM lanes).
+
+## 2026-09-26 01:25 EDT — ADR-141 T7 complete: embedder surface (2 routes) kernel-native
+
+- **Layering decision (governing rule, 2026-09-25):** NOT a second
+  `EmbedderClient` port. The embedder is generic shared infrastructure
+  the kernel already owns as `registry.embeddings`
+  (`LlamaEmbeddingsAdapter`, ADR-124 D1 — same `:8091`, same
+  `qwen3-embedding-0.6b`, same OpenAI-compat `/v1/embeddings`). The two
+  donor routes (tektos-ultima-v1 `main.py:4448` status / `:4464` embed)
+  are a thin Tektos surface over that substrate at the donor paths with
+  donor response shapes.
+- **One real gap closed cleanly:** the donor's embed response carries
+  `usage` (prompt_tokens/total_tokens), which the ADR-073 batch contract
+  (`embed` → `list[list[float]]`) deliberately discards. Added a
+  non-breaking `embed_meta()` to the adapter sharing one HTTP round-trip
+  path (`_embed_meta`) with `embed`, returning a new `EmbeddingMeta`
+  pydantic model (validated `data[]` rows sorted by `index` — the
+  ADR-073 order guarantee — + `model` + optional `usage`). `embed` is
+  unchanged in contract (14 existing port/adapter tests still green).
+- **Routes (kernel/app.py, after the T6b memory block):**
+  `GET /api/embedder/status` → `{"status":"initialized","model",
+  "base_url"}` | `{"status":"not_initialized"}`;
+  `POST /api/embedder/embed` → `{"model","dimensions","usage",
+  "embedding_preview"(first 8 dims)}` | `{"error": ...}` at 200 for
+  empty text / uninit / backend failure (donor shape). No body → 422,
+  matching the donor's identical `payload: dict` signature.
+- **Live verification (systemd kernel :8000, real :8091 llama-server
+  embedder):** status → initialized/qwen3-embedding-0.6b/
+  http://127.0.0.1:8091; embed "kosmos embedder live" → 1024 dims,
+  usage {5,5}, 8-float preview; empty text → `{"error":"text is
+  required"}`.
+- **Verification:** 7 route tests in
+  `tests/kernel/test_adr141_t7_embedder_surface.py`, all live against
+  :8091 (no mocks): status shape (asserts the ADR-124 D1 lane), degraded
+  slot-None, live embed round-trip (dims=1024, real usage, float
+  preview), empty-text error at 200, backend-failure error at 200
+  (adapter on a dead port), embed vs embed_meta vector parity on one
+  event loop. Full `tests/kernel/`: **580 passed, 0 failed** (was 573).
+  Panels-page status-tab `g("/api/embedder/status")` still resolves via
+  the ADR-109 bridge to the donor until that page's repoint — exit-gate
+  debt, unchanged.
+- **Docs:** ADR-141 T7 rows (2 routes) → **P (2026-09-26)**; T7 checklist
+  row expanded; summary count table corrected (P 35→39, T 47→43 — T6+T7
+  in-place markers reconciled, dated note); ADR README progress line
+  T1–T7 ✓.
+- **Gate progress (ADR-141):** T1 ✓, T2 ✓, T3 ✓, T4 ✓, T5 ✓, T6 ✓,
+  **T7 ✓**. Remaining before `main.py` deletion: T8 (misc singletons,
+  the last T-bucket), D-route Stage 13 subsystem ports, `/health` probe
+  removal ×3, ADR-140 WS, ADR-109 gateway deletion + :8020 retirement.
+- **Stop-condition status:** met — T7 complete; next T8 (misc
+  singletons — 15 routes, the final T-bucket).

@@ -33,10 +33,44 @@ import os
 from typing import Any
 
 import httpx
+from pydantic import BaseModel, ConfigDict, Field
 
 from ports.embeddings import EmbeddingError, EmbeddingsPort
 
 log = logging.getLogger(__name__)
+
+
+class _EmbeddingRow(BaseModel):
+    """One element of the OpenAI-compat ``data`` array."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    index: int = 0
+    embedding: list[float] = Field(default_factory=list)
+
+
+class EmbeddingMeta(BaseModel):
+    """Validated ``/v1/embeddings`` response — vectors + model + usage.
+
+    Added for ADR-141 T7: the ADR-073 batch contract (``embed``) returns
+    bare ``list[list[float]]`` and discards the llama-server ``usage``
+    block; ``embed_meta`` returns this so the donor's ``usage`` field can
+    surface. ``usage`` is optional (llama-server omits it on some builds)
+    and ``extra="ignore"`` tolerates future OpenAI-compat fields.
+    ``embeddings`` is a convenience property over ``data``, sorted by
+    ``index`` (the ADR-073 order guarantee).
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    model: str = ""
+    data: list[_EmbeddingRow] = Field(default_factory=list)
+    usage: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def embeddings(self) -> list[list[float]]:
+        rows = sorted(self.data, key=lambda d: d.index)
+        return [list(d.embedding) for d in rows]
 
 
 # Static model → dimension table (ADR-073 contract: ``dimensions()``
@@ -95,16 +129,17 @@ class LlamaEmbeddingsAdapter:
 
     # ── EmbeddingsPort ──────────────────────────────────────────────────
 
-    async def embed(
+    async def _embed_meta(
         self,
         *,
         texts: list[str],
         model: str | None = None,
-    ) -> list[list[float]]:
-        """Embed ``texts`` (batch-only, per ADR-073) via ``/v1/embeddings``.
+    ) -> EmbeddingMeta:
+        """One ``/v1/embeddings`` round-trip, validated into ``EmbeddingMeta``.
 
         Raises ``EmbeddingError`` on any HTTP/protocol failure — the
-        whole batch fails atomically (no partial results).
+        whole batch fails atomically (no partial results). Shared by
+        ``embed`` (ADR-073 batch contract) and ``embed_meta`` (ADR-141 T7).
         """
         resolved = model or self._default_model
         client = self._get_client()
@@ -121,14 +156,37 @@ class LlamaEmbeddingsAdapter:
             raise EmbeddingError(
                 f"embed HTTP {resp.status_code}: {resp.text[:200]}"
             )
-        try:
-            data: dict[str, Any] = resp.json()
-            rows = sorted(data["data"], key=lambda d: d["index"])
-            embeddings = [list(d["embedding"]) for d in rows]
-        except (KeyError, TypeError, ValueError) as exc:
-            raise EmbeddingError(
-                f"malformed /v1/embeddings response: {exc}"
-            ) from exc
+        return EmbeddingMeta.model_validate(resp.json())
+
+    async def embed_meta(
+        self,
+        *,
+        texts: list[str],
+        model: str | None = None,
+    ) -> EmbeddingMeta:
+        """Like ``embed`` but returns the full ``EmbeddingMeta`` (vectors
+        + ``model`` + llama-server ``usage`` block).
+
+        Added for ADR-141 T7: the donor's ``POST /api/embedder/embed``
+        surface reports ``usage`` (prompt_tokens/total_tokens) in its
+        response; the ADR-073 batch contract (``embed``) deliberately
+        discards it. Both methods share one HTTP round-trip path.
+        """
+        return await self._embed_meta(texts=texts, model=model)
+
+    async def embed(
+        self,
+        *,
+        texts: list[str],
+        model: str | None = None,
+    ) -> list[list[float]]:
+        """Embed ``texts`` (batch-only, per ADR-073) via ``/v1/embeddings``.
+
+        Raises ``EmbeddingError`` on any HTTP/protocol failure — the
+        whole batch fails atomically (no partial results).
+        """
+        meta = await self._embed_meta(texts=texts, model=model)
+        embeddings = [list(v) for v in meta.embeddings]
         if len(embeddings) != len(texts):
             raise EmbeddingError(
                 f"embed count mismatch: got {len(embeddings)}, "

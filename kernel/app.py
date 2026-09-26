@@ -4194,6 +4194,56 @@ async def memory_delete_entry(tier: str, entry_id: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Embedder surface (ADR-141 T7, donor main.py:4448/4464) — kernel-native.
+# The donor ran a private EmbedderClient (_embedder_client, :8091) behind
+# two routes. Per the layering rule (governing, 2026-09-25) the embedder
+# is GENERIC shared infrastructure: the kernel already owns it as
+# registry.embeddings (LlamaEmbeddingsAdapter, ADR-124 D1 — same :8091,
+# same qwen3-embedding-0.6b, same OpenAI-compat /v1/embeddings). These two
+# routes are a thin Tektos surface over that substrate — same donor paths,
+# same response shapes — NOT a second client port. The donor's `usage`
+# field comes from the adapter's new embed_meta() (ADR-141 T7), since the
+# ADR-073 batch contract (embed) deliberately discards it. Both routes are
+# always 200 with the donor's honest-degrade error shapes.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/embedder/status")
+async def embedder_status() -> dict[str, Any]:
+    """Embedder status (donor main.py:4448 — same shapes)."""
+    emb = registry.embeddings
+    if emb is None:
+        return {"status": "not_initialized"}
+    return {
+        "status": "initialized",
+        "model": getattr(emb, "_default_model", None),
+        "base_url": getattr(emb, "_base_url", None),
+    }
+
+
+@app.post("/api/embedder/embed")
+async def embedder_embed(payload: dict[str, Any]) -> dict[str, Any]:
+    """Generate an embedding for the supplied text (donor main.py:4464)."""
+    emb = registry.embeddings
+    if emb is None:
+        return {"error": "embedder not initialized"}
+    text = str(payload.get("text", "")).strip()
+    if not text:
+        return {"error": "text is required"}
+    try:
+        meta = await emb.embed_meta(texts=[text])
+        first = list(meta.embeddings[0]) if meta.embeddings else []
+        return {
+            "model": meta.model,
+            "dimensions": len(first),
+            "usage": meta.usage,
+            "embedding_preview": first[:8],
+        }
+    except Exception as exc:  # noqa: BLE001 — donor shape: error at 200
+        return {"error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
 # RAG status (ADR-124, Stage 11.8) — kernel-native.
 # The old card proxied :8020/api/rag/status, whose stats carried a
 # top_k/similarity_threshold/query_count the kernel does not track
