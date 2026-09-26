@@ -33,9 +33,9 @@ an equivalent kernel mechanism.
 
 | Disposition | Count | Meaning |
 |---|---|---|
-| **P — Preserved** | 71 (35 + T6 2 + T7 2 + T8a 24 + T8b-1 2 + T8b-2 1 + T8b-3 1 + T8b-4 1 + T8c-1 2 + T8c-2 1, 2026-09-26) | kernel/plugin referent exists and is live |
+| **P — Preserved** | 72 (35 + T6 2 + T7 2 + T8a 24 + T8b-1 2 + T8b-2 1 + T8b-3 1 + T8b-4 1 + T8c-1 2 + T8c-2 1 + T8c-3 1, 2026-09-26) | kernel/plugin referent exists and is live |
 | **D — Deferred** | 70 + 2 WS | recorded path; functionality lost until the named port lands |
-| **T — To-port** | 11 | no referent yet; each becomes a work item before deletion (T8 scope; orchestrator ×2 folded into T8c) |
+| **T — To-port** | 10 | no referent yet; each becomes a work item before deletion (T8 scope; orchestrator ×2 folded into T8c) |
 
 The deferral buckets are **honest temporary losses**, not permanent omissions:
 every D route names the stage or ADR that carries its functionality. The Stage 11
@@ -170,7 +170,7 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `POST /api/archive/sessions/{session_id}/tag` | **P (2026-09-26, T8a)** — kernel-native (T2c, app.py:5697) |
 | `GET /api/config` | **P (2026-09-26, T8b-1)** — kernel-native: `tektos_config_get` (app.py) surfaces live lane (ADR-132 topology) + boot env rows; donor wire `protocol_version`/`llm`/`config`/`llm_available`; tests `tests/kernel/test_adr141_t8b1_config_surface.py` |
 | `PATCH /api/config` | **P (2026-09-26, T8b-1)** — kernel-native: `tektos_config_patch`; donor wire `ok`/`key`/`value`/`note` preserved + honest `applied` flag (configured lanes not live-mutated — documented divergence) |
-| `POST /api/delegate` | no referent — delegate action (kernel has delegation via subagents, no HTTP surface) |
+| `POST /api/delegate` | **P (2026-09-26, T8c-3)** — kernel-native: donor main.py:4065. Fresh sub-session via `registry.session.create_session` + `await registry.tektos_turn_loop.run_turn` (ADR-104 turn loop = kernel referent for the donor's `runtime_sdk.submit_prompt`); donor's verbatim GOAL/CONTEXT/WORKFLOW subagent prompt + donor system prompt; donor wire `{subagent_id, status: started, goal}`. Donor quirk preserved: request's session_id/timeout accepted but unused (fresh sub-session, turn awaited before reply). 5 tests; live :8000 → sub-session `ec041f3e` ran a real LLM turn, retrievable via /api/sessions |
 | `GET /api/directory_list` | **P (2026-09-26, T8a)** — kernel-native (Stage 11.14 ADR-130, app.py:5293; test_stage_11_14_adr_130_directory_list.py) |
 | `GET /api/dreamtime/history` | no referent |
 | `POST /api/dreamtime/run` | no referent |
@@ -380,6 +380,14 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
      (`Selected qwen3.8-27b-code for refactoring (tier=fast)`). Remaining
      T8c: delegate, hooks ×2, schedule, evaluation, plugins toggle,
      dreamtime ×4, schema (11 rows).
+     **T8c-3 (2026-09-26)** — `POST /api/delegate` kernel-native (donor
+     main.py:4065): fresh sub-session + `await tektos_turn_loop.run_turn`
+     (donor awaited `runtime_sdk.submit_prompt` — same semantics), donor
+     verbatim subagent prompt, donor wire `{subagent_id, status, goal}`.
+     Donor quirk preserved: request session_id/timeout unused. 5 tests;
+     live :8000 (sub-session `ec041f3e` ran a real LLM turn). Remaining
+     T8c: hooks ×2, schedule, evaluation, plugins toggle, dreamtime ×4,
+     schema (10 rows).
 
 3. **D-bucket ports ride the plan's Stage 13** in its own order
    (13.1 schema_evolution → 13.2 db_manager → … → 13.7 voice), each with its own

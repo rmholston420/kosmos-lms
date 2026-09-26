@@ -6453,6 +6453,64 @@ async def tektos_prompt_sse(payload: dict[str, Any]) -> StreamingResponse:
     )
 
 
+@app.post("/api/delegate")
+async def delegate_task(payload: dict[str, Any]) -> dict[str, Any]:
+    """Spawn a subagent session for a subtask (donor POST /api/delegate,
+    donor main.py:4065; ADR-141 T8c-3).
+
+    Donor wire (preserved): body ``{session_id, goal, context?, timeout?}``
+    → ``{subagent_id, status: "started", goal}``. Donor semantics: it
+    ignores the request's session_id/timeout (spawns a FRESH sub-session
+    and awaits the subagent turn to completion before replying) — kernel
+    matches that: ``registry.session.create_session`` +
+    ``await registry.tektos_turn_loop.run_turn`` (the ADR-104 turn loop
+    is the kernel referent for the donor's runtime_sdk.submit_prompt).
+    The subagent prompt is the donor's verbatim GOAL/CONTEXT/WORKFLOW
+    template.
+    """
+    goal = payload.get("goal")
+    if not goal or not isinstance(goal, str):
+        raise HTTPException(422, "goal is required")
+    context = payload.get("context") or "No additional context provided."
+    port = registry.session
+    if port is None:
+        _session_port_offline()
+    loop = registry.tektos_turn_loop
+    if loop is None:
+        raise HTTPException(
+            503,
+            "tektos turn loop offline (KOSMOS_TEKTOS_TURN_LOOP=on required)",
+        )
+    model, _base_url, _lane = _active_llm_lane()
+    sub = await port.create_session(model=model or "unknown")
+    subagent_prompt = (
+        "You are a subagent working on a specific subtask.\n\n"
+        f"GOAL: {goal}\n\n"
+        f"CONTEXT: {context}\n\n"
+        "WORKFLOW:\n"
+        "1. Analyze the goal and plan your approach\n"
+        "2. Use available tools (bash, file_write, file_read, web_search, "
+        "etc.) to complete the task\n"
+        "3. Write your implementation to files\n"
+        "4. Execute and verify your work\n"
+        "5. Return a concise summary of what you accomplished\n\n"
+        "IMPORTANT:\n"
+        "- Focus only on the goal provided\n"
+        "- Do not deviate from the task\n"
+        "- Return a clear summary of your work when complete\n"
+    )
+    await loop.run_turn(
+        agent_id="tektos-delegate",
+        prompt=subagent_prompt,
+        session_id=sub.id,
+        system_prompt=(
+            "You are a specialized subagent. Complete your assigned task "
+            "efficiently."
+        ),
+    )
+    return {"subagent_id": sub.id, "status": "started", "goal": goal}
+
+
 @app.post("/api/sessions/{session_id}/fork")
 async def tektos_fork_session(
     session_id: str, payload: dict[str, Any]

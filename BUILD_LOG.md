@@ -5273,3 +5273,24 @@ MCP, metabolism) in ROI order.
 - **Gate progress (ADR-141):** T1–T7 ✓, T8a ✓, T8b ✓, T8c-1 ✓, T8c-2 ✓.
   Remaining T8c: delegate, hooks ×2, schedule, evaluation, plugins toggle,
   dreamtime ×4, schema (11 rows).
+
+## 2026-09-26 04:10 EDT — ADR-141 T8c-3 complete: POST /api/delegate kernel-native
+- **What:** Donor `POST /api/delegate` (main.py:4065) ported. Kernel referent:
+  fresh sub-session via `registry.session.create_session` +
+  `await registry.tektos_turn_loop.run_turn` (ADR-104 turn loop = the kernel
+  referent for the donor's `runtime_sdk.submit_prompt` — the donor ALSO
+  awaited it, not fire-and-forget). Donor's verbatim GOAL/CONTEXT/WORKFLOW
+  subagent prompt + donor system prompt. Donor wire `{subagent_id, status:
+  "started", goal}`. Donor quirk preserved: the request's session_id/timeout
+  are accepted but unused (a fresh sub-session is always spawned; the turn is
+  awaited before replying).
+- **Verified:** `test_adr141_t8c3_delegate.py` 5/5 passed (real TektosSessionAdapter
+  + fake loop harness, prompt template asserted verbatim); live :8000 → POST
+  with goal → HTTP 200 `{"subagent_id":"ec041f3e-...","status":"started",
+  "goal":"..."}`; sub-session `ec041f3e` visible in /api/sessions (status
+  ready) after a real LLM turn completed.
+- **Docs:** ADR-141 row → P (T8c-3), counts P 71→72 / T 11→10, T8 section
+  T8c-3 line; ADR README progress → T8c-3 ✓.
+- **Gate progress (ADR-141):** T1–T7 ✓, T8a ✓, T8b ✓, T8c-1 ✓, T8c-2 ✓,
+  T8c-3 ✓. Remaining T8c: hooks ×2, schedule, evaluation, plugins toggle,
+  dreamtime ×4, schema (10 rows).
