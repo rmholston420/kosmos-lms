@@ -5920,3 +5920,26 @@ MCP, metabolism) in ROI order.
   0.75, should_compact false, budget_remaining 262144, full stats
   envelope; regression probes 13.7/13.4/13.5/13.6 clean.
 - **Docs:** ADR-141 row contextCurator → P; README 13.8 ✓.
+
+## 2026-09-26 — Stage 13.9: repo map status route (ADR-141)
+- **Substrate:** donor `tektos/runtime/repo_map_generator.py` (135 LOC,
+  100% stdlib, zero `tektos.*` imports) → `kernel/repo_map_generator.py`
+  BYTE-VERBATIM (generic repository-structure substrate → kernel per the
+  governing layering rule).
+- **Boot:** `registry.tektos_repo_map` under `KOSMOS_TEKTOS_REPO_MAP=on`
+  (default on); `project_root` = the Kosmos repo root (donor main.py:1493
+  mapped the donor's own repo root — kernel-honest equivalent: map the
+  repo the substrate lives in). The real `os.walk` scan scheduled on the
+  running loop fire-and-forget, exactly as the donor boot did.
+- **Route:** `GET /api/repoMap/status` donor-verbatim (main.py:4617):
+  `initialized` + get_stats() / `not_initialized` gate-off at 200.
+- **Divergences:** none on the wire; project_root necessarily differs
+  (Kosmos repo, not the donor repo) — documented in the boot fn.
+- **Tests:** `tests/kernel/test_adr141_s139_repo_map_status.py` 4 tests
+  (route initialized with post-boot scan wait, gate-off, build_map
+  scan+exclusions on a tmp tree, idempotent rebuild).
+- **Suite:** 812 passed (808 + 4).
+- **Live-verified on :8000:** 962 entries (712 files, 250 dirs) over the
+  Kosmos repo; regression probes 13.4/13.5/13.6/13.7/13.8 all clean.
+- **Docs:** ADR-141 repoMap row → P (Stage 13.9); README ADR-141 row
+  gains Stage 13.9 ✓.

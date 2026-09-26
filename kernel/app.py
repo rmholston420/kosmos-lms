@@ -355,6 +355,10 @@ class _BootRegistry:
         # lifecycle + compaction decisions). Generic substrate →
         # kernel/context_curator.py.
         self.tektos_context_curator: Any = None
+        # ADR-141 Stage 13.9: donor RepoMapGenerator (repository
+        # structure map: file/dir/import scan). Generic substrate →
+        # kernel/repo_map_generator.py.
+        self.tektos_repo_map: Any = None
         # ADR-143 T3: kernel learning substrate (donor
         # ``SelfImprovementAdapter`` — experience → evaluation →
         # meta-learning → benchmark loop, JSONL ledger). Boots
@@ -1890,6 +1894,32 @@ async def lifespan(app: FastAPI):
         )
         return curator
 
+    @ _try("tektos_repo_map")
+    def _boot_tektos_repo_map():
+        import os as _os
+        from pathlib import Path as _Path
+
+        if _os.environ.get("KOSMOS_TEKTOS_REPO_MAP", "on").lower() not in ("on", "true", "1"):
+            return None
+        from kernel.repo_map_generator import RepoMapGenerator
+
+        # Donor boot (main.py:1493-1496): project_root = the donor's repo
+        # root (src/tektos → parent.parent); start() performs the real
+        # os.walk scan. Kernel-honest equivalent: the Kosmos repo root
+        # (this file's parent) — the substrate maps the repository it
+        # lives in, exactly as the donor did. The walk is scheduled on
+        # the running loop (the _try boot fn executes sync inside the
+        # async lifespan; asyncio.run would raise), fire-and-forget as
+        # in the donor's boot.
+        generator = RepoMapGenerator(project_root=str(_Path(__file__).parent.parent))
+        asyncio.get_running_loop().create_task(generator.start())
+        logger.info(
+            "kosmos.tektos_repo_map: wired (ADR-141 Stage 13.9); "
+            "project_root=%s",
+            generator._project_root,
+        )
+        return generator
+
     registry.tektos_reflection = _boot_tektos_reflection
     registry.tektos_synthesis = _boot_tektos_synthesis
     registry.tektos_experience = _boot_tektos_experience
@@ -1906,6 +1936,7 @@ async def lifespan(app: FastAPI):
     registry.tektos_axioms = _boot_tektos_axioms
     registry.tektos_metabolism = _boot_tektos_metabolism
     registry.tektos_context_curator = _boot_tektos_context_curator
+    registry.tektos_repo_map = _boot_tektos_repo_map
     registry.tektos_orchestrator = _boot_tektos_orchestrator
 
     # --- Gnosis boot seeder (ADR-064) ----------------------------------------
@@ -4259,6 +4290,18 @@ async def context_curator_status() -> dict[str, Any]:
     return {
         "status": "initialized",
         "stats": curator.get_compaction_stats(),
+    }
+
+
+@app.get("/api/repoMap/status")
+async def repo_map_status() -> dict[str, Any]:
+    """Repository map status (donor main.py:4617)."""
+    generator = registry.tektos_repo_map
+    if generator is None:
+        return {"status": "not_initialized"}
+    return {
+        "status": "initialized",
+        "stats": generator.get_stats(),
     }
 
 
