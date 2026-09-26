@@ -5553,3 +5553,55 @@ MCP, metabolism) in ROI order.
   divergences; README progress line.
 - **Gate progress (ADR-141):** Stage 13.1 COMPLETE (schema / patterns /
   propose / apply all P). Next: remaining Stage 13 D-routes.
+
+## 2026-09-26 — ADR-141 Stage 13.2a: /api/db/* substrate (DatabaseManager + full schema-evolution engine)
+
+- **Slice:** ADR-141 Stage 13.2a (substrate for the 19 `/api/db/*` routes)
+- **What changed:**
+  - Donor `db_manager.py` (1575 LOC, 100% stdlib: `DatabaseManager`
+    facade + `SchemaManager`/`DataAnalyzer`/`BackupManager`/
+    `QueryExecutor` + 6 dataclasses) verbatim → `kernel/db_manager.py`.
+  - **KEY DISCOVERY:** the donor has TWO distinct
+    `SchemaEvolutionEngine` classes. The T8c-9 port
+    (`kernel/schema_evolution.py`) came from `migrations/schema_evolution.py`
+    (758 LOC — powers `/api/schema/*`). But `db_manager.py` lazy-imports
+    the FULL lifecycle engine `tektos/schema_evolution.py` (1644 LOC,
+    composes `MigrationEngine`+`SchemaDiffer`+`RelationshipDetector`+
+    `NormalizationAnalyzer`+`SchemaDocumenter`+`HealthMonitor`) — the
+    one the live donor's `/api/db/optimize` runs (returns
+    `health_score`/`normalization_issues`). Ported verbatim →
+    `kernel/schema_evolution_full.py`; `db_manager` re-pointed at it.
+  - `registry.tektos_db` booted under `KOSMOS_TEKTOS_DB=on` (own gate,
+    independent of T6 memory), kernel-owned db at donor's canonical
+    `data/tektos.db` (fresh file, no donor data carried; overridable via
+    `KOSMOS_TEKTOS_DB_PATH`). `KOSMOS_TEKTOS_DB=on` added to
+    `kosmos-kernel.local.env` (gitignored).
+- **Documented divergences:**
+  1. `SchemaEvolutionEngine` import path: donor
+    `from tektos.schema_evolution import ...` → kernel
+    `from kernel.schema_evolution_full import ...` (same class, renamed
+    module).
+  2. **DONOR SELF-IMPORT BUG fixed (necessarily):**
+    `schema_evolution.py:1171` self-imports
+    `from .schema_evolution import RelationshipDetector` (same module).
+    In the kernel the file is `kernel/schema_evolution_full.py`, so the
+    relative import would resolve to the WRONG (T8c-9 migrations) engine.
+    Re-pointed to absolute `kernel.schema_evolution_full` (the correct,
+    same-class target). This only surfaced once the file moved — the
+    donor's documenter path was dead against the migrations engine.
+  3. db path: donor managed the retired event-store `data/tektos.db`;
+     kernel owns a fresh file at the same path (ADR-137 retired the
+     donor's data; no donor data carried over).
+- **Verified:** 4 substrate tests green (module-scoped real boot, gate on,
+  tmp db: boot slot wired + lazy file creation, end-to-end
+  create→dml→query→introspect→analyze→optimize(health_score)→
+  backup/restore→export/import roundtrip→stats, full-engine facade
+  methods present + `to_markdown` non-empty, gate-off → None). Full
+  suite green. Live :8000 — `/api/logs` ring shows
+  `kosmos.tektos_db: wired (ADR-141 Stage 13.2a); db=.../data/tektos.db`,
+  0 ERROR records.
+- **Docs:** ADR-141 13.2 substrate row → P (13.2a); README progress line.
+- **Gate progress (ADR-141):** Stage 13.2 substrate P. Next: 13.2b read
+  routes (status/tables/columns/schema/sample), 13.2c DDL (create/drop/
+  rename columns+tables/indexes), 13.2d query/DML/transaction/explain,
+  13.2e export/import/backup/restore/analyze/optimize.

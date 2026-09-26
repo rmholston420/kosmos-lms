@@ -92,6 +92,7 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `POST /api/axioms/{axiom_id}/verify` | Stage 13 subsystem (axioms) |
 | `GET /api/context/status` | Stage 13 (context subsystem) |
 | `GET /api/contextCurator/status` | Stage 13 (context curator) |
+| — 13.2 substrate — | **P (Stage 13.2a, 2026-09-26).** Donor `db_manager.py` (1575 LOC, 100% stdlib) → `kernel/db_manager.py`; donor FULL schema-evolution engine `tektos/schema_evolution.py` (1644 LOC) → `kernel/schema_evolution_full.py` (distinct from the T8c-9 migrations engine). `registry.tektos_db` booted under `KOSMOS_TEKTOS_DB=on`, kernel-owned db at donor's canonical `data/tektos.db` (fresh file, no donor data carried). Donor self-import `from .schema_evolution import RelationshipDetector` fixed to absolute (documented divergence). The 19 routes below ride on this substrate. |
 | `GET /api/db/analyze` | Stage 13.2 db_manager |
 | `POST /api/db/backup` | Stage 13.2 db_manager |
 | `GET /api/db/backups` | Stage 13.2 db_manager |

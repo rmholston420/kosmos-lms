@@ -345,6 +345,7 @@ class _BootRegistry:
         # GET /api/schema; the propose/apply action routes stay D
         # (Stage 13.1) with this engine as their substrate.
         self.tektos_schema_evolution: Any = None
+        self.tektos_db: Any = None
         # ADR-143 T3: kernel learning substrate (donor
         # ``SelfImprovementAdapter`` — experience → evaluation →
         # meta-learning → benchmark loop, JSONL ledger). Boots
@@ -1740,6 +1741,40 @@ async def lifespan(app: FastAPI):
         )
         return engine
 
+    @_try("tektos_db")
+    def _boot_tektos_db():
+        import logging as _kl
+        import os as _os
+        from pathlib import Path as _Path
+
+        from kernel.db_manager import DatabaseManager
+
+        _log = _kl.getLogger(__name__)
+        _env = "KOSMOS_TEKTOS_DB"
+        _mode = _os.environ.get(_env, "off").lower().strip()
+        _ALLOWED = ("off", "on")
+        if _mode not in _ALLOWED:
+            raise RuntimeError(
+                "%s=%r is not one of %s (ADR-141 Stage 13.2a)." % (_env, _mode, _ALLOWED)
+            )
+        if _mode == "off":
+            return None
+
+        # DIVERGENCE (13.2a): the donor's DatabaseManager managed the
+        # event-store file data/tektos.db — the same file ADR-137 retired
+        # from the ops UI. Per the user's 2026-09-26 decision the full
+        # /api/db/* surface is ported 1:1 over a KERNEL-OWNED SQLite db at
+        # the donor's canonical path (data/tektos.db), fresh file on first
+        # boot — no donor data is carried over (the old file is inert
+        # donor state, not kernel data). Overridable via
+        # KOSMOS_TEKTOS_DB_PATH (mirrors KOSMOS_MEMORY_DB_PATH).
+        db_path = _os.environ.get("KOSMOS_TEKTOS_DB_PATH")
+        if not db_path:
+            db_path = str(_Path(__file__).resolve().parent.parent / "data" / "tektos.db")
+        manager = DatabaseManager(db_path)
+        _log.info("kosmos.tektos_db: wired (ADR-141 Stage 13.2a); db=%s", db_path)
+        return manager
+
     registry.tektos_reflection = _boot_tektos_reflection
     registry.tektos_synthesis = _boot_tektos_synthesis
     registry.tektos_experience = _boot_tektos_experience
@@ -1752,6 +1787,7 @@ async def lifespan(app: FastAPI):
     registry.tektos_memory_persistence = _boot_tektos_memory_persistence
     registry.tektos_dreamtime = _boot_tektos_dreamtime
     registry.tektos_schema_evolution = _boot_tektos_schema_evolution
+    registry.tektos_db = _boot_tektos_db
     registry.tektos_orchestrator = _boot_tektos_orchestrator
 
     # --- Gnosis boot seeder (ADR-064) ----------------------------------------
