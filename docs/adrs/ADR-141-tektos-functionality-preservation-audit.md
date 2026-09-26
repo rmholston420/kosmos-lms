@@ -33,7 +33,7 @@ an equivalent kernel mechanism.
 
 | Disposition | Count | Meaning |
 |---|---|---|
-| **P — Preserved** | 72 (35 + T6 2 + T7 2 + T8a 24 + T8b-1 2 + T8b-2 1 + T8b-3 1 + T8b-4 1 + T8c-1 2 + T8c-2 1 + T8c-3 1, 2026-09-26) | kernel/plugin referent exists and is live |
+| **P — Preserved** | 74 (35 + T6 2 + T7 2 + T8a 24 + T8b-1 2 + T8b-2 1 + T8b-3 1 + T8b-4 1 + T8c-1 2 + T8c-2 1 + T8c-3 1 + T8c-4 2, 2026-09-26) | kernel/plugin referent exists and is live |
 | **D — Deferred** | 70 + 2 WS | recorded path; functionality lost until the named port lands |
 | **T — To-port** | 10 | no referent yet; each becomes a work item before deletion (T8 scope; orchestrator ×2 folded into T8c) |
 
@@ -179,8 +179,8 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `POST /api/embedder/embed` | **P (2026-09-26, T7)** — kernel-native, donor shape (wired to registry.embeddings) |
 | `GET /api/embedder/status` | **P (2026-09-26, T7)** — kernel-native, donor shape (wired to registry.embeddings) |
 | `GET /api/evaluation/status` | no referent — evaluation harness status |
-| `GET /api/hooks` | no referent — hooks list |
-| `POST /api/hooks/fire` | no referent — hooks fire |
+| `GET /api/hooks` | **P (2026-09-26, T8c-4)** — kernel-native: donor main.py:5101. Substrate = donor `runtime/hooks.py` (325 LOC, self-contained, stdlib-only) verbatim port → `kernel/hooks.py`; booted as `registry.hook_manager` (app.py, resource monitor = kernel thermal watchdog — lacks `check_thermal_limit`, so the donor's own hasattr guard skips the thermal builtins: 4 not 6). Donor wire `{hooks: [{event_type, handlers[]}]}`; `{error}` at 200 when off (donor shape). 8 tests; live :8000 → 4 builtin events listed |
+| `POST /api/hooks/fire` | **P (2026-09-26, T8c-4)** — kernel-native: donor main.py:5117. Donor wire `{event_type, results: [{outcome, message, blocking, data}]}` verbatim; 422 missing event_type (donor pydantic), 503 system off, 500 fire failure; `stop_on_abort=False` (donor). Live :8000 → `tool.before` fire → `continue` |
 | `GET /api/keys` | **P (2026-09-26, T8b-2)** — kernel-native: `tektos_list_api_keys` (app.py); donor wire `{keys: [{name,key,value,configured}]}` — KOSMOS_* secret set + DATABASE_URL/OPENAI_API_KEY, values masked (`••••••••`/`not configured`); test `tests/kernel/test_adr141_t8b2_keys_surface.py` |
 | `POST /api/llm/probe` | **P (2026-09-26, T8b-3)** — kernel-native: `tektos_llm_probe` (app.py); donor wire `{llm_available, base_url, model}` over `registry.llm.is_healthy()` (ADR-132 FailoverLLMAdapter — real per-backend probe, engages fallback); test `tests/kernel/test_adr141_t8b3_llm_probe.py` |
 | `POST /api/memory/decay` | **P (2026-09-26, T6)** — kernel-native, donor shape |
@@ -388,6 +388,19 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
      live :8000 (sub-session `ec041f3e` ran a real LLM turn). Remaining
      T8c: hooks ×2, schedule, evaluation, plugins toggle, dreamtime ×4,
      schema (10 rows).
+     **T8c-4 (2026-09-26)** — hooks ×2 kernel-native (donor main.py:5101,
+     :5117). Donor `runtime/hooks.py` (325 LOC, self-contained) verbatim
+     port → `kernel/hooks.py`; `registry.hook_manager` booted in app.py
+     after `model_router` with the kernel thermal watchdog as resource
+     monitor (it lacks `check_thermal_limit`, so the donor's own hasattr
+     guard registers 4 builtin events, not 6 — honest degrade, no fork).
+     Wire verbatim: list `{hooks: [{event_type, handlers[]}]}` (+ `{error}`
+     at 200 when off), fire `{event_type, results: [{outcome, message,
+     blocking, data}]}` (422/503/500, `stop_on_abort=False`). 8 tests
+     (`test_adr141_t8c4_hooks.py`, incl. thermal-guard activation with a
+     monitor that DOES expose the method); live :8000 → 4 events listed,
+     `tool.before` fire → `continue`. Remaining T8c: schedule, evaluation,
+     plugins toggle, dreamtime ×4, schema (8 rows).
 
 3. **D-bucket ports ride the plan's Stage 13** in its own order
    (13.1 schema_evolution → 13.2 db_manager → … → 13.7 voice), each with its own

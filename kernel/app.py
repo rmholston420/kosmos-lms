@@ -85,6 +85,8 @@ from pydantic import BaseModel, Field
 
 from kernel.plan_tracker import PlanTracker
 
+logger = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
 # ADR-129 (Stage 11.13): kernel-native log ring buffer
 # ---------------------------------------------------------------------------
@@ -248,6 +250,12 @@ class _BootRegistry:
         # (mirrors the donor's main.py:188-207, which seeded TEKTOS_LLM_* env).
         # Consumed by GET /api/routing/decide; call sites tolerate None.
         self.model_router: Any = None
+        # ADR-141 T8c-4 (2026-09-26): kernel-owned HookManager (kernel/hooks.py)
+        # — donor hook substrate (runtime/hooks.py), booted with the kernel
+        # thermal_watchdog as the resource monitor (donor passed its thermal
+        # monitor; neither exposes check_thermal_limit → same degrade).
+        # Consumed by GET /api/hooks + POST /api/hooks/fire.
+        self.hook_manager: Any = None
         # ADR-141 R6 + ADR-142 (2026-09-25): kernel-owned self-repair
         # engine daemon — the full donor port, now the kernel RELIABILITY
         # SUBSTRATE (kernel.reliability.engine) with FULL donor execution
@@ -707,6 +715,23 @@ async def lifespan(app: FastAPI):
         return router
 
     registry.model_router = _boot_model_router
+
+    # --- Hook manager (donor runtime/hooks.py substrate) --------------------
+    # ADR-141 T8c-4 (2026-09-26): kernel-owned HookManager. The donor wired
+    # `HookManager(resource_monitor=thermal_monitor)`. Kernel referent for the
+    # thermal monitor is `registry.thermal_watchdog` (booted above at
+    # _boot_thermal_watchdog). Neither the donor thermal monitor NOR the kernel
+    # watchdog exposes `check_thermal_limit`, so the thermal built-in hook is
+    # skipped identically on both sides — the 4 non-thermal builtins
+    # (tool.before/after, session.created, prompt.before) register. Passing the
+    # watchdog keeps the degrade honest and forward-compatible.
+    @_try("hook_manager")
+    def _boot_hook_manager():
+        from kernel.hooks import HookManager
+
+        return HookManager(resource_monitor=registry.thermal_watchdog)
+
+    registry.hook_manager = _boot_hook_manager
 
     # --- Vector (QdrantVectorAdapter) ---------------------------------------
     # Stage 1.6 Phase 1 addition (ADR-074 D2): kernel-owned VectorPort.
@@ -6509,6 +6534,76 @@ async def delegate_task(payload: dict[str, Any]) -> dict[str, Any]:
         ),
     )
     return {"subagent_id": sub.id, "status": "started", "goal": goal}
+
+
+@app.get("/api/hooks")
+async def list_hooks() -> dict[str, Any]:
+    """List all registered hooks with their metadata (donor GET /api/hooks,
+    donor main.py:5101; ADR-141 T8c-4).
+
+    Donor wire (preserved): ``{hooks: [{event_type, handlers[]}]}`` on 200;
+    ``{error: str}`` at 200 when the hook system is off (donor returns the
+    error dict in the body, not as an HTTP error).
+    """
+    try:
+        hm = registry.hook_manager
+        if hm is None:
+            return {"error": "Hook system not initialized"}
+        hooks = hm.list_hooks()
+        return {
+            "hooks": [
+                {"event_type": et, "handlers": handlers}
+                for et, handlers in hooks.items()
+            ]
+        }
+    except Exception as exc:  # noqa: BLE001 — donor shape: error at 200
+        logger.warning("Hook listing failed: %s", exc)
+        return {"error": str(exc)}
+
+
+@app.post("/api/hooks/fire")
+async def fire_hook(payload: dict[str, Any]) -> dict[str, Any]:
+    """Manually trigger a hook event (donor POST /api/hooks/fire,
+    donor main.py:5117; ADR-141 T8c-4).
+
+    Donor wire (preserved): body ``{event_type, session_id?, tool_name?,
+    tool_input?, model?, task_description?, outcome?, metadata?}`` →
+    ``{event_type, results: [{outcome, message, blocking, data}]}``.
+    503 when the hook system is off; 500 on fire failure.
+    """
+    event_type = payload.get("event_type")
+    if not event_type or not isinstance(event_type, str):
+        raise HTTPException(422, "event_type is required")
+    hm = registry.hook_manager
+    if hm is None:
+        raise HTTPException(503, "Hook system not initialized")
+    try:
+        results = await hm.fire(
+            event_type,
+            session_id=payload.get("session_id"),
+            tool_name=payload.get("tool_name"),
+            tool_input=payload.get("tool_input"),
+            model=payload.get("model"),
+            task_description=payload.get("task_description"),
+            outcome=payload.get("outcome"),
+            metadata=payload.get("metadata") or {},
+            stop_on_abort=False,
+        )
+        return {
+            "event_type": event_type,
+            "results": [
+                {
+                    "outcome": r.outcome.value,
+                    "message": r.message,
+                    "blocking": r.blocking,
+                    "data": r.data,
+                }
+                for r in results
+            ],
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Hook fire failed: %s", exc)
+        raise HTTPException(500, str(exc)) from exc
 
 
 @app.post("/api/sessions/{session_id}/fork")

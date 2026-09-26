@@ -5275,6 +5275,32 @@ MCP, metabolism) in ROI order.
   dreamtime ×4, schema (11 rows).
 
 ## 2026-09-26 04:10 EDT — ADR-141 T8c-3 complete: POST /api/delegate kernel-native
+
+## 2026-09-26 04:45 EDT — ADR-141 T8c-4 complete: hooks ×2 kernel-native
+
+- **Substrate:** donor `runtime/hooks.py` (325 LOC, self-contained,
+  stdlib-only) verbatim port → `kernel/hooks.py` (hook registry,
+  HookContext/HookResult, 6 builtin hooks). `registry.hook_manager` booted
+  in app.py after `model_router`, resource monitor = kernel thermal
+  watchdog — lacks `check_thermal_limit` so the donor's own hasattr guard
+  registers 4 builtin events (honest degrade, no fork).
+- **Routes (app.py, after /api/delegate):** `GET /api/hooks` →
+  `{hooks: [{event_type, handlers[]}]}`, `{error}` at 200 when off (donor
+  shape); `POST /api/hooks/fire` → `{event_type, results: [{outcome,
+  message, blocking, data}]}`, 422 missing event_type, 503 off, 500
+  failure, `stop_on_abort=False` — all donor-verbatim (main.py:5101,
+  :5117).
+- **Tests:** `tests/kernel/test_adr141_t8c4_hooks.py` — 8 live (donor wire
+  shapes, manager-None degrade, thermal-guard activation with a monitor
+  that DOES expose the method, empty-prompt abort, unknown event →
+  empty results). 8/8 pass.
+- **Live :8000:** GET /api/hooks → 4 events (tool.before, tool.after,
+  session.created, prompt.before); POST /api/hooks/fire tool.before →
+  `{outcome: continue, blocking: false}`.
+- **Gate progress (ADR-141):** T1–T8a–T8b–T8c-1/2/3 ✓, T8c-4 ✓.
+  Remaining T8c: schedule, evaluation, plugins toggle, dreamtime ×4,
+  schema (8 rows). Then D-bucket (Stage 13), /health ×3, ADR-140 WS,
+  ADR-109 gateway retirement.
 - **What:** Donor `POST /api/delegate` (main.py:4065) ported. Kernel referent:
   fresh sub-session via `registry.session.create_session` +
   `await registry.tektos_turn_loop.run_turn` (ADR-104 turn loop = the kernel
