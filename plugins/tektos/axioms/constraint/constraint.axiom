@@ -1,0 +1,97 @@
+id: constraint.loop_safety
+category: constraint
+status: verified
+date: 2026-08-24
+content: 'Hard limits prevent infinite loops: max_turns=25, max_tokens_total=131072,
+  max_wall_time=600s, repetition_threshold=3.'
+notes: 'LoopSafetyMonitor tracks: tool repetition, token usage, wall time, turn count
+
+  Warning at 5 repeated tools, block at 8
+
+  Window size: 20 turns (increased from 10 to reduce false positives)
+
+  Pattern 4 (same-tool-name-3x) removed — replaced with arg-aware logic
+
+  These limits are non-negotiable — they protect the system from runaway execution
+
+  '
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- loop-safety
+- hard-limits
+- guardrails
+- reliability
+---
+id: constraint.never_delete_user_files
+category: constraint
+status: verified
+date: 2026-08-24
+content: NEVER delete user files, games, or applications without explicit user confirmation.
+  Steam apps are especially protected.
+notes: 'File deletion is a destructive operation — always verify before executing
+
+  Steam apps/games are never to be removed under any circumstances
+
+  User data is sacred — the system should never assume it can safely delete
+
+  When in doubt, ask the user rather than risk data loss
+
+  This is a hard constraint, not a preference
+
+  '
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- safety
+- user-data
+- deletion
+- steam
+- protection
+---
+id: constraint.no_secret_logging
+category: constraint
+status: verified
+date: ''
+content: API keys, tokens, passwords, and credentials are never logged, printed, or
+  stored in plain text. They are read from environment variables or secret managers.
+notes: ''
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- security
+- secrets
+- compliance
+---
+id: constraint.input_validation
+category: constraint
+status: verified
+date: ''
+content: All user input and external data is validated and sanitized before processing.
+  Path traversal, SQL injection, and command injection are prevented.
+notes: ''
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- security
+- validation
+- injection
+---
+id: constraint.least_privilege
+category: constraint
+status: verified
+date: ''
+content: Tektos operates with the minimum privileges necessary. File operations respect
+  permissions. Network calls use explicit allowlists.
+notes: ''
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- security
+- privilege
+- permissions

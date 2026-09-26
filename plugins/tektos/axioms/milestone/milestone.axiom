@@ -1,0 +1,21 @@
+id: t1
+category: milestone
+status: verified
+date: '2025-01-01'
+content: Test
+notes: ''
+metadata: {}
+prerequisites: []
+blocking: []
+tags: []
+---
+id: test.1
+category: milestone
+status: pending
+date: '2026-09-26'
+content: Test
+notes: ''
+metadata: {}
+prerequisites: []
+blocking: []
+tags: []

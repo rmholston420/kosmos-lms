@@ -1,0 +1,12 @@
+id: architecture.bicameral
+category: architecture
+status: verified
+date: 2026-08-24
+content: Tektos uses a bicameral architecture — left hemisphere (operative, logical, sequential) vs right hemisphere (speculative, holistic, contextual).
+notes: |
+  Left = S1 Coding Agent (operational execution)
+  Right = S4 Planner/Thinker (speculative planning)
+  S3 Manager = corpus callosum (integrates both hemispheres)
+  Creativity = Generation of Novelty (McKenna)
+  Novelty requires: sufficient variety (Ashby's Law), bicameral tension, safe failure space, encoding mechanism
+tags: [architecture, bicameral, hemispheres, creativity, novelty]

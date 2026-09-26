@@ -5746,3 +5746,41 @@ MCP, metabolism) in ROI order.
   Next: remaining Stage 13 D-routes (axioms, context, mcp, metabolism,
   nervous-system, observability, rag, repoMap, thermal, vision, voice),
   `/health` ×3, ADR-140 WS, ADR-109 gateway deletion.
+
+## 2026-09-26 — Stage 13.3: axioms substrate + routes (ADR-141)
+- **Substrate:** donor `tektos/axioms.py` (262 LOC, self-contained:
+  yaml + dataclasses, no third-party deps beyond pyyaml) verbatim →
+  `kernel/axioms.py` (generic context-compression knowledge store →
+  kernel-level per the governing layering rule; only change = the one
+  self-import line `from tektos.axioms` → `from kernel.axioms`, diff
+  verified). Tektos axiom DATA (19 .axiom files: milestones, directives,
+  constraints, lessons, architecture) → `plugins/tektos/axioms/`,
+  passed to the substrate as a data DIRECTORY — never imported
+  (ADR-007). `registry.tektos_axioms` (AxiomSystem) boot slot replaces
+  the donor's module-level `load_axioms()` singleton; `KOSMOS_TEKTOS_AXIOMS_DIR`
+  override (default = plugins/tektos/axioms, where the donor data
+  shipped).
+- **Routes:** 2 donor routes at donor paths, wire verbatim
+  (donor main.py:2042/2072): `GET /api/axioms` (bare 10-field list,
+  `?category=` filter, any failure → [] at 200 — donor log+degrade;
+  subsystem-absent is the same shape since the donor's singleton always
+  existed, possibly empty) + `POST /api/axioms/{id}/verify`
+  ({"ok": true, id, status: "verified"}, persisted to the .axiom files
+  via _save; unknown id / subsystem absent → 404 {"detail": "Axiom
+  '<id>' not found"}; 500 on persist failure).
+- **Test:** `tests/kernel/test_adr141_s133_axioms_routes.py` — 5 tests
+  (list shape 10-field lock + count, category filter + unknown→[],
+  verify persists + re-reads verified, unknown 404, subsystem-absent
+  degrade both shapes). Uses a tmp COPY of the plugin data dir
+  (KOSMOS_TEKTOS_AXIOMS_DIR) because verify() rewrites the .axiom files.
+  Full suite green (696 passed).
+- **Live-verified on :8000:** 6-probe sweep all green (list 29 active,
+  wire fields locked, filter constraint=5, unknown filter [], verify 200
+  on pending axiom `t2`, unknown 404). Post-probe: plugin data dir
+  restored to pristine donor state (re-copied; diff -rq clean) since the
+  live flip persisted to the real files.
+- **Docs:** ADR-141 2 rows → P (13.3); README progress line.
+- **Gate progress (ADR-141):** 13.3 axioms P. Remaining Stage 13
+  D-routes: context, mcp, metabolism, nervous-system, observability,
+  rag ×2, repoMap, thermal ×2, vision ×3, voice ×3, `/health` ×3,
+  ADR-140 WS, ADR-109 gateway deletion.

@@ -1,0 +1,12 @@
+id: constraint.loop_safety
+category: constraint
+status: verified
+date: 2026-08-24
+content: "Hard limits prevent infinite loops: max_turns=25, max_tokens_total=131072, max_wall_time=600s, repetition_threshold=3."
+notes: |
+  LoopSafetyMonitor tracks: tool repetition, token usage, wall time, turn count
+  Warning at 5 repeated tools, block at 8
+  Window size: 20 turns (increased from 10 to reduce false positives)
+  Pattern 4 (same-tool-name-3x) removed — replaced with arg-aware logic
+  These limits are non-negotiable — they protect the system from runaway execution
+tags: [loop-safety, hard-limits, guardrails, reliability]

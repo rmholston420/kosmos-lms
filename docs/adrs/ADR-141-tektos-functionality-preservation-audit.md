@@ -88,8 +88,8 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 
 | Donor route (on :8020) | Disposition / referent |
 |---|---|
-| `GET /api/axioms` | Stage 13 subsystem (axioms) |
-| `POST /api/axioms/{axiom_id}/verify` | Stage 13 subsystem (axioms) |
+| `GET /api/axioms` | **P (Stage 13.3, 2026-09-26)** — kernel (registry.tektos_axioms; bare 10-field list; ?category= filter; any failure → [] at 200 donor degrade). Substrate: donor `tektos/axioms.py` (262 LOC) verbatim → `kernel/axioms.py` (generic knowledge store → kernel-level per layering rule); Tektos axiom DATA (19 .axiom files) → `plugins/tektos/axioms/` passed as a directory, never imported (ADR-007). registry slot replaces donor `load_axioms()` singleton; KOSMOS_TEKTOS_AXIOMS_DIR override. Live-verified: 29 active axioms, wire fields locked, category filter 5 constraint / unknown → [] |
+| `POST /api/axioms/{axiom_id}/verify` | **P (Stage 13.3, 2026-09-26)** — kernel (registry.tektos_axioms.verify, persisted to the .axiom data dir via _save); `{"ok": true, "id", "status": "verified"}` / unknown id → 404 `{"detail": "Axiom '<id>' not found"}` / subsystem absent → 404 same shape (donor had no uninitialized state — its singleton always existed, possibly empty). Live-verified: verify 200 + unknown 404 (live-verify flip restored to pristine donor data after the probe) |
 | `GET /api/context/status` | Stage 13 (context subsystem) |
 | `GET /api/contextCurator/status` | Stage 13 (context curator) |
 | — 13.2 substrate — | **P (Stage 13.2a, 2026-09-26).** Donor `db_manager.py` (1575 LOC, 100% stdlib) → `kernel/db_manager.py`; donor FULL schema-evolution engine `tektos/schema_evolution.py` (1644 LOC) → `kernel/schema_evolution_full.py` (distinct from the T8c-9 migrations engine). `registry.tektos_db` booted under `KOSMOS_TEKTOS_DB=on`, kernel-owned db at donor's canonical `data/tektos.db` (fresh file, no donor data carried). Donor self-import `from .schema_evolution import RelationshipDetector` fixed to absolute (documented divergence). The 19 routes below ride on this substrate. |

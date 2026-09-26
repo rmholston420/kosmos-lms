@@ -1,0 +1,12 @@
+id: lesson.quality_tracking
+category: lesson
+status: verified
+date: 2026-08-24
+content: Quality must be measured, not assumed. Track test pass rates, artifact counts, and execution duration trends across cycles.
+notes: |
+  Metrics: test pass rate, number of artifacts created, execution time
+  Trends matter more than single-cycle results
+  Quality improvement is the goal of every self-improvement cycle
+  If metrics are declining, the system should reflect and adjust
+  Synthesis guidance should include quality recommendations
+tags: [quality, metrics, tracking, improvement, trends]

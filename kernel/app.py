@@ -346,6 +346,7 @@ class _BootRegistry:
         # (Stage 13.1) with this engine as their substrate.
         self.tektos_schema_evolution: Any = None
         self.tektos_db: Any = None
+        self.tektos_axioms: Any = None
         # ADR-143 T3: kernel learning substrate (donor
         # ``SelfImprovementAdapter`` — experience → evaluation →
         # meta-learning → benchmark loop, JSONL ledger). Boots
@@ -1775,6 +1776,37 @@ async def lifespan(app: FastAPI):
         _log.info("kosmos.tektos_db: wired (ADR-141 Stage 13.2a); db=%s", db_path)
         return manager
 
+    @_try("tektos_axioms")
+    def _boot_tektos_axioms():
+        import logging as _kl
+        import os as _os
+        from pathlib import Path as _Path
+
+        from kernel.axioms import AxiomSystem
+
+        _log = _kl.getLogger(__name__)
+        # Layering (governing rule): the AxiomSystem machinery lives in
+        # the kernel (generic context-compression knowledge store); the
+        # Tektos axiom DATA (19 .axiom knowledge files — milestones,
+        # directives, constraints, lessons) stays in the Tektos plugin
+        # (plugins/tektos/axioms/), passed as a data directory — NOT an
+        # import (ADR-007). Donor default was its own package dir
+        # (tektos/axioms); the donor's data shipped verbatim with the
+        # plugin. Overridable via KOSMOS_TEKTOS_AXIOMS_DIR.
+        axioms_dir = _os.environ.get("KOSMOS_TEKTOS_AXIOMS_DIR")
+        if not axioms_dir:
+            axioms_dir = str(
+                _Path(__file__).resolve().parent.parent
+                / "plugins" / "tektos" / "axioms"
+            )
+        system = AxiomSystem(axioms_dir).load()
+        _log.info(
+            "kosmos.tektos_axioms: wired (ADR-141 Stage 13.3); %d axioms from %s",
+            len(system.list_active()) + len(system.list_by_status("deprecated")),
+            axioms_dir,
+        )
+        return system
+
     registry.tektos_reflection = _boot_tektos_reflection
     registry.tektos_synthesis = _boot_tektos_synthesis
     registry.tektos_experience = _boot_tektos_experience
@@ -1788,6 +1820,7 @@ async def lifespan(app: FastAPI):
     registry.tektos_dreamtime = _boot_tektos_dreamtime
     registry.tektos_schema_evolution = _boot_tektos_schema_evolution
     registry.tektos_db = _boot_tektos_db
+    registry.tektos_axioms = _boot_tektos_axioms
     registry.tektos_orchestrator = _boot_tektos_orchestrator
 
     # --- Gnosis boot seeder (ADR-064) ----------------------------------------
@@ -5181,6 +5214,74 @@ async def db_optimize():
         return results
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# Axioms surface (ADR-141 Stage 13.3, donor main.py:2042/2072) — kernel-native.
+# Substrate = donor `tektos/axioms.py` (262 LOC) verbatim → kernel/axioms.py
+# (generic context-compression knowledge store → kernel-level per the layering
+# rule). Tektos axiom DATA (19 .axiom files) shipped with the plugin
+# (plugins/tektos/axioms/) and is passed to the substrate as a directory —
+# never imported (ADR-007). `registry.tektos_axioms` replaces the donor's
+# module-level `load_axioms()` singleton; same AxiomSystem class, donor
+# default dir = tektos/axioms → kernel default dir = plugins/tektos/axioms.
+# Wire is donor-verbatim: list = bare 10-field list (failure → [] at 200);
+# verify = {"ok": true, id, status} / 404 not found / 500.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/axioms")
+async def list_axioms(category: str | None = None):
+    """List all axioms, optionally filtered by category (donor main.py:2042)."""
+    try:
+        ax_sys = registry.tektos_axioms
+        if ax_sys is None:
+            # Donor `load_axioms()` on a missing dir logs + returns an empty
+            # system → this route returns []. Gate-off is the same shape.
+            return []
+        axioms = ax_sys.list_active()
+        if category:
+            axioms = ax_sys.list_by_category(category)
+        return [
+            {
+                "id": a.id,
+                "category": a.category,
+                "status": a.status,
+                "date": a.date,
+                "content": a.content,
+                "notes": a.notes,
+                "prerequisites": a.prerequisites,
+                "blocking": a.blocking,
+                "tags": a.tags,
+                "metadata": a.metadata,
+            }
+            for a in axioms
+        ]
+    except Exception as exc:
+        logger.warning("Axiom listing failed: %s", exc)
+        return []
+
+
+@app.post("/api/axioms/{axiom_id}/verify")
+async def verify_axiom(axiom_id: str):
+    """Mark an axiom as verified (donor main.py:2072)."""
+    from fastapi.responses import JSONResponse
+
+    ax_sys = registry.tektos_axioms
+    if ax_sys is None:
+        return JSONResponse(
+            status_code=404, content={"detail": f"Axiom '{axiom_id}' not found"}
+        )
+    try:
+        result = ax_sys.verify(axiom_id)
+        if result:
+            return {"ok": True, "id": axiom_id, "status": "verified"}
+        return JSONResponse(
+            status_code=404, content={"detail": f"Axiom '{axiom_id}' not found"}
+        )
+    except Exception as exc:
+        logger.warning("Axiom verify failed: %s", exc)
+        return JSONResponse(status_code=500, content={"detail": str(exc)})
 
 
 # ---------------------------------------------------------------------------

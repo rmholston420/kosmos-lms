@@ -1,0 +1,10 @@
+id: test.create.1
+category: test
+status: pending
+date: '2026-09-26'
+content: Created axiom
+notes: ''
+metadata: {}
+prerequisites: []
+blocking: []
+tags: []

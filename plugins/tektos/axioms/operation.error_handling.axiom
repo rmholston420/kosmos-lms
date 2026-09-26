@@ -1,0 +1,12 @@
+id: operation.error_handling
+category: operation
+status: verified
+date: 2026-08-24
+content: Errors are direct experience — the most trustworthy data. Every failure should be examined, encoded, and used to prevent recurrence.
+notes: |
+  Trust score for failure data: 0.95 (highest)
+  Every error should trigger: examine → encode → prevent
+  ToolRouter error classification → retry with adjusted params → fallback
+  Never ignore errors silently — they are the system's most valuable teacher
+  Failure patterns should be aggregated and stored in ExperienceReplay
+tags: [error-handling, failure, learning, trust, reliability]

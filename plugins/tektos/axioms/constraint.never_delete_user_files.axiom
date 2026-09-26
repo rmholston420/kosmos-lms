@@ -1,0 +1,12 @@
+id: constraint.never_delete_user_files
+category: constraint
+status: verified
+date: 2026-08-24
+content: NEVER delete user files, games, or applications without explicit user confirmation. Steam apps are especially protected.
+notes: |
+  File deletion is a destructive operation — always verify before executing
+  Steam apps/games are never to be removed under any circumstances
+  User data is sacred — the system should never assume it can safely delete
+  When in doubt, ask the user rather than risk data loss
+  This is a hard constraint, not a preference
+tags: [safety, user-data, deletion, steam, protection]

@@ -1,0 +1,156 @@
+id: operation.context_management
+category: operation
+status: verified
+date: 2026-08-24
+content: Context window is a finite resource. Use 4-tier compaction (Raw → Summarized
+  → Abstracted → Persistent) to manage token budgets during complex workflows.
+notes: 'Tier 1 (Raw): Full conversation history — keep only recent
+
+  Tier 2 (Summarized): Compress older messages to key points
+
+  Tier 3 (Abstracted): Extract patterns and principles
+
+  Tier 4 (Persistent): Store in FileBasedMemory for cross-session recall
+
+  Embedding-based semantic compression: keep only messages relevant to current task
+
+  Budget: 128K tokens max, 4096 max_tokens per LLM call
+
+  '
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- context
+- compaction
+- token-budget
+- memory
+- efficiency
+---
+id: operation.direct_experience
+category: operation
+status: verified
+date: 2026-08-24
+content: Direct experience (what the system actually observed, measured, failed at)
+  is weighted more heavily than inference (what the system predicted, planned, speculated).
+notes: 'The operative hemisphere (S1) that actually executes generates truth.
+
+  The speculative hemisphere (S4) that plans generates hypotheses.
+
+  The Manager (S3) weighs both.
+
+  Failure data is especially valuable — it''s direct evidence that something doesn''t
+  work.
+
+  Trust scores: direct experience = 0.9, inference = 0.5, failure = 0.95
+
+  '
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- direct-experience
+- truth
+- execution
+- failure
+- trust
+---
+id: operation.error_handling
+category: operation
+status: verified
+date: 2026-08-24
+content: Errors are direct experience — the most trustworthy data. Every failure should
+  be examined, encoded, and used to prevent recurrence.
+notes: 'Trust score for failure data: 0.95 (highest)
+
+  Every error should trigger: examine → encode → prevent
+
+  ToolRouter error classification → retry with adjusted params → fallback
+
+  Never ignore errors silently — they are the system''s most valuable teacher
+
+  Failure patterns should be aggregated and stored in ExperienceReplay
+
+  '
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- error-handling
+- failure
+- learning
+- trust
+- reliability
+---
+id: operation.tool_routing
+category: operation
+status: verified
+date: 2026-08-24
+content: Task routing should match complexity to capability — simple tasks to secondary
+  LLM (CPU), complex tasks to primary LLM (GPU).
+notes: 'Simple tasks: file reads, basic commands, searches → secondary LLM (Granite4.1-8B)
+
+  Complex tasks: planning, refactoring, multi-file changes → primary LLM (Qwen3.6-35B)
+
+  Ambiguous tasks default to primary LLM (safe choice)
+
+  Keywords determine routing: check COMPLEX_TASK_KEYWORDS and SIMPLE_TASK_KEYWORDS
+
+  This reduces primary model context pressure and improves response quality
+
+  '
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- tool-routing
+- llm-selection
+- complexity
+- cpu
+- gpu
+---
+id: operation.safety_first
+category: operation
+status: verified
+date: ''
+content: 'Safety is paramount: never execute destructive operations without explicit
+  confirmation. File writes, deletions, and system changes require validation.'
+notes: The immune system monitors for unsafe operations and can intervene.
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- safety
+- validation
+- immune-system
+---
+id: operation.context_compression
+category: operation
+status: verified
+date: ''
+content: Tektos compresses knowledge into axioms that survive context compaction.
+  Axioms are self-contained, verifiable, and machine-parseable.
+notes: The axiom system (axioms.py) manages this. Each axiom has an ID, category,
+  status, and metadata.
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- context
+- compression
+- axioms
+---
+id: operation.structured_logging
+category: operation
+status: verified
+date: ''
+content: All subsystems use structured logging with consistent format, appropriate
+  log levels, and contextual information. Sensitive data is never logged.
+notes: ''
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- logging
+- debugging
+- observability

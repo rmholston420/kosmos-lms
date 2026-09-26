@@ -1,0 +1,13 @@
+id: operation.context_management
+category: operation
+status: verified
+date: 2026-08-24
+content: Context window is a finite resource. Use 4-tier compaction (Raw → Summarized → Abstracted → Persistent) to manage token budgets during complex workflows.
+notes: |
+  Tier 1 (Raw): Full conversation history — keep only recent
+  Tier 2 (Summarized): Compress older messages to key points
+  Tier 3 (Abstracted): Extract patterns and principles
+  Tier 4 (Persistent): Store in FileBasedMemory for cross-session recall
+  Embedding-based semantic compression: keep only messages relevant to current task
+  Budget: 128K tokens max, 4096 max_tokens per LLM call
+tags: [context, compaction, token-budget, memory, efficiency]

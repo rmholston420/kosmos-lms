@@ -1,0 +1,12 @@
+id: operation.direct_experience
+category: operation
+status: verified
+date: 2026-08-24
+content: Direct experience (what the system actually observed, measured, failed at) is weighted more heavily than inference (what the system predicted, planned, speculated).
+notes: |
+  The operative hemisphere (S1) that actually executes generates truth.
+  The speculative hemisphere (S4) that plans generates hypotheses.
+  The Manager (S3) weighs both.
+  Failure data is especially valuable — it's direct evidence that something doesn't work.
+  Trust scores: direct experience = 0.9, inference = 0.5, failure = 0.95
+tags: [direct-experience, truth, execution, failure, trust]

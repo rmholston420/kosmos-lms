@@ -1,0 +1,149 @@
+id: architecture.bicameral
+category: architecture
+status: verified
+date: 2026-08-24
+content: Tektos uses a bicameral architecture — left hemisphere (operative, logical,
+  sequential) vs right hemisphere (speculative, holistic, contextual).
+notes: 'Left = S1 Coding Agent (operational execution)
+
+  Right = S4 Planner/Thinker (speculative planning)
+
+  S3 Manager = corpus callosum (integrates both hemispheres)
+
+  Creativity = Generation of Novelty (McKenna)
+
+  Novelty requires: sufficient variety (Ashby''s Law), bicameral tension, safe failure
+  space, encoding mechanism
+
+  '
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- architecture
+- bicameral
+- hemispheres
+- creativity
+- novelty
+---
+id: architecture.memory_tiers
+category: architecture
+status: verified
+date: 2026-08-24
+content: Tektos uses a 4-tier memory system modeled on the human brain — sensory,
+  working, long-term, and procedural memory.
+notes: 'Sensory (100ms-4s): Raw perception buffer, filters to working memory via attention
+
+  Working (seconds-minutes): Active cognition workspace, limited capacity (7±2 items)
+
+  Long-term (days-permanent): Knowledge repository, declarative + episodic
+
+  Procedural (permanent): Skills, wisdom, encoded patterns
+
+  Transfer: Sensory→Working→Long-term→Procedural via encoding mechanisms
+
+  '
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- memory
+- tiers
+- brain
+- sensory
+- working
+- long-term
+- procedural
+---
+id: architecture.self_improvement
+category: architecture
+status: verified
+date: 2026-08-24
+content: Tektos implements a Hegelian self-improvement loop — thesis (Planner spec)
+  → antithesis (execution) → synthesis (reflection → guidance → next spec).
+notes: 'Cycle: Planning → Execution → Reflection → Synthesis → ExperienceReplay →
+  Next Planning
+
+  ReflectionEngine: Active contemplation, examines patterns/biases/failure modes
+
+  SynthesisEngine: Converts reflection insights into actionable guidance for Planner
+
+  ExperienceReplay: Cross-cycle memory, stores actionable experiences
+
+  Quality tracking: test pass rate, artifacts count, duration trends
+
+  Consolidation: Frequent patterns → permanent procedural memories (skills)
+
+  '
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- self-improvement
+- dialectic
+- reflection
+- synthesis
+- experience-replay
+---
+id: architecture.modular_design
+category: architecture
+status: verified
+date: ''
+content: Tektos is built as a modular system where each subsystem (skill manager,
+  immune system, memory, etc.) is independently testable and replaceable.
+notes: This modularity enables the self-improvement loop — subsystems can be upgraded
+  without breaking the whole.
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- modular
+- architecture
+- design
+---
+id: architecture.event_driven
+category: architecture
+status: verified
+date: ''
+content: Tektos uses an event-driven architecture for inter-subsystem communication.
+  The event bus decouples producers from consumers.
+notes: Events flow through the nervous system panel. Subscribers react without tight
+  coupling.
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- events
+- decoupling
+- nervous-system
+---
+id: architecture.separation_of_concerns
+category: architecture
+status: verified
+date: ''
+content: Business logic, I/O, and UI code are kept in separate modules. The backend
+  (FastAPI) handles API and business logic; the frontend handles presentation.
+notes: ''
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- separation
+- clean-architecture
+- layers
+---
+id: architecture.self_improvement_loop
+category: architecture
+status: verified
+date: ''
+content: 'Tektos implements a self-improvement loop: reflection → lesson extraction
+  → skill creation → execution → evaluation. This loop runs continuously.'
+notes: The self-improvement panel visualizes this loop. Experiences are stored and
+  reused.
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- self-improvement
+- reflection
+- learning

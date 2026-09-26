@@ -1,0 +1,12 @@
+id: architecture.memory_tiers
+category: architecture
+status: verified
+date: 2026-08-24
+content: Tektos uses a 4-tier memory system modeled on the human brain — sensory, working, long-term, and procedural memory.
+notes: |
+  Sensory (100ms-4s): Raw perception buffer, filters to working memory via attention
+  Working (seconds-minutes): Active cognition workspace, limited capacity (7±2 items)
+  Long-term (days-permanent): Knowledge repository, declarative + episodic
+  Procedural (permanent): Skills, wisdom, encoded patterns
+  Transfer: Sensory→Working→Long-term→Procedural via encoding mechanisms
+tags: [memory, tiers, brain, sensory, working, long-term, procedural]

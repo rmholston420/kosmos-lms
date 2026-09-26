@@ -1,0 +1,115 @@
+id: lesson.consolidation
+category: lesson
+status: verified
+date: 2026-08-24
+content: Frequent patterns should be consolidated into permanent procedural memories
+  (skills). One-time fixes are temporary; encoded patterns are permanent.
+notes: 'Pattern frequency → procedural memory (skill)
+
+  One-time fixes → working memory (temporary)
+
+  Skills are reusable across sessions and cycles
+
+  The ReflectionEngine should identify patterns worth consolidating
+
+  SynthesisEngine should recommend skill creation for recurring patterns
+
+  '
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- consolidation
+- skills
+- procedural-memory
+- patterns
+- permanence
+---
+id: lesson.quality_tracking
+category: lesson
+status: verified
+date: 2026-08-24
+content: Quality must be measured, not assumed. Track test pass rates, artifact counts,
+  and execution duration trends across cycles.
+notes: 'Metrics: test pass rate, number of artifacts created, execution time
+
+  Trends matter more than single-cycle results
+
+  Quality improvement is the goal of every self-improvement cycle
+
+  If metrics are declining, the system should reflect and adjust
+
+  Synthesis guidance should include quality recommendations
+
+  '
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- quality
+- metrics
+- tracking
+- improvement
+- trends
+---
+id: lesson.backend_api_shape
+category: lesson
+status: verified
+date: ''
+content: 'Backend API endpoints return consistent shapes: {data: ...} for success,
+  {error: ...} for failure. Frontend components must guard against non-array responses.'
+notes: Discovered when SkillsPanel and ThermalPanel crashed on malformed responses.
+  Always use Array.isArray() checks.
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- api
+- frontend
+- error-handling
+---
+id: lesson.hot_reload_workflow
+category: lesson
+status: verified
+date: ''
+content: Use Vite dev server for hot-reload development. Set HERMES_DESKTOP_DEV_SERVER=http://127.0.0.1:5174
+  to load from Vite instead of bundled files.
+notes: This enables instant feedback without rebuild/restart cycles.
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- devops
+- hot-reload
+- vite
+---
+id: lesson.thermal_api_shape
+category: lesson
+status: verified
+date: ''
+content: 'Thermal API returns {gpu: {...}, cpu: {...}, regulation_count, history},
+  not {gpus: [...]}. Frontend must match this shape.'
+notes: Discovered when ThermalPanel crashed with 'cannot read properties of undefined
+  (reading length)'.
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- api
+- thermal
+- frontend
+---
+id: lesson.skills_api_shape
+category: lesson
+status: verified
+date: ''
+content: 'Skills API returns {skills: [...]} when skill manager is active, {error:
+  ...} when inactive. Frontend must extract the array and handle errors.'
+notes: Discovered when SkillsPanel crashed with 'e.map is not a function'.
+metadata: {}
+prerequisites: []
+blocking: []
+tags:
+- api
+- skills
+- frontend

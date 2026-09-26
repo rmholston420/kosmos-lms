@@ -1,0 +1,21 @@
+id: t1
+category: c
+status: verified
+date: '2025-01-01'
+content: ''
+notes: ''
+metadata: {}
+prerequisites: []
+blocking: []
+tags: []
+---
+id: t2
+category: c
+status: deprecated
+date: '2025-01-01'
+content: ''
+notes: ''
+metadata: {}
+prerequisites: []
+blocking: []
+tags: []

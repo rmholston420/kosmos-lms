@@ -1,0 +1,12 @@
+id: operation.tool_routing
+category: operation
+status: verified
+date: 2026-08-24
+content: Task routing should match complexity to capability — simple tasks to secondary LLM (CPU), complex tasks to primary LLM (GPU).
+notes: |
+  Simple tasks: file reads, basic commands, searches → secondary LLM (Granite4.1-8B)
+  Complex tasks: planning, refactoring, multi-file changes → primary LLM (Qwen3.6-35B)
+  Ambiguous tasks default to primary LLM (safe choice)
+  Keywords determine routing: check COMPLEX_TASK_KEYWORDS and SIMPLE_TASK_KEYWORDS
+  This reduces primary model context pressure and improves response quality
+tags: [tool-routing, llm-selection, complexity, cpu, gpu]

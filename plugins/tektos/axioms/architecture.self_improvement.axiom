@@ -1,0 +1,13 @@
+id: architecture.self_improvement
+category: architecture
+status: verified
+date: 2026-08-24
+content: Tektos implements a Hegelian self-improvement loop — thesis (Planner spec) → antithesis (execution) → synthesis (reflection → guidance → next spec).
+notes: |
+  Cycle: Planning → Execution → Reflection → Synthesis → ExperienceReplay → Next Planning
+  ReflectionEngine: Active contemplation, examines patterns/biases/failure modes
+  SynthesisEngine: Converts reflection insights into actionable guidance for Planner
+  ExperienceReplay: Cross-cycle memory, stores actionable experiences
+  Quality tracking: test pass rate, artifacts count, duration trends
+  Consolidation: Frequent patterns → permanent procedural memories (skills)
+tags: [self-improvement, dialectic, reflection, synthesis, experience-replay]
