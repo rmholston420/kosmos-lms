@@ -5278,6 +5278,26 @@ MCP, metabolism) in ROI order.
 
 ## 2026-09-26 04:45 EDT — ADR-141 T8c-4 complete: hooks ×2 kernel-native
 
+## 2026-09-26 05:20 EDT — ADR-141 T8c-5 complete: GET /api/schedule kernel-native
+
+- **Donor defect (T8c-2 class):** donor main.py:5266 built a FRESH
+  `BackupScheduler()` per request — in-memory `backup_records` starts
+  `[]`, so the route ALWAYS returned `[]`. Kernel referent scans the
+  REAL on-disk backup dir (`KOSMOS_BACKUP_DIR`, default
+  `~/.tektos/backups`) for donor's own
+  `{postgresql,redis,sqlite,neo4j}_{ts}.{ext}` artifacts.
+- **Route (app.py, before /api/config):** donor wire
+  `[{id,name,type,status,last_run,next_run,interval,enabled}]`, newest
+  first; `[]` degrade on failure (donor shape, never an HTTP error).
+- **Tests:** `tests/kernel/test_adr141_t8c5_schedule.py` — 4 (wire shape
+  + non-backup files ignored, newest-first ordering, missing dir → [],
+  unreadable dir → [] degrade). 4/4 pass.
+- **Live :8000:** 106 real backup entries (postgresql/redis/sqlite),
+  newest first — where the donor returned `[]`.
+- **Gate progress (ADR-141):** P 74→75. Remaining T8c: evaluation,
+  plugins toggle, dreamtime ×4, schema (7 rows). Then D-bucket (Stage
+  13), /health ×3, ADR-140 WS, ADR-109 gateway retirement.
+
 - **Substrate:** donor `runtime/hooks.py` (325 LOC, self-contained,
   stdlib-only) verbatim port → `kernel/hooks.py` (hook registry,
   HookContext/HookResult, 6 builtin hooks). `registry.hook_manager` booted

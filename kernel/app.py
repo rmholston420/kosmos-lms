@@ -4380,6 +4380,61 @@ def _active_llm_lane() -> tuple[str | None, str | None, str]:
     )
 
 
+@app.get("/api/schedule")
+def list_scheduled_tasks() -> list[dict[str, Any]]:
+    """List scheduled tasks from the backup scheduler (donor
+    GET /api/schedule, donor main.py:5266; ADR-141 T8c-5).
+
+    Donor wire (preserved): ``[{id, name, type, status, last_run,
+    next_run, interval, enabled}]``; ``[]`` on any failure (donor
+    degrade: log + empty list, never an HTTP error).
+
+    Donor defect fixed (documented, T8c-2 class): the donor built a FRESH
+    ``BackupScheduler()`` per request whose in-memory ``backup_records``
+    starts empty — the route therefore always returned ``[]``. The kernel
+    referent scans the REAL on-disk backup dir (``KOSMOS_BACKUP_DIR``,
+    default ``~/.tektos/backups``) for the donor's own
+    ``{postgres,redis,sqlite,neo4j}_{ts}.{ext}`` artifacts and maps each
+    to the donor wire shape.
+    """
+    import datetime as _dt
+    import re as _re
+    from pathlib import Path as _Path
+
+    backup_dir = _Path(os.environ.get("KOSMOS_BACKUP_DIR", str(_Path.home() / ".tektos" / "backups")))
+    try:
+        entries: list[dict[str, Any]] = []
+        if backup_dir.is_dir():
+            ts_re = _re.compile(r"^(?P<type>postgresql|redis|sqlite|neo4j)_(?P<ts>.+)$")
+            files = sorted(backup_dir.iterdir())
+            for f in files:
+                if not f.is_file():
+                    continue
+                m = ts_re.match(f.stem)
+                if not m:
+                    continue
+                last_run = _dt.datetime.fromtimestamp(
+                    f.stat().st_mtime, tz=_dt.timezone.utc
+                ).isoformat()
+                entries.append(
+                    {
+                        "id": f.stem,
+                        "name": f.name,
+                        "type": m.group("type"),
+                        "status": "completed",
+                        "last_run": last_run,
+                        "next_run": "",
+                        "interval": "daily",
+                        "enabled": True,
+                    }
+                )
+        # newest first (donor list_backups sorts by timestamp desc)
+        return sorted(entries, key=lambda e: e["last_run"], reverse=True)
+    except Exception as exc:  # noqa: BLE001 — donor degrade: [] on failure
+        logger.warning("Schedule listing failed: %s", exc)
+        return []
+
+
 @app.get("/api/config")
 async def tektos_config_get() -> dict[str, Any]:
     """Runtime configuration as key-value pairs (donor main.py:5160)."""
