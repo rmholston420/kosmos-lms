@@ -5784,3 +5784,29 @@ MCP, metabolism) in ROI order.
   D-routes: context, mcp, metabolism, nervous-system, observability,
   rag ×2, repoMap, thermal ×2, vision ×3, voice ×3, `/health` ×3,
   ADR-140 WS, ADR-109 gateway deletion.
+
+## 2026-09-26 — Stage 13.4: nervous-system status route (ADR-141)
+- **No new substrate.** Donor "nervous system" = event bus + session
+  state machine; BOTH referents already exist kernel-side:
+  `registry.event_bus` (boot slot, app.py:589) and the vendored FSM
+  (`adapters/session/tektos/vendor/state_machine.py` — donor
+  `tektos/state_machine.py` copied verbatim into the session adapter;
+  same `_states`/`_transitions_completed` surface; `State` is a
+  `str, Enum` so `dict(sm._states)` serializes to state-name strings —
+  donor-identical on the wire).
+- **Route:** `GET /api/nervous-system/status` donor-verbatim
+  (donor main.py:4725): `{status:"active", event_bus, state_machine,
+  total_sessions, states}`. Unconditional `"active"` matches the donor
+  (a status surface, not a wiring report — NOT the T1 orchestrator
+  deviation).
+- **Test:** `tests/kernel/test_adr141_s134_nervous_system_status.py` —
+  3 tests (5-field wire shape + str-Enum state values; event_bus
+  reflects registry; live FSM transition visible in total_sessions +
+  states). Full suite green (699 passed).
+- **Live-verified on :8000:** `{status:"active", event_bus:true,
+  state_machine:true, total_sessions:0, states:{}}` + 13.3 axioms
+  regression probe (29 active) + health 200.
+- **Gate progress (ADR-141):** 13.4 nervous-system P. Remaining Stage
+  13 D-routes: context, mcp, metabolism, observability, rag ×2,
+  repoMap, thermal ×2, vision ×3, voice ×3, `/health` ×3, ADR-140 WS,
+  ADR-109 gateway deletion.

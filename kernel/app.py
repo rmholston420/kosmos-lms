@@ -5285,6 +5285,33 @@ async def verify_axiom(axiom_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Nervous system status (ADR-141 Stage 13.4, donor main.py:4725) — kernel-native.
+# The donor's "nervous system" = event bus + session state machine. BOTH
+# referents already exist kernel-side: registry.event_bus (boot slot, line 589)
+# and the vendored FSM at adapters/session/tektos/vendor/state_machine.py
+# (byte-compatible surface: _states / _transitions_completed; State is a
+# str-Enum so it serializes to its .value). No new substrate — a thin status
+# route over existing kernel referents, donor path + wire verbatim.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/nervous-system/status")
+async def nervous_system_status():
+    """Nervous system (event bus + state machine) status (donor main.py:4725)."""
+    from adapters.session.tektos.vendor.state_machine import get_state_machine
+
+    eb = registry.event_bus
+    sm = get_state_machine()
+    return {
+        "status": "active",
+        "event_bus": eb is not None,
+        "state_machine": sm is not None,
+        "total_sessions": sm._transitions_completed if sm else 0,
+        "states": dict(sm._states) if sm else {},
+    }
+
+
+# ---------------------------------------------------------------------------
 # Embedder surface (ADR-141 T7, donor main.py:4448/4464) — kernel-native.
 # The donor ran a private EmbedderClient (_embedder_client, :8091) behind
 # two routes. Per the layering rule (governing, 2026-09-25) the embedder

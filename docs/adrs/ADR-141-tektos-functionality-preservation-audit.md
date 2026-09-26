@@ -124,7 +124,7 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `GET /api/metabolism` | Stage 13 (metabolism) |
 | `GET /api/metabolism/context` | Stage 13 (metabolism) |
 | `GET /api/metabolism/history` | Stage 13 (metabolism) |
-| `GET /api/nervous-system/status` | Stage 13 (nervous-system) |
+| `GET /api/nervous-system/status` | **P (Stage 13.4, 2026-09-26)** — kernel route over two EXISTING kernel referents, no new substrate: donor's "nervous system" = event bus + session state machine; the kernel already owns `registry.event_bus` (boot slot, app.py:589) and the vendored FSM (`adapters/session/tektos/vendor/state_machine.py`, donor `state_machine.py` byte-verbatim — same `_states`/`_transitions_completed` surface; `State` is a `str, Enum` so `dict(sm._states)` serializes to state names, donor-identical wire). Donor path + 200-always wire verbatim (`{status:"active", event_bus, state_machine, total_sessions, states}`); unconditional `"active"` matches donor (a status surface, not a wiring report — NOT the T1 orchestrator deviation) |
 | `GET /api/observability/status` | Stage 13 (observability) |
 | `GET /api/rag/status` | Stage 13 (RAG) |
 | `GET /api/ragRetriever/status` | Stage 13 (RAG) |
