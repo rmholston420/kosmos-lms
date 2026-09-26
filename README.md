@@ -1,5 +1,13 @@
 # Kosmos-LMS
 
+> **PROGRAM COMPLETE (2026-09-26) — absorption frozen.** The Tektos-Ultima
+> integration program (Plan v2, Stages 0–14) is complete: all 154 donor
+> routes dispositioned (131 P / 23 D / 0 T), the `:8020` donor retired
+> (`tektos-ultima` commit `43cb0ef`), and this repo's spec v26 + ADRs
+> 077–102 locked per **ADR-145**. This is now a finished system, not an
+> in-flight migration — future Tektos work is ordinary plugin/kernel
+> development. The `tektos-ultima-v1` donor repo is reference material.
+
 Single-user local-first **Life Management System** with the **Tektos** autonomous-coding-agent integrated as its first-class plugin. Targeted at **Colossus** (AMD Ryzen 9 7900X · 128 GB RAM · RTX 5090 32 GB VRAM · Kubuntu 26.04 LTS).
 
 **License:** MIT (see `LICENSE`).

@@ -1,6 +1,7 @@
 # ADR-078 — Kosmos-Build-Spec v26 cut (Tektos absorption)
 
 **Status:** Ratified
+**Locked:** ADR-145 (2026-09-26) — Stage 14 program freeze; this ADR is locked (see ADR-145).
 **Lock-in phase:** Stage 1
 **Supersedes:** Kosmos-Build-Spec-v25.md (archived, not deleted)
 

@@ -1,6 +1,7 @@
 # ADR-100 — `DozerDbLexicalIndex` (Neo4j Lucene fulltext-backed `LexicalIndex`)
 
 **Status:** Ratified (2026-09-10)
+**Locked:** ADR-145 (2026-09-26) — Stage 14 program freeze; this ADR is locked (see ADR-145).
 **Lock-in phase:** Stage 7.4+1
 **Supersedes:** —
 

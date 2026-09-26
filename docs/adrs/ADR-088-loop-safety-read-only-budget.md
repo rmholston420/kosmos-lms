@@ -1,6 +1,7 @@
 # ADR-088 — Loop-safety read-only tool-call budget interlock
 
 **Status:** Ratified
+**Locked:** ADR-145 (2026-09-26) — Stage 14 program freeze; this ADR is locked (see ADR-145).
 **Lock-in phase:** Stage 3.13
 **Amends:** ADR-080 (LoopSafetyPort — this ADR ratifies the read-only-budget clause inside the port)
 

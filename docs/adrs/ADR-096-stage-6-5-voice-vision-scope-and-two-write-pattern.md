@@ -1,6 +1,7 @@
 # ADR-096 — Stage 6.5 Voice + Vision port-in scope and the `tektos_frontend` two-write pattern
 
 **Status:** Ratified
+**Locked:** ADR-145 (2026-09-26) — Stage 14 program freeze; this ADR is locked (see ADR-145).
 **Lock-in phase:** Stage 6.5
 **Supersedes:** —
 

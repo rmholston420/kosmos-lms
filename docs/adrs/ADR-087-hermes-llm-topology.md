@@ -1,6 +1,7 @@
 # ADR-087 — Hermes LLM topology adapter (CPU planner + GPU coder split)
 
 **Status:** Ratified
+**Locked:** ADR-145 (2026-09-26) — Stage 14 program freeze; this ADR is locked (see ADR-145).
 **Lock-in phase:** Stage 4.7
 **Amends:** ADR-009 (llama-swap primary + router-mode fallback), ADR-022 (LLMPort surface expansion) — extends without removing
 

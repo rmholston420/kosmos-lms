@@ -1,6 +1,7 @@
 # ADR-094 — Tektos tool-surface reconciliation + filesystem tools with path-traversal detector
 
 **Status:** Ratified (2026-09-10)
+**Locked:** ADR-145 (2026-09-26) — Stage 14 program freeze; this ADR is locked (see ADR-145).
 **Lock-in phase:** Stage 4.8
 **Supersedes:** —
 **Amends:** ADR-037 (§Locked constants preserved verbatim), ADR-093 (extends the Stage 4.7 tool registry with filesystem descriptors + MCP discovery bridge)

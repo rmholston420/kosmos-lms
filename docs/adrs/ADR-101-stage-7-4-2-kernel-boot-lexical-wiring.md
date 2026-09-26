@@ -1,6 +1,7 @@
 # ADR-101 — Kernel-boot wiring of `DozerDbLexicalIndex` into `_boot_memory`
 
 **Status:** Ratified (2026-09-10)
+**Locked:** ADR-145 (2026-09-26) — Stage 14 program freeze; this ADR is locked (see ADR-145).
 **Lock-in phase:** Stage 7.4+2
 **Supersedes:** —
 

@@ -1,6 +1,7 @@
 # ADR-099 — Stage 7.4 re-scope: H1 skipped, `search_hybrid` lands on `DozerDbMemoryAdapter`
 
 **Status:** Ratified
+**Locked:** ADR-145 (2026-09-26) — Stage 14 program freeze; this ADR is locked (see ADR-145).
 **Lock-in phase:** Stage 7.4
 **Amends:** ADR-085 (`MemoryPort.search_hybrid`) — lock-in phase clarified: the *adapter method* lands at Stage 7.4 (surface locked at Stage 1.3 is unchanged). Also amends `Kosmos-Build-Spec-v26.md` §25.3 (H1 → H2 migration) and `Kosmos-Build-Sequence-v26.md` Stage 7.4 charter to reflect that H1 (`adapters/memory/hindsight_bridge/`) was never landed.
 

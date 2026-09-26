@@ -1,6 +1,7 @@
 # ADR-091 — Microfrontend Shell Integration (Tektos-Ultima)
 
 **Status:** Ratified
+**Locked:** ADR-145 (2026-09-26) — Stage 14 program freeze; this ADR is locked (see ADR-145).
 **Lock-in phase:** Stage 2 (microfrontend shell)
 **Supersedes:** —
 

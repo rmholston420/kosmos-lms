@@ -1,6 +1,7 @@
 # ADR-077 — Kosmos-LMS integration cut (Tektos-Ultima absorption)
 
 **Status:** Ratified
+**Locked:** ADR-145 (2026-09-26) — Stage 14 program freeze; this ADR is locked (see ADR-145).
 **Lock-in phase:** Stage 0
 **Supersedes:** —
 **Amends:** ADR-041 (Tektos plugin bootstrap — scope extended from Stage 3.7 scaffold to full runtime absorption)

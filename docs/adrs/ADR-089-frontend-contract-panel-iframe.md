@@ -1,6 +1,7 @@
 # ADR-089 — FrontendContractPort: add `PanelKind.IFRAME`
 
 **Status:** Ratified
+**Locked:** ADR-145 (2026-09-26) — Stage 14 program freeze; this ADR is locked (see ADR-145).
 **Lock-in phase:** Stage 2 (kosmos-lms Stage 2 — plan §6)
 **Amends:** the FrontendContractPort ratifying ADR (existing `PanelKind` enum extended)
 

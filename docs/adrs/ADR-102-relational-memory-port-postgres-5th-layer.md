@@ -1,6 +1,7 @@
 # ADR-102 — `RelationalMemoryPort`: Postgres as the 5th Memory Layer
 
 **Status:** Ratified (2026-09-10)
+**Locked:** ADR-145 (2026-09-26) — Stage 14 program freeze; this ADR is locked (see ADR-145).
 **Lock-in phase:** Stage 8.0 (Plan v2)
 **Supersedes:** —
 **Amends:** ADR-027 (MemoryPort surface) — additive, non-breaking

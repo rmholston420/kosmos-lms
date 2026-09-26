@@ -1,6 +1,6 @@
 # Kosmos: Definitive Unified Build Specification (v26 — kosmos-lms, Tektos-Ultima absorbed)
 
-**Status:** Ratified. Stage-1-executable. kosmos-lms (Tektos-Ultima absorbed).
+**Status:** **LOCKED** (2026-09-26, ADR-145 — Stage 14 program freeze; the absorption program is complete. Post-completion work proceeds as ordinary ADRs against this spec.) Was: Ratified. Stage-1-executable. kosmos-lms (Tektos-Ultima absorbed).
 **Supersedes:** Kosmos-Build-Spec-v25.md (archived at `docs/archive/`), plus the full v19–v24 chain and Tektos-Ultima's parallel documentation (all `docs/` under `rmholston420/tektos-ultima` now consumed by ADR-077 + this spec).
 **Baseline resolution rule:** Where prior specs conflict, newer wins (v25 > v24 > v23 …). Section numbering is preserved from v25; new content lives in **§25 Tektos absorption** (appended between §24 and the v25 Addendum, both preserved verbatim) so existing "spec §7" and "spec §21" cross-references remain valid.
 **Cut ADR:** ADR-078 (2026-09-10).

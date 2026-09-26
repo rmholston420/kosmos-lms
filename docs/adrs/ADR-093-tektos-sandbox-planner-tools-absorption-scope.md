@@ -1,6 +1,7 @@
 # ADR-093 — Tektos sandbox + planner + tool-registry absorption scope (Stage 4.7)
 
 **Status:** Ratified
+**Locked:** ADR-145 (2026-09-26) — Stage 14 program freeze; this ADR is locked (see ADR-145).
 **Lock-in phase:** Stage 4.7
 **Supersedes:** —
 

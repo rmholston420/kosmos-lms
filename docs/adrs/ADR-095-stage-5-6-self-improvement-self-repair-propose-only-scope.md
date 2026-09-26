@@ -1,6 +1,7 @@
 # ADR-095 — Stage 5.6 Self-Improvement + Self-Repair Propose-Only Scope
 
 **Status:** Ratified v26
+**Locked:** ADR-145 (2026-09-26) — Stage 14 program freeze; this ADR is locked (see ADR-145).
 **Lock-in phase:** Stage 5.6
 **Supersedes:** —
 

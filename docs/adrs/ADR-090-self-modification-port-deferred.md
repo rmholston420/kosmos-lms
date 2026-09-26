@@ -1,6 +1,7 @@
 # ADR-090 — SelfModificationPort (PROPOSED; DEFERRED)
 
 **Status:** Proposed (**DEFERRED** — no ratification without explicit user approval)
+**Locked:** ADR-145 (2026-09-26) — Stage 14 program freeze; this ADR is locked (see ADR-145).
 **Lock-in phase:** TBD (earliest Stage 5.6; not ratified in Stage 5.6)
 **Supersedes:** —
 
