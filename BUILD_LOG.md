@@ -5188,3 +5188,24 @@ MCP, metabolism) in ROI order.
 - **Gate progress (ADR-141):** T1–T7 ✓, T8a ✓, T8b-1 ✓, **T8b-2 ✓**. Next:
   T8b-3 (llm/probe), T8b-4 (search).
 - **Stop-condition status:** met — T8b-2 complete; next T8b-3.
+
+## 2026-09-26 02:34 EDT — ADR-141 T8b-3 complete: /api/llm/probe kernel-native
+- **What:** Donor `main.py:4590` `POST /api/llm/probe` → kernel-native
+  `tektos_llm_probe` in `kernel/app.py`.
+- **Design (layering rule):** donor runs a real GET /models against its single
+  configured backend. The kernel's `registry.llm` (ADR-132 FailoverLLMAdapter)
+  already performs the real per-backend probe via `is_healthy()` — non-throwing,
+  engages the fallback when the primary is down — so the route is a thin
+  surface over that substrate (no new httpx client, no new probe logic).
+  Donor wire preserved: `{llm_available, base_url, model}`; lane reported
+  mirrors `/api/llm/status`.
+- **Live verify (:8000):** POST → `{"llm_available":true,"base_url":
+  "http://127.0.0.1:8090","model":"qwen3.8-27b-code"}` — matches /api/llm/status.
+- **Tests:** `tests/kernel/test_adr141_t8b3_llm_probe.py` — 3 tests (shape,
+  lane matches /api/llm/status, None-registry graceful 200). Full
+  `tests/kernel/` 590 passed.
+- **Docs:** ADR-141 row → P (T8b-3), counts P 66→67 / T 16→15, T8 section
+  T8b-3 line; ADR README → T8b-3 ✓.
+- **Gate progress (ADR-141):** T1–T7 ✓, T8a ✓, T8b-1 ✓, T8b-2 ✓, **T8b-3 ✓**.
+  Next: T8b-4 (search) — last T8b slice.
+- **Stop-condition status:** met — T8b-3 complete; next T8b-4.

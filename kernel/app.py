@@ -4363,6 +4363,29 @@ class _T8BUpdateConfigBody(BaseModel):
     value: Any
 
 
+@app.post("/api/llm/probe")
+async def tektos_llm_probe() -> dict[str, Any]:
+    """Re-probe the LLM endpoint(s) and return current availability.
+
+    Donor main.py:4590 — "lets the frontend recover from a transient LLM
+    outage without restarting the server. Runs a real GET /models against
+    the configured backend." Kernel substrate: registry.llm (ADR-132
+    FailoverLLMAdapter) — its is_healthy() performs the real per-backend
+    probe and engages the fallback when the primary is down, so the probe
+    also flips the active lane. Reports the lane that answered.
+    """
+    llm = registry.llm
+    if llm is None:
+        return {"llm_available": False, "base_url": None, "model": None}
+    available = await llm.is_healthy()
+    model, base_url, _lane = _active_llm_lane()
+    return {
+        "llm_available": available,
+        "base_url": base_url,
+        "model": model,
+    }
+
+
 # Donor listed its own TEKTOS_* secret env vars (main.py:5328). Kernel
 # equivalent: the KOSMOS_* secret set the kernel actually reads, plus the
 # shared DB/OPENAI vars the donor surfaced. Values never leave as plaintext.
