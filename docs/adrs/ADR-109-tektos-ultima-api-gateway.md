@@ -71,3 +71,17 @@ When the upstream response is `text/event-stream`, the gateway streams it chunk-
 - `/tektos-ultima` native pages get a stable same-origin API surface (`/api/tektos-ultima/gateway/*`) with one upstream knob and typed outage envelopes — Stages 9.2–9.4 build on it.
 - The ADR-091 iframe bridge and the gateway coexist until Stage 9.5; the bridge is the retirement target.
 - One extra hop for all Tektos traffic; acceptable on loopback (negligible latency) and buys build-time independence from upstream port changes.
+
+## STATUS AMENDMENT (2026-09-26, ADR-144 / Stage 14.1)
+
+**Module DELETED.** `kernel/tektos_ultima_gateway.py` and its D6 contract test
+are removed (`git rm`). Every consumer that this ADR served (dashboard cards,
+sessions, ops, panels) was re-pointed to kernel-native endpoints by
+Stages 11.1–11.23 + ADR-141 Stage 13.x + `646174a`, so the proxy carried no
+surviving traffic. The `KosmosCSPMiddleware` (ADR-089 `frame-ancestors
+'self'` hardening) that ADR-113 D3 had placed in this module was extracted
+**byte-identical to `kernel/csp.py` first**, and survives kernel-wide.
+`/api/tektos-ultima/gateway/*` now 404s. This ADR's D1–D6 describe the
+bridge's historical contract; ADR-144 records the deletion. The `TEKTOS_ULTIMA_API_URL`
+env var stays defined for the :8020 backend's own lifetime (systemd unit)
+until the main.py deletion step retires :8020.

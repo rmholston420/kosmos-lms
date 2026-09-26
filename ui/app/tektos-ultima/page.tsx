@@ -4,13 +4,12 @@
  * /tektos-ultima — native Tektos-Ultima dashboard (Tektos integration
  * Stage 9.2, ADR-109).
  *
- * Replaces the ADR-091 single-iframe page with a real Kosmos page that
- * drives the standalone Tektos API (:8020) through the kernel gateway
- * (`/api/tektos-ultima/gateway/*`, ADR-109 D1). The ADR-091 legacy
- * microfrontend (iframe + postMessage bridge + `/tektos-ultima/frontend`
- * proxy) was retired in Stage 9.5 (ADR-113) after native parity
- * verification; its `frame-ancestors` CSP middleware survives
- * kernel-wide.
+ * Stage 14.1 (ADR-109 exit gate): the ADR-109 gateway proxy to the
+ * retired :8020 is deleted — every card and the health line are
+ * kernel-native. The ADR-091 legacy microfrontend (iframe + postMessage
+ * bridge + `/tektos-ultima/frontend` proxy) was retired in Stage 9.5
+ * (ADR-113) after native parity verification; its `frame-ancestors` CSP
+ * middleware survives kernel-wide (kernel/csp.py).
  *
  * The page renders a subsystem status grid — one card per Tektos
  * subsystem — polled every 10 s. Every card degrades independently:
@@ -21,9 +20,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
-const GATEWAY = "/api/tektos-ultima/gateway";
 /** ADR-117 (Stage 11.1): data-service cards hit kernel-native probes
- * directly instead of the ADR-109 gateway proxy to the retired :8020. */
+ * directly. Stage 14.1 (ADR-109 exit gate): the ADR-109 gateway proxy to
+ * the retired :8020 is deleted — ALL dashboard data is kernel-native. */
 const DATA_SERVICES = "/api/tektos/data-services";
 const POLL_MS = 10_000;
 const FRAME_HEIGHT = "calc(100vh - var(--top-bar-h, 48px))";
@@ -383,36 +382,58 @@ function parseCard(sub: Subsystem, data: unknown): CardData {
 }
 
 /**
- * Gateway reachability check. GET /health through the kernel gateway:
- * 200 → upstream reachable (body carries the Tektos health JSON);
- * 503/502 → kernel reachable but Tektos down (ADR-109 typed envelope);
- * any other failure → kernel itself unreachable.
+ * Kernel-native health check (Stage 14.1, ADR-109 exit gate).
+ *
+ * The ADR-109 gateway probe is gone with the retired :8020. Reachability
+ * is now the KERNEL's own health: GET /health → {status:"ok"} means the
+ * kernel is up. LLM model + active session count come from the
+ * kernel-native /api/llm/status and /api/sessions (raw array → length).
  */
 async function fetchHealth(): Promise<{ reachable: boolean; upstream: string | null; body: unknown }> {
   let res: Response;
   try {
-    res = await fetch(`${GATEWAY}/health`, { cache: "no-store" });
+    res = await fetch("/health", { cache: "no-store" });
   } catch {
     return { reachable: false, upstream: null, body: null };
   }
   if (!res.ok) return { reachable: false, upstream: null, body: null };
-  let json: unknown = null;
+  let health: unknown = null;
   try {
-    json = await res.json();
+    health = await res.json();
   } catch {
-    /* non-JSON upstream health — still reachable */
+    /* non-JSON kernel health — still reachable */
   }
-  const o = isObj(json) ? json : null;
+  const up = window.location.origin;
+  // Kernel-native enrichments (best-effort; a failure degrades the line,
+  // not reachability).
+  let llmModel: string | null = null;
+  let activeSessions: number | null = null;
+  try {
+    const [llmRes, sesRes] = await Promise.all([
+      fetch("/api/llm/status", { cache: "no-store" }),
+      fetch("/api/sessions", { cache: "no-store" }),
+    ]);
+    if (llmRes.ok) {
+      const llm = (await llmRes.json()) as Record<string, unknown>;
+      llmModel = typeof llm["model"] === "string" ? llm["model"] : null;
+    }
+    if (sesRes.ok) {
+      const sessions = (await sesRes.json()) as unknown;
+      if (Array.isArray(sessions)) activeSessions = sessions.length;
+    }
+  } catch {
+    /* enrichment unavailable — reachable stays true */
+  }
   return {
-    reachable: o?.reachable === true,
-    upstream: str(o?.upstream),
-    body: isObj(o?.body) ? o.body : null,
+    reachable: isObj(health) && health["status"] === "ok",
+    upstream: up,
+    body: { llm_model: llmModel, active_sessions: activeSessions },
   };
 }
 
 async function fetchJson(sub: Subsystem): Promise<{ ok: boolean; data: unknown }> {
   try {
-    const res = await fetch(`${sub.base ?? GATEWAY}${sub.endpoint}`, { cache: "no-store" });
+    const res = await fetch(`${sub.base ?? ""}${sub.endpoint}`, { cache: "no-store" });
     if (!res.ok) return { ok: false, data: null };
     return { ok: true, data: await res.json() };
   } catch {
@@ -544,7 +565,7 @@ export default function TektosUltimaDashboard() {
             fontSize: "var(--font-sm, 0.8125rem)",
           }}
         >
-          Tektos API ({state.upstream ?? "upstream"}) is not reachable through the kernel gateway.
+          Tektos kernel ({state.upstream ?? "kernel"}) is not reachable.
           Cards below show the last known state.
         </div>
       )}

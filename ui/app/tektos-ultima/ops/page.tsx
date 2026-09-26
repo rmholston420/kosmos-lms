@@ -43,7 +43,8 @@
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import Link from "next/link";
 
-const GATEWAY = "/api/tektos-ultima/gateway";
+// Stage 14.1 (ADR-109 exit gate): the ADR-109 gateway proxy is deleted —
+// all call sites are kernel-native (base: "").
 const FRAME_HEIGHT = "calc(100vh - var(--top-bar-h, 48px))";
 
 type TabId = "db" | "memory" | "skills" | "tools" | "logs" | "telemetry" | "repair";
@@ -74,7 +75,7 @@ function str(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
-async function g<T = unknown>(path: string, base: string = GATEWAY): Promise<T | null> {
+async function g<T = unknown>(path: string, base: string = ""): Promise<T | null> {
   try {
     const r = await fetch(`${base}${path}`, { cache: "no-store" });
     if (!r.ok) return null;
@@ -84,7 +85,7 @@ async function g<T = unknown>(path: string, base: string = GATEWAY): Promise<T |
   }
 }
 
-async function act(path: string, body?: unknown, base: string = GATEWAY): Promise<{ ok: boolean; error?: string; data?: unknown }> {
+async function act(path: string, body?: unknown, base: string = ""): Promise<{ ok: boolean; error?: string; data?: unknown }> {
   try {
     const r = await fetch(`${base}${path}`, {
       method: "POST",
@@ -1091,7 +1092,9 @@ export default function TektosUltimaOpsPage() {
   useEffect(() => {
     let alive = true;
     const probe = async () => {
-      const h = await g("/health");
+      // Stage 14.1 (ADR-109 exit gate): kernel-native /health — the ADR-109
+      // gateway probe is gone with the retired :8020.
+      const h = await g("/health", "");
       if (!alive) return;
       setUpstreamDown(!(isObj(h) && Object.keys(h).length > 0));
     };

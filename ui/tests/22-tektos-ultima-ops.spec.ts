@@ -2,44 +2,56 @@ import { test, expect } from "@playwright/test";
 
 // Tektos integration Stage 9.4 (ADR-112) — native ops page.
 //
-// Drives the real kernel + Tektos API end-to-end (no mocks): the page
-// talks to the standalone Tektos (:8020) through the kernel gateway
-// (/api/tektos-ultima/gateway/*). All assertions are READ-ONLY — the
+// Drives the real kernel end-to-end (no mocks): the page talks to the
+// kernel-native API (Stage 14.1: the ADR-109 gateway proxy to the
+// retired :8020 is deleted). All assertions are READ-ONLY — the
 // spec never triggers backup/restore/decay/repair/toggle actions, so it
 // is safe in CI and leaks no state.
 
 const PAGE = "/tektos-ultima/ops";
 
 test.describe("tektos-ultima ops page (Stage 9.4)", () => {
-  test("boots on the Database tab with real schema", async ({ page }) => {
+  test("boots on the Database tab with kernel persistence lanes", async ({ page }) => {
     await page.goto(PAGE);
     await expect(page.getByTestId("tektos-ops-page")).toBeVisible();
     await expect(page.getByTestId("tektos-ops-header")).toBeVisible();
     await expect(page.getByTestId("tektos-ops-db")).toBeVisible();
-    // /api/db/schema returns the live table definitions (events table exists
-    // on every Tektos install).
-    await expect(page.getByTestId("tektos-ops-db-schema")).toContainText("events", {
+    // Kernel-native /api/db: the tab renders the kernel registry's
+    // persistence lanes (postgres/dozerdb/qdrant/valkey) with their
+    // boot-time wired state — not the donor's tektos.db schema dump
+    // (retired with main.py deletion, ADR-137).
+    await expect(page.getByTestId("tektos-ops-db")).toContainText("Kernel persistence lanes", {
       timeout: 15_000,
     });
-    // Header shows an upstream status pill (online or offline — both render).
+    await expect(page.getByTestId("tektos-ops-db")).toContainText("wired", {
+      timeout: 15_000,
+    });
+    // Header shows a status pill (online or offline — both render).
     await expect(page.getByTestId("tektos-ops-header")).toContainText(/online|offline/);
   });
 
-  test("skills and tools tabs list registered entries", async ({ page }) => {
+  test("skills and tools tabs render kernel-native surfaces", async ({ page }) => {
     await page.goto(PAGE);
     await expect(page.getByTestId("tektos-ops-page")).toBeVisible();
 
     await page.getByTestId("tektos-ops-tab-skills").click();
     await expect(page.getByTestId("tektos-ops-skills")).toBeVisible();
-    // Tektos ships safe_file_operations + safe_command_execution skills,
-    // so at least one row must appear.
-    await expect(page.getByTestId("tektos-ops-skills").locator("tbody tr").first()).toBeVisible({
+    // Kernel-native /api/skills/stats (ADR-125 read surface): the tab shows
+    // the skill-candidate tracker metrics. The donor's 24-skill registry
+    // (safe_file_operations, toggles, …) is a ratified deferral (ADR-108
+    // D9), so the tab renders the candidate-empty state instead of rows.
+    await expect(page.getByTestId("tektos-ops-skills")).toContainText("archetypes", {
+      timeout: 15_000,
+    });
+    await expect(page.getByTestId("tektos-ops-skills")).toContainText("Skill candidates", {
       timeout: 15_000,
     });
 
     await page.getByTestId("tektos-ops-tab-tools").click();
     await expect(page.getByTestId("tektos-ops-tools")).toBeVisible();
-    // Tektos registers 20+ built-in tools.
+    // Kernel-native /api/tools capability table (static, ADR-107 D1):
+    // the kernel knows 13 tools (bash, file_*, search_*, web_*,
+    // delegate_task, …).
     const toolRows = page.getByTestId("tektos-ops-tools").locator("tbody tr");
     await expect(toolRows.first()).toBeVisible({ timeout: 15_000 });
     expect(await toolRows.count()).toBeGreaterThanOrEqual(10);
@@ -66,11 +78,14 @@ test.describe("tektos-ultima ops page (Stage 9.4)", () => {
     await page.goto(PAGE);
     await page.getByTestId("tektos-ops-tab-telemetry").click();
     await expect(page.getByTestId("tektos-ops-telemetry")).toBeVisible();
-    // Real telemetry: temperature in °C and a thermal zone (GREEN/AMBER/RED).
+    // Kernel-native /api/telemetry (ADR-138): a live GPU sample with
+    // temperature in °C and the ADR-138 footer. The donor's GREEN/AMBER/RED
+    // thermal zone came from /api/thermal/status (ADR-121) — a separate
+    // surface, not asserted here.
     await expect(page.getByTestId("tektos-ops-telemetry")).toContainText("°C", {
       timeout: 15_000,
     });
-    await expect(page.getByTestId("tektos-ops-telemetry")).toContainText(/GREEN|AMBER|RED/, {
+    await expect(page.getByTestId("tektos-ops-telemetry")).toContainText("kernel-native (ADR-138)", {
       timeout: 15_000,
     });
   });

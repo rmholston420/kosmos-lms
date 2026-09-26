@@ -46,7 +46,8 @@
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import Link from "next/link";
 
-const GATEWAY = "/api/tektos-ultima/gateway";
+// Stage 14.1 (ADR-109 exit gate): the ADR-109 gateway proxy is deleted —
+// all call sites are kernel-native (base: "").
 const FRAME_HEIGHT = "calc(100vh - var(--top-bar-h, 48px))";
 
 type TabId =
@@ -180,7 +181,7 @@ function EmptyNote({ children }: { children: ReactNode }) {
   );
 }
 
-async function g<T = unknown>(path: string, base: string = GATEWAY): Promise<T | null> {
+async function g<T = unknown>(path: string, base: string = ""): Promise<T | null> {
   try {
     const r = await fetch(`${base}${path}`, { cache: "no-store" });
     if (!r.ok) return null;
@@ -211,9 +212,11 @@ function StatusTab() {
   const [inf, setInf] = useState<Record<string, unknown> | null>(null);
   const [thermal, setThermal] = useState<Record<string, unknown> | null>(null);
   const [health, setHealth] = useState<Record<string, unknown> | null>(null);
+  const [llmst, setLlmst] = useState<Record<string, unknown> | null>(null);
+  const [sesss, setSesss] = useState<unknown>(null);
 
   const load = useCallback(async () => {
-    const [nerv, obs, mcp, emb, ev, rag, tr, vis, voice, infm, therm, hp] = await Promise.all([
+    const [nerv, obs, mcp, emb, ev, rag, tr, vis, voice, infm, therm, hp, llmStatus, sessions] = await Promise.all([
       g<Record<string, unknown>>("/api/nervous-system/status"),
       g<Record<string, unknown>>("/api/observability/status"),
       g<Record<string, unknown>>("/api/mcp/status"),
@@ -226,6 +229,8 @@ function StatusTab() {
       g<Record<string, unknown>>("/api/inference/metrics"),
       g<Record<string, unknown>>("/api/thermal/health"),
       g<Record<string, unknown>>("/health"),
+      g<Record<string, unknown>>("/api/llm/status"),
+      g<Array<Record<string, unknown>>>("/api/sessions"),
     ]);
     const pick = (o: Record<string, unknown> | null, name: string, detail?: unknown): Subsystem => ({
       key: name.toLowerCase().replace(/[^a-z]+/g, "_"),
@@ -249,10 +254,11 @@ function StatusTab() {
     ]);
     setInf(infm);
     setThermal(therm);
-    // The gateway serves /health as a reachability probe wrapped in
-    // {upstream, reachable, status_code, body} (Stage 9.1 contract) — unwrap.
-    const hpInner = isObj(hp?.["body"]) ? (hp["body"] as Record<string, unknown>) : hp;
-    setHealth(hpInner);
+    // Stage 14.1 (ADR-109 exit gate): kernel-native /health — no more
+    // {upstream, reachable, body} gateway envelope.
+    setHealth(hp);
+    setLlmst(llmStatus);
+    setSesss(sessions);
   }, []);
 
   useEffect(() => {
@@ -278,11 +284,11 @@ function StatusTab() {
             <tr>
               <Td mono>Tektos core</Td>
               <Td>
-                <HealthValue value={health && health["ok"] ? "ok" : "offline"} />
+                <HealthValue value={health && str(health["status"]) === "ok" ? "ok" : "offline"} />
               </Td>
               <Td>
                 {health
-                  ? `protocol v${str(health["protocol_version"]) || "?"} · ${health["active_sessions"] ?? 0} active · ${str(health["llm_model"]) || "no LLM"}`
+                  ? `${str(llmst?.["model"]) || "no LLM"} · ${Array.isArray(sesss) ? sesss.length : 0} active sessions`
                   : "unreachable"}
               </Td>
             </tr>
@@ -1675,7 +1681,8 @@ export default function TektosUltimaPanelsPage() {
   useEffect(() => {
     let alive = true;
     const probe = async () => {
-      const h = await g("/health");
+      // Stage 14.1 (ADR-109 exit gate): kernel-native /health.
+      const h = await g("/health", "");
       if (!alive) return;
       setUpstreamDown(!(isObj(h) && Object.keys(h).length > 0));
     };

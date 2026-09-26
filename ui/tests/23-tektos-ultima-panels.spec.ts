@@ -2,9 +2,9 @@ import { test, expect } from "@playwright/test";
 
 // Tektos integration Stage 9.5 (ADR-113) — native subsystem panels page.
 //
-// Drives the real kernel + Tektos API end-to-end (no mocks): the page
-// talks to the standalone Tektos (:8020) through the kernel gateway
-// (/api/tektos-ultima/gateway/*). All assertions are READ-ONLY — the page
+// Drives the real kernel end-to-end (no mocks): the page talks to the
+// kernel-native API (Stage 14.1: the ADR-109 gateway proxy to the
+// retired :8020 is deleted). All assertions are READ-ONLY — the page
 // itself mutates nothing and the spec never clicks a mutation control, so
 // it is safe in CI and leaks no state.
 
@@ -109,31 +109,29 @@ test.describe("tektos-ultima panels page (Stage 9.5)", () => {
   test("status tab shows the Tektos core /health probe row", async ({ page }) => {
     await page.goto(PAGE);
     await expect(page.getByTestId("tektos-panels-status")).toBeVisible();
-    // The first row is the gateway's /health reachability probe, unwrapped
-    // from the {upstream, reachable, body} envelope.
+    // Stage 14.1 (ADR-109 exit gate): the first row is the kernel-native
+    // /health probe — no gateway envelope, detail from /api/llm/status +
+    // /api/sessions.
     const coreRow = page.getByTestId("tektos-panels-status").locator("tbody tr").first();
     await expect(coreRow).toContainText("Tektos core", { timeout: 15_000 });
-    await expect(coreRow).toContainText(/protocol v[\d.]+/, { timeout: 15_000 });
+    await expect(coreRow).toContainText(/active sessions/, { timeout: 15_000 });
   });
 
   test("drill tab: hooks, repoMap, routing, skill search + skill detail", async ({ page }) => {
     await page.goto(PAGE);
     await page.getByTestId("tektos-panels-tab-drill").click();
     await expect(page.getByTestId("tektos-panels-drill")).toBeVisible();
-    // Hooks / RepoMap / routing all render from upstream GETs.
+    // Hooks / RepoMap / routing all render from kernel-native GETs.
     await expect(page.getByTestId("tektos-panels-drill")).toContainText("Event hooks", { timeout: 15_000 });
     await expect(page.getByTestId("tektos-panels-drill")).toContainText("Tool schemas", { timeout: 15_000 });
 
-    // Skill search (pure GET) returns named skills on every install.
+    // Skill search (pure GET) — the donor SkillManager is a ratified
+    // deferral (ADR-108 D9): the kernel has no skill store, so the search
+    // surfaces the empty state. Assert the tab degrades honestly, not that
+    // donor skill names exist.
     await page.getByTestId("tektos-panels-skill-query").fill("file");
     await page.getByTestId("tektos-panels-skill-search-btn").click();
-    await expect(page.getByTestId("tektos-panels-drill")).toContainText("safe_file_operations", {
-      timeout: 15_000,
-    });
-
-    // Per-skill drill (GET /api/skills/{id}) renders the full skill JSON.
-    await page.getByTestId("tektos-panels-skill-view-0").click();
-    await expect(page.getByTestId("tektos-panels-drill")).toContainText("trigger_conditions", {
+    await expect(page.getByTestId("tektos-panels-drill")).toContainText("no matches", {
       timeout: 15_000,
     });
   });

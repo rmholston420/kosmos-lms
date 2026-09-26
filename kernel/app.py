@@ -2668,34 +2668,16 @@ app = FastAPI(title="Kosmos Kernel", version="6.12.0", lifespan=lifespan)
 
 
 # ---------------------------------------------------------------------------
-# Tektos-Ultima API gateway (ADR-109, Stage 9.1) + kernel-wide CSP
+# Kernel-wide CSP middleware (ADR-089)
 # ---------------------------------------------------------------------------
-# Pure kernel-side proxy to the standalone Tektos API (TEKTOS_ULTIMA_API_URL,
-# default http://127.0.0.1:8020). No registry coupling: it degrades to 503
-# envelopes per-request, never at boot (ADR-109 D2).
-#
-# The ADR-091 iframe proxy / postMessage bridge was retired in Stage 9.5
-# (ADR-113) once native parity was verified. The frame-ancestors CSP
-# middleware survived the retirement as a kernel-wide hardening measure
-# (moved into kernel/tektos_ultima_gateway.py).
-try:
-    from kernel.tektos_ultima_gateway import (
-        KosmosCSPMiddleware as _KosmosCSPMiddleware,
-        build_tektos_ultima_gateway_router as _build_tektos_ultima_gateway_router,
-    )
+# ``frame-ancestors 'self'`` on every HTTP response: no Kosmos page (the
+# static-export shell included) can be iframed by an external origin.
+# Survived the ADR-091 iframe retirement (Stage 9.5) and the ADR-109
+# gateway deletion (Stage 14.1) as kernel-wide hardening — it lives in
+# kernel/csp.py, behavior byte-identical to the gateway-module copy.
+from kernel.csp import KosmosCSPMiddleware as _KosmosCSPMiddleware
 
-    app.include_router(_build_tektos_ultima_gateway_router())
-    app.add_middleware(_KosmosCSPMiddleware)
-except Exception as _tektos_ultima_gateway_exc:  # noqa: BLE001
-    import logging as _tektos_ultima_gateway_logging
-
-    _tektos_ultima_gateway_logging.getLogger(__name__).warning(
-        "Tektos-Ultima gateway not mounted: %s", _tektos_ultima_gateway_exc
-    )
-    registry.errors["tektos_ultima_gateway"] = (
-        f"{type(_tektos_ultima_gateway_exc).__name__}: "
-        f"{_tektos_ultima_gateway_exc}"
-    )
+app.add_middleware(_KosmosCSPMiddleware)
 
 # ---------------------------------------------------------------------------
 # Tektos-Ultima data-service status endpoints (ADR-117, Stage 11.1)

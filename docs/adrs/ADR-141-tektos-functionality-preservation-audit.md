@@ -495,6 +495,14 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
    deletion only if their named Stage 13 port has already landed; otherwise they
    gate the deletion too.
 
+   *Gate progress (2026-09-26): (a) ✓ T-bucket EMPTY (13.15, `c5c41b5`);
+   (b) ✓ ADR-142 R7–R9; (c) ✓ ADR-142 R8 (`20343da`); (e) ✓ and (f)-module ✓
+   Stage 14.1 (ADR-144) — upstream probes removed from all three UI pages,
+   gateway module + contract test deleted, CSP middleware preserved at
+   `kernel/csp.py`. Remaining: (d) the ADR-140 WS decision at the deletion
+   commit, and (f)-retirement of the :8020 service with the main.py deletion
+   itself (donor tree stays read-only until then).*
+
 ## Consequences
 
 - The Stage 11 "exit gate" is now a **152-route checklist**, not a single file

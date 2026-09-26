@@ -63,6 +63,10 @@ middleware survives the retirement and moves into
 kernel-wide. Rationale: even with no iframe, no Kosmos page should be
 nestable inside a third-party origin. It is a raw-ASGI (send-wrapping)
 middleware, so streaming (SSE) responses are not buffered.
+*Amendment (ADR-144, 2026-09-26): when the gateway module itself was
+deleted at Stage 14.1, the middleware moved again — byte-identical — to
+its final home `kernel/csp.py`. ADR-089 hardening intact; mount order
+unchanged.*
 
 **D4 — Retire the standalone frontend + gateway services.** The Tektos
 standalone Next.js frontend (`tektos-frontend.service`, `:5556`) and

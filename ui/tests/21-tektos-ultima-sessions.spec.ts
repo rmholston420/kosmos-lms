@@ -2,9 +2,9 @@ import { test, expect } from "@playwright/test";
 
 // Tektos integration Stage 9.3 (ADR-111) — native sessions + chat page.
 //
-// Drives the real kernel + Tektos API end-to-end (no mocks): the page
-// talks to the standalone Tektos (:8020) through the kernel gateway
-// (/api/tektos-ultima/gateway/*). The one live prompt is a minimal
+// Drives the real kernel end-to-end (no mocks): the page talks to the
+// kernel-native session API (Stage 14.1: the ADR-109 gateway proxy to
+// the retired :8020 is deleted). The one live prompt is a minimal
 // "reply PONG" turn on the primary model — it exercises the full
 // create → SSE stream → render path against the real LLM.
 //
@@ -17,12 +17,12 @@ const BASE = process.env.KOSMOS_BASE_URL ?? "http://127.0.0.1:8000";
 const ITEMS = "[data-testid^='tektos-session-item-']";
 
 async function archiveAllSessions() {
-  const res = await fetch(`${BASE}/api/tektos-ultima/gateway/api/sessions`);
+  const res = await fetch(`${BASE}/api/sessions`);
   if (!res.ok) return;
   const sessions = (await res.json()) as Array<{ id: string; is_archived?: boolean }>;
   for (const s of sessions) {
     if (s.is_archived) continue;
-    await fetch(`${BASE}/api/tektos-ultima/gateway/api/sessions/${s.id}/archive`, {
+    await fetch(`${BASE}/api/sessions/${s.id}/archive`, {
       method: "POST",
     });
   }
