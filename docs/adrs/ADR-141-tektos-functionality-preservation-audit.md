@@ -33,9 +33,9 @@ an equivalent kernel mechanism.
 
 | Disposition | Count | Meaning |
 |---|---|---|
-| **P — Preserved** | 68 (35 + T6 2 + T7 2 + T8a 24 + T8b-1 2 + T8b-2 1 + T8b-3 1 + T8b-4 1, 2026-09-26) | kernel/plugin referent exists and is live |
+| **P — Preserved** | 70 (35 + T6 2 + T7 2 + T8a 24 + T8b-1 2 + T8b-2 1 + T8b-3 1 + T8b-4 1 + T8c-1 2, 2026-09-26) | kernel/plugin referent exists and is live |
 | **D — Deferred** | 70 + 2 WS | recorded path; functionality lost until the named port lands |
-| **T — To-port** | 14 | no referent yet; each becomes a work item before deletion (T8 scope; orchestrator ×2 folded into T8c) |
+| **T — To-port** | 12 | no referent yet; each becomes a work item before deletion (T8 scope; orchestrator ×2 folded into T8c) |
 
 The deferral buckets are **honest temporary losses**, not permanent omissions:
 every D route names the stage or ADR that carries its functionality. The Stage 11
@@ -185,8 +185,8 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `POST /api/llm/probe` | **P (2026-09-26, T8b-3)** — kernel-native: `tektos_llm_probe` (app.py); donor wire `{llm_available, base_url, model}` over `registry.llm.is_healthy()` (ADR-132 FailoverLLMAdapter — real per-backend probe, engages fallback); test `tests/kernel/test_adr141_t8b3_llm_probe.py` |
 | `POST /api/memory/decay` | **P (2026-09-26, T6)** — kernel-native, donor shape |
 | `DELETE /api/memory/{tier}/{entry_id}` | **P (2026-09-26, T6)** — kernel-native, donor shape |
-| `GET /api/multi-agent-orchestrator/agents` | TO-PORT (T8c): engine.agents roster dict exists (ADR-114), /agents route missing |
-| `GET /api/multi-agent-orchestrator/status` | TO-PORT (T8c): engine + bundle exist (ADR-114), /stats present, /status route missing |
+| `GET /api/multi-agent-orchestrator/agents` | **P (2026-09-26, T8c-1)** — kernel-native: `/tektos/api/orchestrator/agents` (plugins/tektos/orchestrator/api.py, ADR-141 T1 donor-fidelity port — `[{id, name, role, status, active_tasks}]` verbatim); UI re-pointed (panels/page.tsx AgentsTab); 7 tests (`test_adr141_t1_orchestrator_status_agents.py`); live :8000 → 200 |
+| `GET /api/multi-agent-orchestrator/status` | **P (2026-09-26, T8c-1)** — kernel-native: `/tektos/api/orchestrator/status` (ADR-141 T1 donor-fidelity port — `{status, hierarchical_agent, long_running_agent, coding_executor}` booleans, honest degrade); live :8000 → 200 |
 | `GET /api/planner/language-games` | **P (2026-09-26, T8a)** — kernel-native (ADR-141 T4, app.py:5821; test_adr141_t4_planner_surface.py) |
 | `POST /api/planner/plan` | **P (2026-09-26, T8a)** — kernel-native (T4, app.py:5840) |
 | `GET /api/planner/status` | **P (2026-09-26, T8a)** — kernel-native (T4, app.py:5877) |
@@ -363,6 +363,13 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
      donor row shape). 4 tests; live :8000 (empty + `turn` probe → 200).
      **T8b complete** — next: T8c (hooks, schedule, routing/decide, delegate,
      evaluation, plugins toggle, dreamtime).
+     **T8c-1 (2026-09-26)** — orchestrator `/status` + `/agents` reconciled
+     (T8a-style): both already kernel-native from ADR-141 T1 at
+     `/tektos/api/orchestrator/{status,agents}` (donor-fidelity port,
+     `test_adr141_t1_orchestrator_status_agents.py` 7 tests, live :8000 → 200,
+     UI re-pointed). Counts P 68→70 / T 14→12. Remaining T8c: routing/decide,
+     delegate, hooks ×2, schedule, evaluation, plugins toggle, dreamtime ×4,
+     schema (10 rows).
 
 3. **D-bucket ports ride the plan's Stage 13** in its own order
    (13.1 schema_evolution → 13.2 db_manager → … → 13.7 voice), each with its own

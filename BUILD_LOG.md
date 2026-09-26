@@ -5231,3 +5231,18 @@ MCP, metabolism) in ROI order.
 - **Gate progress (ADR-141):** T1–T7 ✓, T8a ✓, **T8b-1/2/3/4 ✓ (T8b
   complete)**. Next: T8c (hooks, schedule, routing/decide, delegate,
   evaluation, plugins toggle, dreamtime).
+
+## 2026-09-26 03:06 EDT — ADR-141 T8c-1 complete: orchestrator /status + /agents reconciled
+- **What:** T8c first slice — `GET /api/multi-agent-orchestrator/{status,agents}`.
+  T8a-style reconciliation (no code change): both routes already kernel-native
+  from ADR-141 T1 at `/tektos/api/orchestrator/{status,agents}` — donor-fidelity
+  port in `plugins/tektos/orchestrator/api.py` (donor wire verbatim: status
+  booleans with honest degrade; agents `[{id, name, role, status, active_tasks}]`).
+- **Verified:** `test_adr141_t1_orchestrator_status_agents.py` 7/7 passed;
+  live :8000 — `/tektos/api/orchestrator/status` → 200, `/agents` → 200;
+  donor paths 404 by design (UI already re-pointed in panels/page.tsx AgentsTab).
+- **Docs:** ADR-141 rows → P (T8c-1), counts P 68→70 / T 14→12, T8 section
+  T8c-1 line; ADR README progress → T8c-1 ✓.
+- **Gate progress (ADR-141):** T1–T7 ✓, T8a ✓, T8b ✓ (config, keys,
+  llm/probe, search), T8c-1 ✓. Remaining T8c: routing/decide, delegate,
+  hooks ×2, schedule, evaluation, plugins toggle, dreamtime ×4, schema (12 rows).
