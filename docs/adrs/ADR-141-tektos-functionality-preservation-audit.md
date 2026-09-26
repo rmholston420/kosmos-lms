@@ -218,8 +218,8 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 
 | Donor route | Disposition |
 |---|---|
-| `WS /ws/{session_id}` | **D** — ADR-140: deferred to the deletion gate; parity-via-bus (`/api/events/ws` ADR-061 + prompt event publishing) or documented SSE-sufficient |
-| `WS /ws/pty` | **D** — Stage 13 sandbox work (PTY is a sandbox-surface concern) |
+| `WS /ws/{session_id}` | **RESOLVED (2026-09-26, ADR-140 Executed)** — branch (a) parity-via-bus: `TektosTurnLoop` publishes `tektos.agent.turn.*` onto the ADR-061 bus and `/api/events/ws?types=...` delivers them (live-verified end-to-end, zero new code). Inbound approve/reject = `POST /api/approvals/{id}/approve\|reject`. SSE half already kernel-native (`/api/prompt/sse`). |
+| `WS /ws/pty` | **DEFERRED (documented, 2026-09-26)** — named carrier: a future `SandboxPort` PTY adapter. No live consumer (zero `ws/pty`/`new WebSocket` under `ui/`; the only donor consumer was the Stage 9.5-retired `TerminalPane`). Recorded as an honest deferral, not a gate blocker. |
 
 ## Decisions
 
@@ -495,13 +495,26 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
    deletion only if their named Stage 13 port has already landed; otherwise they
    gate the deletion too.
 
-   *Gate progress (2026-09-26): (a) ✓ T-bucket EMPTY (13.15, `c5c41b5`);
-   (b) ✓ ADR-142 R7–R9; (c) ✓ ADR-142 R8 (`20343da`); (e) ✓ and (f)-module ✓
-   Stage 14.1 (ADR-144) — upstream probes removed from all three UI pages,
-   gateway module + contract test deleted, CSP middleware preserved at
-   `kernel/csp.py`. Remaining: (d) the ADR-140 WS decision at the deletion
-   commit, and (f)-retirement of the :8020 service with the main.py deletion
-   itself (donor tree stays read-only until then).*
+   *Gate progress (2026-09-26, GATE CLOSED): (a) ✓ T-bucket EMPTY (13.15,
+   `c5c41b5`); (b) ✓ ADR-142 R7–R9; (c) ✓ ADR-142 R8 (`20343da`); (d) ✓ ADR-140
+   Executed (2026-09-26) — branch (a) parity-via-bus, zero new code: live probe
+   on :8000 delivered `tektos.agent.turn.started → llm_completed → completed`
+   over `/api/events/ws?types=...` during a real GPU turn (session `b3f8e47d`,
+   qwen3.8-27b-code, 2.4 s); the donor's inbound approve/reject half = kernel
+   REST `POST /api/approvals/{id}/approve|reject`; `/ws/pty` closed as a
+   documented deferral (no carrier, no live consumer — the only donor consumer
+   was the Stage 9.5-retired `TerminalPane`). (e) ✓ and (f)-module ✓ Stage 14.1
+   (ADR-144). (f)-retirement ✓ 2026-09-26: donor `main.py` + all five systemd
+   units deleted (donor commit `43cb0ef`), `:8020` closed, kernel `:8000`
+   green. **All six gate conditions satisfied — `main.py` deleted.**
+
+   D-route clause check (performed at deletion, 2026-09-26): all 21 HTTP D rows
+   are user-ratified deferrals (skills ×15 ADR-108 D9, hindsight ×3 ADR-134
+   honest-limit, inference/metrics ×1 partial, trigger-skill-gen ×1 T8c-8c,
+   plugins-toggle ×1 T8c-7) — none names a Stage 13 port, so none gate the
+   deletion. The one WS row tied to "Stage 13 sandbox" (`/ws/pty`) has no live
+   consumer (verified: zero `ws/pty`/`new WebSocket` references under `ui/`) and
+   is recorded as a documented deferral, not a blocker.*
 
 ## Consequences
 
