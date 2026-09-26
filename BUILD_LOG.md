@@ -5647,3 +5647,37 @@ MCP, metabolism) in ROI order.
   (create/drop/rename tables+columns, indexes), 13.2d
   query/DML/transaction/explain, 13.2e export/import/backup/restore/
   analyze/optimize.
+
+## 2026-09-26 — ADR-141 Stage 13.2c: /api/db/* DDL routes kernel-native
+
+- **Slice:** ADR-141 Stage 13.2c (DDL routes over the 13.2a substrate)
+- **What changed:** Eight donor DDL routes + the four donor Pydantic
+  bodies (donor main.py:3335–3363, routes 3495–3597), donor-verbatim,
+  all wired to `registry.tektos_db`:
+  - `POST /api/db/tables` (create_table), `DELETE /api/db/tables/{t}` (drop_table)
+  - `POST /api/db/tables/{t}/columns` (add_column), `DELETE /api/db/tables/{t}/columns/{c}` (drop_column)
+  - `PATCH /api/db/tables/{t}/rename` (rename_table), `PATCH /api/db/tables/{t}/columns/{c}/rename` (rename_column)
+  - `POST /api/db/indexes` (create_index), `DELETE /api/db/indexes/{name}` (drop_index)
+- **Documented divergences / donor behaviors preserved 1:1:**
+  1. **donor idempotency:** create_table existing → `{"created": false}` 200; add_column existing → `{"added": false}` 200; create_index existing → `{"created": false}` 200.
+  2. **missing targets:** drop_table missing → `{"dropped": false}` 200; drop_column missing column → `{"dropped": false}` 200; drop_index missing → `{"dropped": false}` 200.
+  3. **drop_table 400 path is UNREACHABLE:** drop_table's existence check
+     runs BEFORE `_safe_identifier`, so a malformed name (e.g. `1bad`)
+     never matches → `{"dropped": false}` 200. The donor's
+     `except ValueError → 400` on this route is dead code. Proven by
+     test + live-confirmed on :8000. (Contrast: create_table validates
+     the name up-front → 400; rename_table validates the source table
+     existence → 400 "does not exist".)
+  4. gate-off → `{"error": "Database manager not initialized"}` 200
+     (donor wire).
+- **Verified:** 10 route tests green (module-scoped real boot, gate on,
+  tmp db, probe table; all 8 happy paths + donor idempotency + bad-name
+  400s + missing-target false-200s + drop_table unreachable-400 lock).
+  Full suite green. Live :8000 (restarted with 13.2c) — 14-case sweep
+  all green: create/existing/bad-name, add/existing/drop column,
+  rename table/column, create/drop index, drop table, drop-missing 200,
+  drop-bad-ident 200 (unreachable 400), rename-missing 400.
+- **Docs:** ADR-141 8 DDL rows → P (13.2c); README progress line.
+- **Gate progress (ADR-141):** 13.2a + 13.2b + 13.2c P. Next: 13.2d
+  query/DML/transaction/explain, 13.2e export/import/backup/restore/
+  analyze/optimize.

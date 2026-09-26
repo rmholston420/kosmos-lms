@@ -4777,6 +4777,168 @@ async def analyze_all_tables() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Database-manager DDL surface (ADR-141 Stage 13.2c, donor main.py:3335–3597).
+# Eight donor routes (create/drop table, add/drop column, rename table/
+# column, create/drop index) + the four donor Pydantic bodies, all over
+# registry.tektos_db (the 13.2a substrate). Wires are donor-verbatim:
+# gate-off → {"error": "Database manager not initialized"} 200,
+# ValueError → 400 (donor _HTTPException).
+# ---------------------------------------------------------------------------
+
+class _DBCreateTableBody(BaseModel):
+    table_name: str
+    columns: dict[str, str]  # {name: type}
+    primary_key: str | None = None
+
+
+class _DBAddColumnBody(BaseModel):
+    table_name: str
+    column_name: str
+    column_type: str
+    default: Any = None
+    notnull: bool = False
+
+
+class _DBRenameBody(BaseModel):
+    new_name: str
+
+
+class _DBCreateIndexBody(BaseModel):
+    index_name: str
+    table_name: str
+    columns: list[str]
+    unique: bool = False
+
+
+@app.post("/api/db/tables")
+async def db_create_table(body: _DBCreateTableBody):
+    """Create a new table (donor main.py:3495)."""
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized"}
+    try:
+        result = mgr.create_table(body.table_name, body.columns, body.primary_key)
+        return {"created": result, "table": body.table_name}
+    except ValueError as e:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+
+
+@app.delete("/api/db/tables/{table_name}")
+async def db_drop_table(table_name: str):
+    """Drop a table (donor main.py:3507)."""
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized"}
+    try:
+        result = mgr.drop_table(table_name)
+        return {"dropped": result, "table": table_name}
+    except ValueError as e:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+
+
+@app.post("/api/db/tables/{table_name}/columns")
+async def db_add_column(table_name: str, body: _DBAddColumnBody):
+    """Add a column to an existing table (donor main.py:3519)."""
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized"}
+    try:
+        result = mgr.add_column(
+            table_name,
+            body.column_name,
+            body.column_type,
+            body.default,
+            body.notnull,
+        )
+        return {"added": result, "table": table_name, "column": body.column_name}
+    except ValueError as e:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+
+
+@app.delete("/api/db/tables/{table_name}/columns/{column_name}")
+async def db_drop_column(table_name: str, column_name: str):
+    """Drop a column from a table (donor main.py:3537)."""
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized"}
+    try:
+        result = mgr.drop_column(table_name, column_name)
+        return {"dropped": result, "table": table_name, "column": column_name}
+    except ValueError as e:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+
+
+@app.patch("/api/db/tables/{table_name}/rename")
+async def db_rename_table(table_name: str, body: _DBRenameBody):
+    """Rename a table (donor main.py:3549)."""
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized"}
+    try:
+        result = mgr.rename_table(table_name, body.new_name)
+        return {"renamed": result, "old": table_name, "new": body.new_name}
+    except ValueError as e:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+
+
+@app.patch("/api/db/tables/{table_name}/columns/{old_name}/rename")
+async def db_rename_column(table_name: str, old_name: str, body: _DBRenameBody):
+    """Rename a column (donor main.py:3561)."""
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized"}
+    try:
+        result = mgr.rename_column(table_name, old_name, body.new_name)
+        return {"renamed": result, "old": old_name, "new": body.new_name}
+    except ValueError as e:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+
+
+@app.post("/api/db/indexes")
+async def db_create_index(body: _DBCreateIndexBody):
+    """Create an index on a table (donor main.py:3573)."""
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized"}
+    try:
+        result = mgr.create_index(
+            body.index_name, body.table_name, body.columns, body.unique
+        )
+        return {"created": result, "index": body.index_name}
+    except ValueError as e:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+
+
+@app.delete("/api/db/indexes/{index_name}")
+async def db_drop_index(index_name: str):
+    """Drop an index (donor main.py:3587)."""
+    mgr = registry.tektos_db
+    if mgr is None:
+        return {"error": "Database manager not initialized"}
+    try:
+        result = mgr.drop_index(index_name)
+        return {"dropped": result, "index": index_name}
+    except ValueError as e:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+
+
+# ---------------------------------------------------------------------------
 # Embedder surface (ADR-141 T7, donor main.py:4448/4464) — kernel-native.
 # The donor ran a private EmbedderClient (_embedder_client, :8091) behind
 # two routes. Per the layering rule (governing, 2026-09-25) the embedder

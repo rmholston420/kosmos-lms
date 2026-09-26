@@ -100,19 +100,19 @@ ports) + Stage 14 (deletion) sequence is the recorded path for the D routes.
 | `POST /api/db/explain` | Stage 13.2 db_manager |
 | `POST /api/db/export` | Stage 13.2 db_manager |
 | `POST /api/db/import` | Stage 13.2 db_manager |
-| `POST /api/db/indexes` | Stage 13.2 db_manager |
-| `DELETE /api/db/indexes/{index_name}` | Stage 13.2 db_manager |
+| `POST /api/db/indexes` | **P (Stage 13.2c, 2026-09-26)** — kernel (registry.tektos_db.create_index; existing index → `{"created": false}` 200 donor if-exists; bad table identifier → 400) |
+| `DELETE /api/db/indexes/{index_name}` | **P (Stage 13.2c, 2026-09-26)** — kernel (registry.tektos_db.drop_index; missing index → `{"dropped": false}` 200) |
 | `POST /api/db/optimize` | Stage 13.2 db_manager |
 | `POST /api/db/query` | Stage 13.2 db_manager |
 | `POST /api/db/restore` | Stage 13.2 db_manager |
 | `GET /api/db/schema` | **P (Stage 13.2b, 2026-09-26)** — kernel /api/db/schema (registry.tektos_db.introspect, donor wire verbatim) |
-| `POST /api/db/tables` | Stage 13.2 db_manager |
-| `DELETE /api/db/tables/{table_name}` | Stage 13.2 db_manager |
+| `POST /api/db/tables` | **P (Stage 13.2c, 2026-09-26)** — kernel (registry.tektos_db.create_table; bad name → 400; existing → `{"created": false}` 200 donor if-not-exists) |
+| `DELETE /api/db/tables/{table_name}` | **P (Stage 13.2c, 2026-09-26)** — kernel (registry.tektos_db.drop_table; missing/malformed name → `{"dropped": false}` 200 — existence check precedes _safe_identifier, 400 path unreachable, live-confirmed) |
 | `GET /api/db/tables/{table_name}/analyze` | **P (Stage 13.2b, 2026-09-26)** — kernel (registry.tektos_db.analyze_table; missing table → 404 donor ValueError) |
-| `POST /api/db/tables/{table_name}/columns` | Stage 13.2 db_manager |
-| `DELETE /api/db/tables/{table_name}/columns/{column_name}` | Stage 13.2 db_manager |
-| `PATCH /api/db/tables/{table_name}/columns/{old_name}/rename` | Stage 13.2 db_manager |
-| `PATCH /api/db/tables/{table_name}/rename` | Stage 13.2 db_manager |
+| `POST /api/db/tables/{table_name}/columns` | **P (Stage 13.2c, 2026-09-26)** — kernel (registry.tektos_db.add_column; existing column → `{"added": false}` 200) |
+| `DELETE /api/db/tables/{table_name}/columns/{column_name}` | **P (Stage 13.2c, 2026-09-26)** — kernel (registry.tektos_db.drop_column; missing column → `{"dropped": false}` 200) |
+| `PATCH /api/db/tables/{table_name}/columns/{old_name}/rename` | **P (Stage 13.2c, 2026-09-26)** — kernel (registry.tektos_db.rename_column; missing source table → 400) |
+| `PATCH /api/db/tables/{table_name}/rename` | **P (Stage 13.2c, 2026-09-26)** — kernel (registry.tektos_db.rename_table; missing source → 400; bad new name → 400) |
 | `GET /api/db/tables/{table_name}/sample` | **P (Stage 13.2b, 2026-09-26)** — kernel (registry.tektos_db.get_table_sample; bad identifier → 404 donor ValueError; missing well-formed table → 500 donor unhandled OperationalError, test-locked + live-confirmed) |
 | `POST /api/db/transaction` | Stage 13.2 db_manager |
 | `POST /api/hindsight/recall` | ADR-134 honest limit (kernel /api/memory/search-semantic is the read-side referent) |
