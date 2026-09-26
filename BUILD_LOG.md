@@ -5467,3 +5467,27 @@ MCP, metabolism) in ROI order.
   line.
 - **Gate progress (ADR-141):** T1–T7 ✓, T8a ✓, T8b ✓, T8c-1…T8c-9 ✓.
   Remaining T8c: T8c-8c (skill-store follow-up — deferred).
+
+## 2026-09-26 — ADR-141 Stage 13.1a: GET /api/schema/patterns kernel-native
+
+- **Slice:** ADR-141 Stage 13.1a (schema-evolution read action route)
+- **What changed:** `GET /api/schema/patterns` at the donor path
+  (main.py:3229), donor wire verbatim — bare list of pattern dicts
+  {field, table, percentage, confidence, suggested_type, pattern_type,
+  example_values}, `top_k` param, donor {error, table} honest-degrade on
+  detection failure. Engine referent: `registry.tektos_schema_evolution`
+  (T8c-9 verbatim port); 503 + "not initialized" when env-gated off.
+- **Documented divergences:** (1) `table` default "working" (donor
+  "sessions" — tektos.db retired, ADR-137); (2) `metadata_field` default
+  "metadata" (donor `detect_patterns` default "payload" — the T6 store's
+  JSON column is `metadata`, so "payload" would degrade to
+  "no such column" on every T6 table).
+- **Verified:** 7 route tests green (module-scoped real boot, gate on,
+  tmp db). Full suite green. Live :8000 — seeded 3 long_term rows with
+  shared metadata keys → 4 patterns detected (repeated_metadata;
+  service/priority/region → TEXT, retry_count → REAL type inference;
+  confidence 0.8, example values populated). Seed rows removed after
+  verification.
+- **Docs:** ADR-141 patterns row → P (Stage 13.1a); README progress line.
+- **Gate progress (ADR-141):** Stage 13.1a ✓. Remaining 13.1: propose
+  (13.1b), apply (13.1c).

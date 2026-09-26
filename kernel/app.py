@@ -4470,6 +4470,60 @@ async def schema_info() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# ADR-141 Stage 13.1a — schema-evolution action surface (read): patterns
+# ---------------------------------------------------------------------------
+# Donor main.py:3229 (D → P): read-only column-pattern detection over the
+# introspected store. Engine referent = registry.tektos_schema_evolution
+# (T8c-9 verbatim port). Documented divergences: (1) the donor defaulted
+# `table` to "sessions" (donor tektos.db event store, retired in ADR-137);
+# the kernel introspects the T6 memory store, whose default table is
+# "working". (2) The donor's detect_patterns default metadata_field is
+# "payload" (tektos.db convention); the T6 store's JSON column is
+# "metadata", so the route exposes metadata_field defaulting to "metadata".
+# Wire shape is otherwise donor-verbatim.
+
+@app.get("/api/schema/patterns")
+async def detect_schema_patterns(
+    table: str = "working",
+    top_k: int = 10,
+    metadata_field: str = "metadata",
+):
+    """Detect data patterns that suggest schema changes (donor main.py:3229)."""
+    if registry.tektos_schema_evolution is None:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Schema-evolution engine not initialized "
+                         "(KOSMOS_TEKTOS_MEMORY=off)"
+            },
+        )
+    engine = registry.tektos_schema_evolution
+    try:
+        patterns = engine.detect_patterns(
+            table, top_k=top_k, metadata_field=metadata_field
+        )
+    except Exception as exc:  # noqa: BLE001 — donor's honest-degrade shape
+        logger.warning(
+            "Schema pattern detection failed for table '%s': %s", table, exc
+        )
+        return {"error": str(exc), "table": table}
+    return [
+        {
+            "field": p.field_name,
+            "table": p.table,
+            "percentage": round(p.percentage, 2),
+            "confidence": p.confidence,
+            "suggested_type": p.suggested_type,
+            "pattern_type": p.pattern_type,
+            "example_values": p.example_values,
+        }
+        for p in patterns
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Embedder surface (ADR-141 T7, donor main.py:4448/4464) — kernel-native.
 # The donor ran a private EmbedderClient (_embedder_client, :8091) behind
 # two routes. Per the layering rule (governing, 2026-09-25) the embedder
