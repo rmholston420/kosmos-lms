@@ -311,6 +311,35 @@ def test_run_maintenance(client: TestClient, skill_manager: SkillManager) -> Non
     assert isinstance(body, dict)
 
 
+# ── Prune (global + per-skill alias) ─────────────────────────────────────
+
+
+def test_prune_global_route(client: TestClient, skill_manager: SkillManager) -> None:
+    """Stage 14.12 exposure fix: the donor's per-skill-shaped prune
+    (``POST /api/skills/{skill_id}/prune``) ignored the id and ran a global
+    prune; the id-less ``POST /api/skills/prune`` is the canonical form the
+    UI's Maintenance panel calls. Both must work and agree."""
+    _make_skill(skill_manager, "Prune Candidate")
+    r = client.post("/api/skills/prune")
+    assert r.status_code == 200
+    assert set(r.json().keys()) == {"archived"}
+
+    # Per-skill alias (donor shape) still dispatches to the same op.
+    r = client.post("/api/skills/any-id/prune")
+    assert r.status_code == 200
+    assert set(r.json().keys()) == {"archived"}
+
+
+def test_prune_global_degraded(monkeypatch: pytest.MonkeyPatch) -> None:
+    from kernel.app import registry
+
+    monkeypatch.setattr(registry, "tektos_skills", None, raising=False)
+    c = TestClient(app)
+    r = c.post("/api/skills/prune")
+    assert r.status_code == 200
+    assert r.json() == {"error": "Skill manager not initialized"}
+
+
 # ── Select + execute ──────────────────────────────────────────────────────
 
 

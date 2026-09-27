@@ -6226,3 +6226,122 @@ Third ordinary ADR off the D-bucket per ADR-145: the ADR-134 honest limit — th
 - **Contract pitfall hit:** the FrontendContractPort validator (`ports/frontend_contract.py`) rejects routes with an empty `lazy_module` — the first boot attempt failed with `PluginDescriptorRejected: routes[1].lazy_module must be a non-empty str` (fail-open: `tektos: false` on /health, all other routes 200). Fixed by carrying a namespace identifier `tektos/pages/TektosUltimaDashboard` (not consumed at runtime — the sidebar renders registry routes as plain `<Link>` entries; same convention as the existing `/tektos` route).
 - **Verification:** `validate_plugin_descriptor` passes; `/api/kernel/routes` live manifest = `/zetesis, /tektos, /tektos-ultima`; all four pages serve 200; new Playwright regression test `ui/tests/20-tektos-ultima-sidebar.spec.ts` (sidebar shows Tektos-Ultima exactly once → click-through renders the dashboard + subpage links; `/tektos` still exactly once) — **full Playwright suite 96 passed / 7 skipped / 0 failed** (baseline 95/7/0 + 1 new). Static export rebuilt (`next build` clean — kernel serves `ui/out`, gitignored per convention).
 - **Test-locator pitfall (recorded):** the static export normalizes Next `<Link>` hrefs to trailing-slash form (`/tektos-ultima/`), so exact-href attribute selectors miss — the spec uses role + name locators.
+
+### Stage 14.12 — Backend→frontend exposure-audit remediation close-out (2026-09-26)
+
+Closes the remaining open items from the 2026-09-26 backend→frontend exposure
+audit (`audit/audit-report-2026-09-26-backend-frontend-exposure.md`): the ADR-067
+D4 plan-surface discharge, the two dead panel refs, the Tier-3 router decision,
+and the `/ws/pty` terminal panel. Four workstreams, all landing on the live
+kernel + static UI in one batch.
+
+**1. ADR-067 D4 discharge — Tektos Plan→Approve→Execute→Diff surface kernel-native**
+(audit ROI item 1, the "broken detail page"). `ui/app/tektos/detail/page.tsx`
+(87 lines) drives `kernelClient.approveTektosPlan` / `executeTektosPlan` /
+`getTektosDiff`, but the client pointed these at `POST /api/tektos/plan/{id}/…`
+routes the kernel never had — the ADR-067 D4 note said "will 404 until
+Stage 2." Discharged now:
+- **New kernel routes** (`kernel/app.py`): `POST /api/tektos/plan/{approval_id}/execute`
+  and `GET /api/tektos/plan/{approval_id}/diff` — JSON ports of the two `/tektos-ui`
+  sub-app legs, resolving the approval record and running the execution + diff
+  pipeline. Detail + Approve reuse the **existing native approval routes**
+  (`GET/POST /api/approvals/{id}[/approve]`) — the same `ApprovalRecord` shape the
+  list/detail panels already consume, so no parallel approval surface.
+- **Client re-point** (`ui/lib/kernel-client.ts`): `getPlanDetail` →
+  `GET /api/approvals/{id}` (native); `approveTektosPlan` → `POST
+  /api/approvals/{id}/approve` with the native `{reason, modifications,
+  resolved_by: "kosmos_ui"}` body; `executeTektosPlan` / `getTektosDiff` unchanged
+  (they now resolve on the new kernel legs). All four resolve live on :8000
+  (unknown-id 404 returns the not-found body `ApprovalRecord '…' not found`,
+  confirming the route exists and the record lookup runs).
+- **Tests:** `tests/kernel/test_stage_14_12_tektos_plan_surface.py` — 4 live
+  integration tests (Valkey up): route registration for all four, seed a
+  HUMAN_REVIEW approval through the live APEX engine → approve → execute → diff
+  round-trip. 4/4 pass.
+
+**2. Exposure-audit dead-ref fixes** (audit ROI item 4 + the 1j data-services bug)
+- `GET /api/tektos/data-services` **base index route** (`kernel/tektos_data_services.py`,
+  `@router.get("")`) — the UI's data-services card composed `base + endpoint` per
+  store but the bare base path 404'd and (worse) was swallowed by the static `/`
+  mount, so the card was reading SPA HTML. The index now returns one summary
+  entry per store (`{services, healthy, total}`), each probe degrading
+  independently (never a 500). Live: 200 with `total: 5`.
+- `POST /api/skills/prune` **canonical id-less form** — the donor's per-skill
+  `POST /api/skills/{id}/prune` ignored the id and ran a *global* prune; the UI's
+  Maintenance panel calls the id-less form. Both now exist and agree (global).
+- Stale header comment in the panels page corrected: `/api/toolRouter/status` →
+  `/api/tools` (the status tab fetches `/api/tools`; the `toolRouter` name was
+  donor residue, no such route exists).
+- **Tests:** `tests/kernel/test_stage_14_12_data_services_index.py` (5 — index
+  shape, all five stores present, per-store degrade independence) + prune
+  additions to `test_stage_14_6_adr108_d9_skills_registry.py` (global + per-skill
+  prune both hit and agree).
+
+**3. Tier-3 discharge (ADR-146) — retire the 7 unmounted engine router factories**
+(audit ROI item 6, "Decide Tier 3: mount or retire"). **Decision: retire.**
+Deleted `plugins/tektos/{decomposer,executor,experience,manager,planner,reflection,
+synthesis}/api.py` (8 `build_*_router` factories, 22 HTTP routes) + their 4 router
+test files (`test_stage_8_{3,4,5}_engine_routers.py`, `test_stage_8_6_manager_router.py`).
+Decisive evidence (full reasoning in ADR-146): (1) the donor `main.py` had **zero**
+`include_router` calls and zero references to any of the 8 factories — the donor's
+HTTP surface is 154 flat `@app.*` routes, all already adjudicated P in ADR-141, so
+these 22 routes have **no donor referent** (they never existed as donor routes);
+(2) every underlying engine (`TaskDecomposer`, `TektosSpecPlanner`,
+`ReflectionEngine`, `SynthesisEngine`, `ExperienceReplay`, `TektosManager`,
+`TektosSpecExecutor`, `TektosToolRouter`) stays live — consumed by `kernel/app.py`,
+the self-improvement loop, and the orchestrator's `coding=` injection, with their
+dedicated direct engine unit tests intact (only the HTTP wrappers retired);
+(3) mounting was a net negative — no `prefix=`, so 7×`GET /recent` etc. would
+collide, forcing an invented wire shape no donor or UI consumer ever had. Net: 22
+dead routes removed instead of 22 newly mounted dead routes.
+
+**4. `/ws/pty` terminal panel** (audit ROI item 7, "build the terminal panel or
+document the deferral"). The Stage 14.9 endpoint was live + tested (real forked
+login shell) but had **zero UI consumers** — the only donor consumer was the
+Stage 9.5-retired `TerminalPane`. **Built the panel** (higher-ROI: a live shell on
+the host is a first-class surface for a coding agent). New `TerminalTab` on the
+`/tektos-ultima/panels` page (8th tab), driving `/ws/pty` with xterm.js:
+`client → {type:"input"|"resize"}` / `server → {type:"output"|"exit"}`.
+- **SSG pitfall hit (recorded):** xterm.js references `self` at module-eval time,
+  which breaks the static-export prerender of this client page
+  (`ReferenceError: self is not defined`). Fixed by lazy-importing `@xterm/xterm`
+  + `@xterm/addon-fit` *inside the effect* (client-only) and injecting `xterm.css`
+  via a runtime `<link>` rather than a top-level `import …css` that SSG would eval.
+- **Live-verified :8000** (real uvicorn, real PTY, `websockets` client + the
+  panel): real `rmholston@Collosus:~/dev/kosmos-lms` prompt, `echo` round-trip,
+  resize, exit code 0. New Playwright regression test `terminal tab: opens a live
+  PTY over /ws/pty` (asserts the status line flips to "live shell" once the first
+  frame lands) — passes in ~260 ms.
+- ADR-141 `/ws/pty` row updated: "no live UI consumer" → now consumed by the
+  Terminal tab (the discharge at 14.9 restored the *functionality*; 14.12 restored
+  a *consumer*, closing the loop the audit flagged).
+
+**Verification (this batch, all live):**
+- **Full pytest suite: 1548 passed / 10 skipped / 0 failed** (exit 0, `-q` dot
+  tally; the 10 skips are the Colossus-interactive tiers + one corpus gate).
+  Stage 14.12 new/changed tests in isolation: 9/9 green (data-services index 5 +
+  plan surface 4), prune additions green, all Tier-3 engine tests green (the 4
+  retired router test files are the only deletions).
+- **Playwright panels spec: 9/9 pass** (7 prior + 2 new: terminal-tab live PTY,
+  actions-tab read-only capability surface). Static export rebuilt clean
+  (`next build` — the SSG `self` pitfall above is the only wrinkle, now fixed).
+- **Live :8000 smoke:** `/api/tektos/data-services` 200 (total 5),
+  `POST /api/skills/prune` 200, `POST /api/planner/plan` 200, `POST /api/delegate`
+  200, all five capability status endpoints (`/api/vision/status`,
+  `/api/voice/state`, `/api/hindsight/status`, `/api/dreamtime/summary`,
+  `/api/planner/status`) 200, plan-surface legs return not-found bodies (route
+  live, record lookup runs), `/ws/pty` full PTY round-trip.
+- **Actions-tab capability batch (audit ROI item 5)** was already present in the
+  panels page (vision analyze-url/file, voice tts/stt, hindsight retain/recall/
+  reflect, dreamtime run, planner plan, delegate) — this batch added its
+  read-only regression spec (the controls are mutation actions; the spec asserts
+  the surface renders and never clicks a control, so it is CI-safe and leaks no
+  state).
+
+**ADR-141 audit status: unchanged tally, richer referents.** The 154 donor routes
+stay **154 P / 0 D / 0 T = 154** (fully discharged since Stage 14.10). Stage 14.12
+*adds* routes (plan execute/diff, data-services index, skills/prune) and a
+consumer (terminal) **on top of** the discharged donor surface — these are new
+kernel capabilities surfaced to the UI, not donor-route restorations, so the donor
+tally does not move. The only ADR-141 edit is the `/ws/pty` row's consumer note
+(discharge was already P; the "no consumer" qualifier is now stale).

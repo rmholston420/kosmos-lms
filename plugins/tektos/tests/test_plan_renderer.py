@@ -641,11 +641,16 @@ def test_build_tektos_descriptor_shape_matches_adr_041() -> None:
     assert d.kernel_compat == TEKTOS_KERNEL_COMPAT == "0.1.x"
     # ADR-045: Stage 3.11 adds one Route so `_derive_parity`
     # returns COMPLIANT (routes AND panels populated).
-    assert len(d.routes) == 1
+    # Stage 14.11 (GUI surfacing) adds a second Route (/tektos-ultima)
+    # for the absorbed native page tree — the descriptor now carries 2.
+    assert len(d.routes) == 2
     r = d.routes[0]
     assert isinstance(r, Route)
     assert r.path == TEKTOS_UI_ROUTE_PATH == "/tektos"
     assert r.label == TEKTOS_UI_ROUTE_LABEL == "Tektos"
+    r2 = d.routes[1]
+    assert r2.path == "/tektos-ultima"
+    assert r2.label == "Tektos-Ultima"
     assert r.icon == TEKTOS_UI_ROUTE_ICON
     assert r.lazy_module == TEKTOS_UI_ROUTE_LAZY_MODULE == "tektos/pages/DashboardPage"
     assert d.design_tokens == {}

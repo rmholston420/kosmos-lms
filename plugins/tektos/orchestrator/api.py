@@ -201,6 +201,32 @@ def build_orchestrator_router(
         )
         return {"task_id": task_id, "status": "pending"}
 
+    @router.get("/tasks")
+    async def list_tasks() -> list[dict[str, Any]]:
+        """Task board (Stage 14.12 exposure fix).
+
+        The donor had no task-listing route — the donor UI reconstructed
+        the board from ``/stats`` counters alone. A kernel control surface
+        needs per-task rows to drive assign/execute, so this serialises
+        the engine's task registry (ids, status, assignment, errors).
+        """
+        eng = _guard_bundle()
+        return [
+            {
+                "task_id": t.task_id,
+                "description": t.description,
+                "status": t.status,
+                "assigned_agent": t.assigned_agent,
+                "priority": t.priority,
+                "dependencies": list(t.dependencies),
+                "error": t.error,
+                "escalated": t.escalated,
+                "created_at": t.created_at,
+                "completed_at": t.completed_at,
+            }
+            for t in eng.orchestrator.tasks.values()
+        ]
+
     @router.post("/tasks/{task_id}/assign")
     async def assign_task(task_id: str, body: _TaskAssignRequest) -> dict[str, Any]:
         eng = _guard_bundle()

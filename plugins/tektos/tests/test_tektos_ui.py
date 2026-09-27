@@ -456,12 +456,17 @@ def test_execute_and_diff_produce_matching_diff_sha256() -> None:
 
 
 def test_tektos_descriptor_now_carries_ui_route_adr_045() -> None:
-    """ADR-045: Stage 3.11 adds one Route so parity flips to COMPLIANT."""
+    """ADR-045: Stage 3.11 adds one Route so parity flips to COMPLIANT.
+
+    Stage 14.11 (GUI surfacing) adds a second Route (/tektos-ultima), so the
+    descriptor now carries 2 routes — the ADR-045 route stays routes[0]."""
     d = build_tektos_descriptor()
-    assert len(d.routes) == 1
+    assert len(d.routes) == 2
     assert d.routes[0].path == "/tektos"
     assert d.routes[0].label == "Tektos"
     assert d.routes[0].lazy_module == "tektos/pages/DashboardPage"
+    assert d.routes[1].path == "/tektos-ultima"
+    assert d.routes[1].label == "Tektos-Ultima"
 
 
 # ── ADR-007 AST guard ───────────────────────────────────────────────────

@@ -3316,6 +3316,155 @@ async def approval_reject(
 
 
 # ---------------------------------------------------------------------------
+# Tektos plan surface — ADR-067 D4 discharge (Stage 14.12)
+#
+# Plan → Approve → Execute → Diff for the Next.js detail page.
+# Detail + Approve are the kernel-native approval routes above
+# (``GET /api/approvals/{id}`` / ``POST /api/approvals/{id}/approve``) —
+# the UI client is re-pointed at them. The Execute and Diff legs have no
+# approval-surface referent, so they are implemented here as thin ports of
+# the working ``/tektos-ui`` sub-app legs (``plugins/tektos/ui/server.py``):
+# same executor binding (``registry.tektos_ui_executor``), same MemoryPort
+# predicate/provenance/confidence writes, JSON responses instead of HTML
+# fragments.
+# ---------------------------------------------------------------------------
+
+
+def _tektos_change_id_from_intention(intention_id: str) -> str:
+    """Derive the Tektos ``change_id`` from an ``ApprovalRecord.intention_id``.
+
+    Stage 3.7 persists intentions as ``"tektos.plan.<change_id>"`` — strip
+    the prefix when present; return the raw intention id otherwise so the
+    audit trail still carries a stable correlation id. Mirrors
+    ``plugins.tektos.ui.server._change_id_from_intention`` verbatim.
+    """
+    prefix = "tektos.plan."
+    if intention_id.startswith(prefix):
+        return intention_id[len(prefix):]
+    return intention_id
+
+
+def _tektos_plan_bindings():
+    """Return ``(approval, memory, executor)`` or raise 503 (ADR-101 shape).
+
+    Execute/Diff legs need the same three bindings the ``/tektos-ui``
+    sub-app uses; a missing binding degrades to an honest 503 with the
+    boot error rather than a 500 traceback.
+    """
+    approval = registry.approval
+    memory = registry.memory
+    executor = registry.tektos_ui_executor
+    missing = {
+        name: registry.errors.get(name)
+        for name, binding in (
+            ("approval", approval),
+            ("memory", memory),
+            ("tektos_ui_executor", executor),
+        )
+        if binding is None
+    }
+    if missing:
+        raise HTTPException(503, detail=missing)
+    return approval, memory, executor
+
+
+@app.post("/api/tektos/plan/{approval_id}/execute")
+async def tektos_plan_execute(approval_id: str) -> dict[str, Any]:
+    """Execute the approved plan and return the ``ExecutionResult`` as JSON.
+
+    Port of the ``/tektos-ui`` Execute leg: drives
+    ``registry.tektos_ui_executor.execute(...)`` and writes the mandatory
+    MemoryPort ``tektos.plan.executed`` event.
+    """
+    import datetime as _dt
+
+    approval, memory, executor = _tektos_plan_bindings()
+    try:
+        record = await approval.get_by_id(approval_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(404, detail=str(exc)) from exc
+    change_id = _tektos_change_id_from_intention(record.intention_id)
+    try:
+        result = await executor.execute(
+            approval_id=record.approval_id, change_id=change_id
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, detail=str(exc)) from exc
+    now = _dt.datetime.now(tz=_dt.timezone.utc).replace(microsecond=0)
+    await memory.write_event(
+        f"{result.change_id}::{result.approval_id}",
+        "tektos.plan.executed",
+        result.diff_sha256,
+        provenance="tektos_ui",
+        confidence=1.0,
+        attributes={
+            "approval_id": result.approval_id,
+            "change_id": result.change_id,
+            "diff_sha256": result.diff_sha256,
+            "executed_at": now.isoformat().replace("+00:00", "Z"),
+        },
+    )
+    return {
+        "approval_id": result.approval_id,
+        "change_id": result.change_id,
+        "before": result.before,
+        "after": result.after,
+        "diff_sha256": result.diff_sha256,
+    }
+
+
+@app.get("/api/tektos/plan/{approval_id}/diff")
+async def tektos_plan_diff(approval_id: str) -> dict[str, Any]:
+    """Render the plan's unified diff and return the ``DiffRender`` as JSON.
+
+    Port of the ``/tektos-ui`` Diff leg: drives the executor snapshot,
+    renders the unified diff, writes the MemoryPort
+    ``tektos.plan.diff_rendered`` event.
+    """
+    import datetime as _dt
+
+    from plugins.tektos.ui.executor import (
+        compute_diff_sha256,
+        render_unified_diff,
+    )
+
+    approval, memory, executor = _tektos_plan_bindings()
+    try:
+        record = await approval.get_by_id(approval_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(404, detail=str(exc)) from exc
+    change_id = _tektos_change_id_from_intention(record.intention_id)
+    try:
+        result = await executor.execute(
+            approval_id=record.approval_id, change_id=change_id
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, detail=str(exc)) from exc
+    body = render_unified_diff(before=result.before, after=result.after)
+    diff_sha256 = compute_diff_sha256(body)
+    now = _dt.datetime.now(tz=_dt.timezone.utc).replace(microsecond=0)
+    await memory.write_event(
+        f"{result.change_id}::{result.approval_id}",
+        "tektos.plan.diff_rendered",
+        diff_sha256,
+        provenance="tektos_ui",
+        confidence=1.0,
+        attributes={
+            "approval_id": result.approval_id,
+            "change_id": result.change_id,
+            "diff_sha256": diff_sha256,
+            "rendered_at": now.isoformat().replace("+00:00", "Z"),
+        },
+    )
+    return {
+        "approval_id": result.approval_id,
+        "change_id": result.change_id,
+        "body": body,
+        "diff_sha256": diff_sha256,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Tektos — ADR-063
 # ---------------------------------------------------------------------------
 
@@ -5652,6 +5801,22 @@ async def toggle_skill(skill_id: str) -> dict[str, Any]:
         "name": updated.name,
         "enabled": updated.is_active,
     }
+
+
+@app.post("/api/skills/prune")
+async def prune_skills_global() -> dict[str, Any]:
+    """Global prune of inactive/low-performing skills.
+
+    Donor fidelity note: the donor also shipped ``POST /api/skills/{skill_id}/prune``
+    whose handler ignored ``skill_id`` and ran the same global operation. This
+    id-less route is the canonical form; the per-skill alias is kept for
+    donor-shape compatibility (main.py:2660).
+    """
+    manager = registry.tektos_skills
+    if manager is None:
+        return {"error": "Skill manager not initialized"}
+    archived = manager.prune_inactive_skills()
+    return {"archived": archived}
 
 
 @app.post("/api/skills/{skill_id}/prune")

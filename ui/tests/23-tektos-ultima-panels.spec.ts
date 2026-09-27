@@ -135,4 +135,32 @@ test.describe("tektos-ultima panels page (Stage 9.5)", () => {
       timeout: 15_000,
     });
   });
+
+  test("terminal tab: opens a live PTY over /ws/pty", async ({ page }) => {
+    await page.goto(PAGE);
+    await page.getByTestId("tektos-panels-tab-terminal").click();
+    await expect(page.getByTestId("tektos-panels-terminal")).toBeVisible();
+    // The WebSocket handshake reaches the kernel's Stage 14.9 PTY handler;
+    // the status line flips to "live shell" once the first frame lands.
+    await expect(page.getByTestId("tektos-panels-terminal")).toContainText("live shell", {
+      timeout: 15_000,
+    });
+  });
+
+  test("actions tab: renders the capability control surface (read-only)", async ({ page }) => {
+    await page.goto(PAGE);
+    await page.getByTestId("tektos-panels-tab-actions").click();
+    await expect(page.getByTestId("tektos-panels-actions")).toBeVisible();
+    // Every capability section renders its header. All controls here are
+    // MUTATION actions (analyze/synthesize/retain/run/plan/delegate) — this
+    // spec is READ-ONLY and never clicks a control, only asserts the surface
+    // is present, so it is safe in CI and leaks no state.
+    const actions = page.getByTestId("tektos-panels-actions");
+    await expect(actions).toContainText("Vision");
+    await expect(actions).toContainText("Voice");
+    await expect(actions).toContainText("Hindsight");
+    await expect(actions).toContainText("Dreamtime");
+    await expect(actions).toContainText("Planner");
+    await expect(actions).toContainText("Delegate");
+  });
 });

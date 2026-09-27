@@ -300,6 +300,41 @@ def build_tektos_data_services_router() -> APIRouter:
     """
     router = APIRouter(prefix="/api/tektos/data-services", tags=["tektos"])
 
+    @router.get("")
+    async def data_services_index() -> dict[str, Any]:
+        """Index of all data-service status endpoints.
+
+        Stage 14.12 exposure fix: the UI's card grid composes ``base + endpoint``
+        for each store, so it never fetches the bare base path — but the audit
+        flagged the 404 on it as a dead ref. This index returns one summary
+        entry per store (each probe degrades independently) so the path is
+        live and self-describing.
+        """
+        probes = {
+            "neo4j": _probe_neo4j,
+            "postgres": _probe_postgres,
+            "redis": _probe_redis,
+            "hindsight": _probe_hindsight,
+            "qdrant": _probe_qdrant,
+        }
+        services: dict[str, Any] = {}
+        for name, probe in probes.items():
+            try:
+                status = await probe()
+            except Exception as exc:  # noqa: BLE001 — degrade, don't 500
+                status = {"service": name, "status": "error", "healthy": False, "error": str(exc)}
+            services[name] = {
+                "status": status.get("status", "unknown"),
+                "healthy": bool(status.get("healthy", False)),
+                "endpoint": f"/api/tektos/data-services/{name}/status",
+            }
+        healthy = sum(1 for s in services.values() if s["healthy"])
+        return {
+            "services": services,
+            "healthy": healthy,
+            "total": len(services),
+        }
+
     @router.get("/neo4j/status")
     async def neo4j_status() -> dict[str, Any]:
         """Neo4j (DozerDB lane) status — see ``_probe_neo4j``."""

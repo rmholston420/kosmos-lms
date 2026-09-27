@@ -1,5 +1,7 @@
 "use client";
 
+import "@xterm/xterm/css/xterm.css";
+
 /**
  * /tektos-ultima/panels — Tektos subsystem status panels (Tektos integration
  * Stage 9.5, ADR-113).
@@ -19,7 +21,7 @@
  * Tab -> endpoints:
  *   status   /api/nervous-system/status /api/observability/status /api/mcp/status
  *            /api/embedder/status /api/evaluation/status /api/ragRetriever/status
- *            /api/toolRouter/status /api/vision/status /api/voice/state
+ *            /api/tools /api/vision/status /api/voice/state
  *            /api/inference/metrics /api/thermal/health
  *   planner  /api/planner/status /api/planner/templates /api/planner/language-games
  *   context  /api/context/status /api/contextCurator/status
@@ -43,8 +45,9 @@
  * Stage 9.2–9.4 convention — a shape change degrades one tab, never the page.
  */
 
-import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import Link from "next/link";
+import "@xterm/xterm/css/xterm.css";
 
 // Stage 14.1 (ADR-109 exit gate): the ADR-109 gateway proxy is deleted —
 // all call sites are kernel-native (base: "").
@@ -60,6 +63,9 @@ type TabId =
   | "agents"
   | "selfimp"
   | "schema"
+  | "skills"
+  | "actions"
+  | "terminal"
   | "hindsight"
   | "axioms"
   | "knowledge"
@@ -76,6 +82,9 @@ const TABS: Array<{ id: TabId; label: string }> = [
   { id: "agents", label: "Agents" },
   { id: "selfimp", label: "Self-Improvement" },
   { id: "schema", label: "Schema" },
+  { id: "skills", label: "Skills" },
+  { id: "actions", label: "Actions" },
+  { id: "terminal", label: "Terminal" },
   { id: "hindsight", label: "Hindsight" },
   { id: "axioms", label: "Axioms" },
   { id: "knowledge", label: "Knowledge" },
@@ -201,6 +210,33 @@ function asList(v: unknown): unknown[] {
   return [];
 }
 
+// Control-surface request (Stage 14.12 exposure fix). Unlike `g`, returns
+// the HTTP status so callers can surface the ADR-114 503 degrade shape
+// instead of collapsing it into `null`. `method` defaults to POST.
+async function api<T = unknown>(
+  path: string,
+  body?: unknown,
+  method: "GET" | "POST" | "PUT" | "DELETE" = "POST"
+): Promise<{ ok: boolean; status: number; data: T | null }> {
+  try {
+    const r = await fetch(path, {
+      method,
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const data = (await r.json().catch(() => null)) as T | null;
+    return { ok: r.ok, status: r.status, data };
+  } catch {
+    return { ok: false, status: 0, data: null };
+  }
+}
+
+function degradeNote(detail: unknown): string {
+  const d = isObj(detail) ? detail["detail"] : detail;
+  return typeof d === "string" && d ? d : "endpoint unavailable";
+}
+
 // ---------------------------------------------------------------------------
 // Tab: Status (subsystem health overview)
 // ---------------------------------------------------------------------------
@@ -223,7 +259,7 @@ function StatusTab() {
       g<Record<string, unknown>>("/api/embedder/status"),
       g<Record<string, unknown>>("/api/evaluation/status"),
       g<Record<string, unknown>>("/api/ragRetriever/status"),
-      g<Record<string, unknown>>("/api/toolRouter/status"),
+      g<Record<string, unknown>>("/api/tools"),
       g<Record<string, unknown>>("/api/vision/status"),
       g<Record<string, unknown>>("/api/voice/state"),
       g<Record<string, unknown>>("/api/inference/metrics"),
@@ -248,7 +284,12 @@ function StatusTab() {
       pick(emb, "Embedder"),
       ev ? { key: "evaluation", name: "Evaluation", status: str(ev["status"]) || "n/a", detail: `${ev["total_evaluations"] ?? 0} evals` } : { key: "evaluation", name: "Evaluation", status: "offline" },
       pick(rag, "RAG Retriever"),
-      pick(tr, "Tool Router"),
+      tr ? {
+        key: "tool_router",
+        name: "Tool Router",
+        status: tr["healthy"] ? "healthy" : str(tr["status"]) || "unhealthy",
+        detail: isObj(tr["tools"]) ? `${String((tr["tools"] as Record<string, unknown>)["known_tools"] ?? 0)} tools · routing-only` : "",
+      } : { key: "tool_router", name: "Tool Router", status: "offline" },
       vis ? { key: "vision", name: "Vision", status: vis["healthy"] ? "healthy" : str(vis["ok"]) ? "ok" : "unhealthy", detail: str(vis["model"]) } : { key: "vision", name: "Vision", status: "offline" },
       voice ? { key: "voice", name: "Voice", status: voiceDetail || "idle", detail: str(voice["last_transcript"]).slice(0, 40) } : { key: "voice", name: "Voice", status: "offline" },
     ]);
@@ -754,23 +795,256 @@ function MetabolismTab() {
 }
 
 // ---------------------------------------------------------------------------
+// Tab: Skills (lifecycle control surface)
+// ---------------------------------------------------------------------------
+// Stage 14.12 exposure fix. The kernel's full 16-route skill registry
+// (donor main.py:2479-2860, ADR-108 D9 discharge) was live but unreachable
+// from the UI — only /api/skills/stats + /search + /{id} were consumed.
+// This tab exposes the lifecycle surface: list, create, toggle, prune,
+// dedup, improve, maintenance, select, execute. Degrades honestly when the
+// skill manager is unwired ("Skill manager not initialized" at 200).
+
+function SkillsLifecycleTab() {
+  const [skills, setSkills] = useState<Record<string, unknown>[]>([]);
+  const [showInactive, setShowInactive] = useState(false);
+  const [category, setCategory] = useState("");
+  const [feedback, setFeedback] = useState<string>("");
+  const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
+
+  // Create form
+  const [cName, setCName] = useState("");
+  const [cDesc, setCDesc] = useState("");
+  const [cCategory, setCCategory] = useState("");
+  const [cTriggers, setCTriggers] = useState("");
+
+  // Maintenance / select form
+  const [selContext, setSelContext] = useState("");
+  const [dedupThreshold, setDedupThreshold] = useState(0.6);
+  const [selected, setSelected] = useState<Record<string, unknown>[]>([]);
+  const [selectedRan, setSelectedRan] = useState(false);
+
+  const load = useCallback(async () => {
+    const params = new URLSearchParams({ active_only: String(!showInactive) });
+    if (category.trim()) params.set("category", category.trim());
+    const r = await g<{ skills?: unknown[] }>(`/api/skills?${params.toString()}`);
+    setSkills(asList(r?.["skills"]) as Record<string, unknown>[]);
+  }, [showInactive, category]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const run = async (label: string, path: string, body?: unknown, method: "GET" | "POST" | "PUT" | "DELETE" = "POST") => {
+    setFeedback(`${label}: running…`);
+    const r = await api<Record<string, unknown>>(path, body, method);
+    if (r.ok) {
+      setFeedback(`${label}: ok (${r.status})${isObj(r.data) && r.data["error"] ? ` — ${r.data["error"]}` : ""}`);
+      void load();
+    } else {
+      setFeedback(`${label}: ${r.status} ${degradeNote(r.data)}`);
+    }
+  };
+
+  return (
+    <div data-testid="tektos-panels-skills-lifecycle">
+      <div style={{ ...panelStyle, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
+        <Metric label="Skills" value={String(skills.length)} />
+        <label style={{ fontSize: "var(--font-sm, 0.8125rem)", color: "var(--color-text-dim, #888)" }}>
+          <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} /> include disabled
+        </label>
+        <input style={{ ...inputStyle, width: 160 }} placeholder="category filter" value={category}
+          onChange={(e) => setCategory(e.target.value)} />
+        <button style={btnStyle} onClick={() => void run("list", `/api/skills?active_only=${!showInactive}`, undefined, "GET")}>
+          Refresh
+        </button>
+      </div>
+
+      {feedback && <EmptyNote>{feedback}</EmptyNote>}
+
+      <div style={panelStyle}>
+        <h2 style={{ margin: "0 0 10px", fontSize: "var(--font-md, 0.9375rem)" }}>Skills ({skills.length})</h2>
+        {skills.length === 0 ? (
+          <EmptyNote>no skills (registry empty or manager unwired)</EmptyNote>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <Th>Name</Th>
+                <Th>Category</Th>
+                <Th>Enabled</Th>
+                <Th>Uses</Th>
+                <Th>Success</Th>
+                <Th>Actions</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {skills.map((s, i) => {
+                const id = str(s["id"]);
+                return (
+                  <tr key={id || i}>
+                    <Td mono>{str(s["name"]).slice(0, 40)}</Td>
+                    <Td>{str(s["category"]) || "—"}</Td>
+                    <Td>
+                      <HealthValue value={String(s["enabled"]) === "true" ? "on" : "off"} />
+                    </Td>
+                    <Td>{String(s["usage_count"] ?? 0)}</Td>
+                    <Td>{s["success_rate"] !== undefined ? `${(s["success_rate"] as number).toFixed(2)}` : "—"}</Td>
+                    <Td>
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                        <button style={{ ...btnStyle, padding: "2px 6px", fontSize: "var(--font-xs, 0.7rem)" }}
+                          onClick={() => {
+                            if (detail && str(detail["id"]) === id) { setDetail(null); return; }
+                            void api<Record<string, unknown>>(`/api/skills/${encodeURIComponent(id)}`, undefined, "GET")
+                              .then((r) => setDetail(r.data));
+                          }}>{detail && str(detail["id"]) === id ? "Hide" : "View"}</button>
+                        <button style={{ ...btnStyle, padding: "2px 6px", fontSize: "var(--font-xs, 0.7rem)" }}
+                          onClick={() => void run("toggle", `/api/skills/${encodeURIComponent(id)}/toggle`)}>Toggle</button>
+                        <button style={{ ...btnStyle, padding: "2px 6px", fontSize: "var(--font-xs, 0.7rem)" }}
+                          onClick={() => void run("execute", `/api/skills/${encodeURIComponent(id)}/execute`, { context: {} })}>Exec</button>
+                        <button style={{ ...btnStyle, padding: "2px 6px", fontSize: "var(--font-xs, 0.7rem)" }}
+                          onClick={() => void run("improve", `/api/skills/${encodeURIComponent(id)}/improve/from-execution`)}>Improve</button>
+                        <button style={{ ...btnStyle, padding: "2px 6px", fontSize: "var(--font-xs, 0.7rem)", background: "var(--color-amitabha, #e07070)" }}
+                          onClick={() => { if (confirm(`Delete skill "${str(s["name"])}"?`)) void run("delete", `/api/skills/${encodeURIComponent(id)}`, undefined, "DELETE"); }}>Del</button>
+                      </div>
+                    </Td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+        {detail && (
+          <JsonPre data={detail} label={`Skill: ${str(detail["name"])}`} maxH={220} />
+        )}
+      </div>
+
+      {/* Maintenance batch actions */}
+      <div style={panelStyle}>
+        <h2 style={{ margin: "0 0 10px", fontSize: "var(--font-md, 0.9375rem)" }}>Maintenance</h2>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <button style={btnStyle} onClick={() => void run("prune", "/api/skills/prune")}>Prune inactive</button>
+          <input style={{ ...inputStyle, width: 70 }} type="number" step="0.05" min="0" max="1" value={dedupThreshold}
+            onChange={(e) => setDedupThreshold(Number(e.target.value) || 0)} title="similarity threshold" />
+          <button style={btnStyle} onClick={() => void run("dedup", `/api/skills/dedup?threshold=${dedupThreshold}`)}>Dedup</button>
+          <button style={btnStyle} onClick={() => void run("maintenance", "/api/skills/maintenance")}>Full maintenance</button>
+        </div>
+        <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input style={{ ...inputStyle, flex: 1, minWidth: 200 }} placeholder='select context JSON, e.g. {"task":"fix tests"}' value={selContext}
+            onChange={(e) => setSelContext(e.target.value)} />
+          <button style={btnStyle}
+            onClick={() => {
+              let ctx: Record<string, unknown> = {};
+              try { ctx = selContext.trim() ? JSON.parse(selContext) : {}; } catch { setFeedback("select: invalid JSON context"); return; }
+              setSelectedRan(true);
+              void api<Record<string, unknown>>("/api/skills/select", { context: ctx, max_skills: 5 })
+                .then((r) => {
+                  if (r.ok && isObj(r.data)) {
+                    const matched = asList(r.data["selected"]) as Record<string, unknown>[];
+                    setSelected(matched);
+                    setFeedback(`select: ok (${matched.length} matched)`);
+                  } else setFeedback(`select: ${r.status} ${degradeNote(r.data)}`);
+                });
+            }}>
+            Select for context
+          </button>
+        </div>
+        {selectedRan && selected.length > 0 && (
+          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 10 }}>
+            <thead>
+              <tr><Th>Name</Th><Th>Category</Th><Th>Score</Th><Th>Reason</Th></tr>
+            </thead>
+            <tbody>
+              {selected.map((m, i) => (
+                <tr key={str(m["id"]) || i}>
+                  <Td mono>{str(m["name"])}</Td>
+                  <Td>{str(m["category"])}</Td>
+                  <Td>{String(m["score"])}</Td>
+                  <Td mono>{str(m["reason"]).slice(0, 50)}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Create skill */}
+      <div style={panelStyle}>
+        <h2 style={{ margin: "0 0 10px", fontSize: "var(--font-md, 0.9375rem)" }}>Create skill</h2>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input style={{ ...inputStyle, width: 180 }} placeholder="name" value={cName} onChange={(e) => setCName(e.target.value)} />
+          <input style={{ ...inputStyle, flex: 1, minWidth: 180 }} placeholder="description" value={cDesc} onChange={(e) => setCDesc(e.target.value)} />
+        </div>
+        <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input style={{ ...inputStyle, width: 140 }} placeholder="category" value={cCategory} onChange={(e) => setCCategory(e.target.value)} />
+          <input style={{ ...inputStyle, flex: 1, minWidth: 180 }} placeholder="trigger conditions (comma-separated)" value={cTriggers} onChange={(e) => setCTriggers(e.target.value)} />
+          <button style={btnStyle} disabled={!cName.trim() || !cDesc.trim()}
+            onClick={() => {
+              const trig = cTriggers.split(",").map((s) => s.trim()).filter(Boolean);
+              void run("create", "/api/skills", {
+                name: cName.trim(),
+                description: cDesc.trim(),
+                trigger_conditions: trig,
+                steps: [],
+                category: cCategory.trim(),
+              });
+              setCName(""); setCDesc(""); setCCategory(""); setCTriggers("");
+            }}>
+            Create
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Tab: Agents (multi-agent orchestrator)
 // ---------------------------------------------------------------------------
 
 function AgentsTab() {
   const [status, setStatus] = useState<Record<string, unknown> | null>(null);
   const [agents, setAgents] = useState<Record<string, unknown>[]>([]);
+  const [stats, setStats] = useState<Record<string, unknown> | null>(null);
+  const [recent, setRecent] = useState<Record<string, unknown>[]>([]);
+  const [tasks, setTasks] = useState<Record<string, unknown>[]>([]);
+  const [hierRecent, setHierRecent] = useState<Record<string, unknown>[]>([]);
+  const [lrStatus, setLrStatus] = useState<Record<string, unknown> | null>(null);
+  const [feedback, setFeedback] = useState<string>("");
+
+  // Control-surface form state
+  const [taskDesc, setTaskDesc] = useState("");
+  const [taskPriority, setTaskPriority] = useState(0);
+  const [assignTaskId, setAssignTaskId] = useState("");
+  const [assignAgentId, setAssignAgentId] = useState("");
+  const [parallelIds, setParallelIds] = useState("");
+  const [hierRole, setHierRole] = useState("planner");
+  const [hierDesc, setHierDesc] = useState("");
+  const [planIds, setPlanIds] = useState("");
+  const [lrNextAction, setLrNextAction] = useState("");
 
   const load = useCallback(async () => {
     // ADR-141 T1: re-pointed from the ADR-109 gateway (:8020/api/multi-agent-
     // orchestrator/*) to the kernel-native /tektos/api/orchestrator routes
     // (ADR-114 mount, ADR-141 donor-fidelity /status + /agents port).
-    const [s, a] = await Promise.all([
+    // Stage 14.12: extended to the full orchestrator surface (task board,
+    // batches, hierarchical + long-running) — the routes exist on the live
+    // kernel; unwired engines degrade to the ADR-114 503 shape.
+    const [s, a, st, rc, tk, hr, ls] = await Promise.all([
       g<Record<string, unknown>>("/tektos/api/orchestrator/status", ""),
       g<unknown[]>("/tektos/api/orchestrator/agents", ""),
+      g<Record<string, unknown>>("/tektos/api/orchestrator/stats", ""),
+      g<{ batches?: unknown[] }>("/tektos/api/orchestrator/recent", ""),
+      g<unknown[]>("/tektos/api/orchestrator/tasks", ""),
+      g<{ results?: unknown[] }>("/tektos/api/orchestrator/hierarchical/recent", ""),
+      g<Record<string, unknown>>("/tektos/api/orchestrator/long-running/status", ""),
     ]);
     setStatus(s);
     setAgents(asList(a) as Record<string, unknown>[]);
+    setStats(st);
+    setRecent(asList(rc?.["batches"]) as Record<string, unknown>[]);
+    setTasks(asList(tk) as Record<string, unknown>[]);
+    setHierRecent(asList(hr?.["results"]) as Record<string, unknown>[]);
+    setLrStatus(ls);
   }, []);
 
   useEffect(() => {
@@ -779,11 +1053,36 @@ function AgentsTab() {
     return () => clearInterval(t);
   }, [load]);
 
+  const run = async (label: string, path: string, body?: unknown, method: "GET" | "POST" | "PUT" | "DELETE" = "POST") => {
+    setFeedback(`${label}: running…`);
+    const r = await api<Record<string, unknown>>(path, body, method);
+    if (r.ok) {
+      setFeedback(`${label}: ok (${r.status})`);
+      void load();
+    } else {
+      setFeedback(`${label}: ${r.status} ${degradeNote(r.data)}`);
+    }
+  };
+
+  const taskStats = stats && isObj(stats["tasks"]) ? (stats["tasks"] as Record<string, unknown>) : null;
+  const unwired = status === null || str(status["status"]) !== "initialized";
+
   return (
     <div data-testid="tektos-panels-agents">
       <div style={{ ...panelStyle, display: "flex", gap: 18, flexWrap: "wrap" }}>
         <Metric label="Orchestrator" value={<HealthValue value={str(status?.["status"]) || "—"} />} />
+        {taskStats && (
+          <>
+            <Metric label="Tasks" value={String(taskStats["total_tasks"] ?? "—")} />
+            <Metric label="Pending" value={String(taskStats["pending"] ?? "—")} />
+            <Metric label="Running" value={String(taskStats["running"] ?? "—")} />
+            <Metric label="Completed" value={String(taskStats["completed"] ?? "—")} />
+            <Metric label="Failed" value={String(taskStats["failed"] ?? "—")} />
+          </>
+        )}
       </div>
+
+      {feedback && <EmptyNote>{feedback}</EmptyNote>}
 
       <div style={panelStyle}>
         <h2 style={{ margin: "0 0 10px", fontSize: "var(--font-md, 0.9375rem)" }}>Agents ({agents.length})</h2>
@@ -813,6 +1112,177 @@ function AgentsTab() {
             </tbody>
           </table>
         )}
+      </div>
+
+      {/* Stage 14.12: task board + control surface (create / assign /
+          execute / parallel). Renders the ADR-114 degrade honestly when
+          the engine family is unwired. */}
+      <div style={panelStyle}>
+        <h2 style={{ margin: "0 0 10px", fontSize: "var(--font-md, 0.9375rem)" }}>Task board ({tasks.length})</h2>
+        {tasks.length === 0 ? (
+          <EmptyNote>
+            {unwired ? "no tasks (orchestrator unwired — controls will report the ADR-114 degrade)" : "no tasks — create one below"}
+          </EmptyNote>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <Th>ID</Th>
+                <Th>Description</Th>
+                <Th>Status</Th>
+                <Th>Assigned</Th>
+                <Th>Pri</Th>
+                <Th>Error</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {tasks.map((t, i) => (
+                <tr key={str(t["task_id"]) || i}>
+                  <Td mono>{str(t["task_id"])}</Td>
+                  <Td>{str(t["description"]).slice(0, 80)}</Td>
+                  <Td><HealthValue value={str(t["status"]) || "—"} /></Td>
+                  <Td mono>{str(t["assigned_agent"]) || "—"}</Td>
+                  <Td>{String(t["priority"] ?? 0)}</Td>
+                  <Td mono>{str(t["error"]).slice(0, 40) || "—"}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input style={inputStyle} placeholder="task description" value={taskDesc}
+            onChange={(e) => setTaskDesc(e.target.value)} />
+          <input style={{ ...inputStyle, width: 64 }} type="number" min={0} value={taskPriority}
+            onChange={(e) => setTaskPriority(Number(e.target.value) || 0)} title="priority (higher = more important)" />
+          <button style={btnStyle} disabled={!taskDesc.trim()}
+            onClick={() => { void run("create task", "/tektos/api/orchestrator/tasks", { description: taskDesc.trim(), priority: taskPriority, dependencies: [] }); setTaskDesc(""); }}>
+            Create
+          </button>
+        </div>
+
+        <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input style={inputStyle} placeholder="task_id" value={assignTaskId}
+            onChange={(e) => setAssignTaskId(e.target.value)} />
+          <input style={inputStyle} placeholder="agent_id" value={assignAgentId}
+            onChange={(e) => setAssignAgentId(e.target.value)} />
+          <button style={btnStyle} disabled={!assignTaskId.trim() || !assignAgentId.trim()}
+            onClick={() => void run("assign", `/tektos/api/orchestrator/tasks/${encodeURIComponent(assignTaskId.trim())}/assign`, { task_id: assignTaskId.trim(), agent_id: assignAgentId.trim() })}>
+            Assign
+          </button>
+          <button style={btnStyle} disabled={!assignTaskId.trim()}
+            onClick={() => void run("execute", `/tektos/api/orchestrator/tasks/${encodeURIComponent(assignTaskId.trim())}/execute`)}>
+            Execute
+          </button>
+        </div>
+
+        <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input style={{ ...inputStyle, flex: 1, minWidth: 240 }} placeholder="parallel task ids (comma-separated)" value={parallelIds}
+            onChange={(e) => setParallelIds(e.target.value)} />
+          <button style={btnStyle}
+            disabled={!parallelIds.trim()}
+            onClick={() => {
+              const ids = parallelIds.split(",").map((s) => s.trim()).filter(Boolean);
+              void run("parallel", "/tektos/api/orchestrator/parallel", { task_ids: ids });
+            }}>
+            Run parallel
+          </button>
+        </div>
+      </div>
+
+      {/* Stage 14.12: recent parallel batches (GET /recent). */}
+      <div style={panelStyle}>
+        <h2 style={{ margin: "0 0 10px", fontSize: "var(--font-md, 0.9375rem)" }}>Recent batches ({recent.length})</h2>
+        {recent.length === 0 ? (
+          <EmptyNote>no batches recorded</EmptyNote>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr><Th>When</Th><Th>Completed</Th><Th>Failed</Th><Th>Duration</Th><Th>Utilisation</Th></tr>
+            </thead>
+            <tbody>
+              {recent.slice(0, 10).map((b, i) => (
+                <tr key={str(b["id"]) || i}>
+                  <Td mono>{str(b["when"]).slice(11, 19) || "—"}</Td>
+                  <Td>{String(b["tasks_completed"] ?? 0)}</Td>
+                  <Td>{String(b["tasks_failed"] ?? 0)}</Td>
+                  <Td>{b["total_duration_seconds"] !== undefined ? `${(b["total_duration_seconds"] as number).toFixed(1)} s` : "—"}</Td>
+                  <Td>{b["agent_utilization"] !== undefined ? `${((b["agent_utilization"] as number) * 100).toFixed(0)} %` : "—"}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Stage 14.12: hierarchical planner controls (POST /hierarchical/tasks,
+          POST /hierarchical/plan, GET /hierarchical/recent). */}
+      <div style={panelStyle}>
+        <h2 style={{ margin: "0 0 10px", fontSize: "var(--font-md, 0.9375rem)" }}>Hierarchical planner</h2>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input style={{ ...inputStyle, width: 120 }} placeholder="role" value={hierRole}
+            onChange={(e) => setHierRole(e.target.value)} />
+          <input style={{ ...inputStyle, flex: 1, minWidth: 200 }} placeholder="description" value={hierDesc}
+            onChange={(e) => setHierDesc(e.target.value)} />
+          <button style={btnStyle} disabled={!hierRole.trim() || !hierDesc.trim()}
+            onClick={() => { void run("hierarchical task", "/tektos/api/orchestrator/hierarchical/tasks", { role: hierRole.trim(), description: hierDesc.trim(), dependencies: [] }); setHierDesc(""); }}>
+            Create
+          </button>
+        </div>
+        <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input style={{ ...inputStyle, flex: 1, minWidth: 240 }} placeholder="plan task ids (comma-separated)" value={planIds}
+            onChange={(e) => setPlanIds(e.target.value)} />
+          <button style={btnStyle} disabled={!planIds.trim()}
+            onClick={() => {
+              const ids = planIds.split(",").map((s) => s.trim()).filter(Boolean);
+              void run("plan", "/tektos/api/orchestrator/hierarchical/plan", { task_ids: ids });
+            }}>
+            Execute plan
+          </button>
+        </div>
+        {hierRecent.length > 0 && (
+          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 12 }}>
+            <thead>
+              <tr><Th>Task</Th><Th>Role</Th><Th>Success</Th><Th>Error</Th></tr>
+            </thead>
+            <tbody>
+              {hierRecent.slice(0, 10).map((r, i) => (
+                <tr key={str(r["task_id"]) || i}>
+                  <Td mono>{str(r["task_id"])}</Td>
+                  <Td>{str(r["role"])}</Td>
+                  <Td><HealthValue value={String(r["success"]) === "true" ? "ok" : "failed"} /></Td>
+                  <Td mono>{str(r["error"]).slice(0, 40) || "—"}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Stage 14.12: long-running executor (status / heartbeat / checkpoint). */}
+      <div style={panelStyle}>
+        <h2 style={{ margin: "0 0 10px", fontSize: "var(--font-md, 0.9375rem)" }}>Long-running executor</h2>
+        {lrStatus ? (
+          <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center" }}>
+            <Metric label="Session" value={str(lrStatus["session_id"]).slice(0, 24) || "—"} />
+            <Metric label="State" value={<HealthValue value={str(lrStatus["state"]) || "—"} />} />
+            <Metric label="Progress" value={lrStatus["progress_percent"] !== undefined ? `${lrStatus["progress_percent"]} %` : "—"} />
+            <Metric label="Checkpoints" value={String(lrStatus["checkpoint_count"] ?? "—")} />
+            <button style={btnStyle} onClick={() => void run("heartbeat", "/tektos/api/orchestrator/long-running/heartbeat")}>
+              Heartbeat
+            </button>
+          </div>
+        ) : (
+          <EmptyNote>long-running agent unwired (ADR-114 degrade)</EmptyNote>
+        )}
+        <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input style={{ ...inputStyle, flex: 1, minWidth: 240 }} placeholder="next action (optional)" value={lrNextAction}
+            onChange={(e) => setLrNextAction(e.target.value)} />
+          <button style={btnStyle}
+            onClick={() => void run("checkpoint", "/tektos/api/orchestrator/long-running/checkpoint", { session_id: "", next_action: lrNextAction.trim() })}>
+            Checkpoint
+          </button>
+        </div>
       </div>
 
       {/* ADR-141 T1: status fields are booleans (donor-fidelity port) — render
@@ -1095,6 +1565,413 @@ function HindsightTab() {
           </table>
         )}
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tab: Actions (capability action surface)
+// ---------------------------------------------------------------------------
+// Stage 14.12 exposure fix. Six kernel capability surfaces were live on the
+// backend but had no UI: Vision (analyze/analyze-url), Voice (stt/tts),
+// Hindsight (retain/recall/reflect), Dreamtime (run), Planner (plan), and
+// Delegate (subagent spawn). Status-only tabs left the action legs
+// unreachable. This tab drives them all; each degrades honestly when its
+// substrate is unwired (503 detail or the donor 200 {"error": ...}).
+//
+// Vision + Voice use raw fetch (base64/multipart bodies, audio stream
+// responses) rather than the JSON `api` helper.
+
+function ActionsTab() {
+  const [busy, setBusy] = useState<string>("");
+  const [out, setOut] = useState<Record<string, unknown | null>>({});
+  const [msg, setMsg] = useState<string>("");
+
+  // Vision
+  const [vUrl, setVUrl] = useState("");
+  const [vPrompt, setVPrompt] = useState("Describe what you see in this image in detail.");
+  const [vFile, setVFile] = useState<File | null>(null);
+
+  // Voice
+  const [ttsText, setTtsText] = useState("");
+  const [sttFile, setSttFile] = useState<File | null>(null);
+  const [ttsAudio, setTtsAudio] = useState<string | null>(null);
+
+  // Hindsight
+  const [retainContent, setRetainContent] = useState("");
+  const [retainContext, setRetainContext] = useState("");
+  const [recallQuery, setRecallQuery] = useState("");
+  const [reflectQ, setReflectQ] = useState("");
+
+  // Dreamtime
+  const [dreamFocus, setDreamFocus] = useState("");
+  const [dreamMax, setDreamMax] = useState(20);
+
+  // Planner
+  const [planPrompt, setPlanPrompt] = useState("");
+
+  // Delegate
+  const [delGoal, setDelGoal] = useState("");
+  const [delContext, setDelContext] = useState("");
+
+  const session_id = "ui-actions";
+
+  const runJson = async (key: string, label: string, path: string, body: unknown, method: "GET" | "POST" | "PUT" | "DELETE" = "POST") => {
+    setBusy(key);
+    setMsg(`${label}: running…`);
+    const r = await api<Record<string, unknown>>(path, body, method);
+    setBusy("");
+    if (r.ok) {
+      setOut((o) => ({ ...o, [key]: r.data }));
+      setMsg(`${label}: ok (${r.status})`);
+    } else {
+      setMsg(`${label}: ${r.status} ${degradeNote(r.data)}`);
+    }
+  };
+
+  const analyzeUrl = () => {
+    if (!vUrl.trim()) { setMsg("vision: image URL required"); return; }
+    setBusy("vision");
+    setMsg("vision/analyze-url: running…");
+    fetch("/api/vision/analyze-url", {
+      method: "POST",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id, image_url: vUrl.trim(), prompt: vPrompt }),
+    })
+      .then(async (r) => ({ status: r.status, data: await r.json().catch(() => null) }))
+      .then((r) => {
+        setBusy("");
+        if (r.status === 200 && isObj(r.data)) {
+          setOut((o) => ({ ...o, vision: r.data }));
+          setMsg(`vision: ok — ${String((r.data as Record<string, unknown>)["model"] ?? "model")}`);
+        } else setMsg(`vision: ${r.status} ${degradeNote(r.data)}`);
+      })
+      .catch((e) => { setBusy(""); setMsg(`vision: error ${e}`); });
+  };
+
+  const analyzeFile = () => {
+    if (!vFile) { setMsg("vision: choose an image file"); return; }
+    setBusy("vision");
+    setMsg("vision/analyze: encoding…");
+    const reader = new FileReader();
+    reader.onload = () => {
+      const b64 = String(reader.result).split(",")[1] ?? "";
+      setMsg("vision/analyze: running…");
+      fetch("/api/vision/analyze", {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id, image_base64: b64, prompt: vPrompt }),
+      })
+        .then(async (r) => ({ status: r.status, data: await r.json().catch(() => null) }))
+        .then((r) => {
+          setBusy("");
+          if (r.status === 200 && isObj(r.data)) {
+            setOut((o) => ({ ...o, vision: r.data }));
+            setMsg("vision: ok");
+          } else setMsg(`vision: ${r.status} ${degradeNote(r.data)}`);
+        })
+        .catch((e) => { setBusy(""); setMsg(`vision: error ${e}`); });
+    };
+    reader.readAsDataURL(vFile);
+  };
+
+  const doTts = () => {
+    if (!ttsText.trim()) { setMsg("voice/tts: text required"); return; }
+    setBusy("voice");
+    setMsg("voice/tts: synthesizing…");
+    fetch("/api/voice/tts", {
+      method: "POST",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: ttsText }),
+    })
+      .then(async (r) => {
+        if (!r.ok) { const t = await r.text().catch(() => ""); throw new Error(`${r.status} ${t.slice(0, 120)}`); }
+        const blob = await r.blob();
+        return URL.createObjectURL(blob);
+      })
+      .then((url) => { setTtsAudio(url); setMsg("voice/tts: ok — audio ready"); })
+      .catch((e) => setMsg(`voice/tts: ${e.message}`))
+      .finally(() => setBusy(""));
+  };
+
+  const doStt = () => {
+    if (!sttFile) { setMsg("voice/stt: choose an audio file (wav/mp3)"); return; }
+    setBusy("voice");
+    setMsg("voice/stt: transcribing…");
+    const form = new FormData();
+    form.append("audio", sttFile);
+    fetch("/api/voice/stt", { method: "POST", cache: "no-store", body: form })
+      .then(async (r) => ({ status: r.status, data: await r.json().catch(() => null) }))
+      .then((r) => {
+        setBusy("");
+        if (r.status === 200 && isObj(r.data)) {
+          setOut((o) => ({ ...o, voice_stt: r.data }));
+          setMsg(`voice/stt: ok — "${String((r.data as Record<string, unknown>)["text"] ?? "").slice(0, 60)}"`);
+        } else setMsg(`voice/stt: ${r.status} ${degradeNote(r.data)}`);
+      })
+      .catch((e) => { setBusy(""); setMsg(`voice/stt: error ${e}`); });
+  };
+
+  return (
+    <div data-testid="tektos-panels-actions">
+      {msg && <EmptyNote>{msg}</EmptyNote>}
+
+      {/* Vision */}
+      <div style={panelStyle}>
+        <h2 style={{ margin: "0 0 10px", fontSize: "var(--font-md, 0.9375rem)" }}>👁️ Vision</h2>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input style={{ ...inputStyle, flex: 1, minWidth: 180 }} placeholder="image URL" value={vUrl} onChange={(e) => setVUrl(e.target.value)} />
+          <input style={{ ...inputStyle, flex: 1, minWidth: 180 }} placeholder="prompt" value={vPrompt} onChange={(e) => setVPrompt(e.target.value)} />
+        </div>
+        <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <button style={btnStyle} disabled={busy === "vision"} onClick={analyzeUrl}>Analyze URL</button>
+          <input type="file" accept="image/*" onChange={(e) => setVFile(e.target.files?.[0] ?? null)} />
+          <button style={btnStyle} disabled={busy === "vision"} onClick={analyzeFile}>Analyze File</button>
+        </div>
+        {out["vision"] ? <JsonPre data={out["vision"]} label="vision result" maxH={220} /> : null}
+      </div>
+
+      {/* Voice */}
+      <div style={panelStyle}>
+        <h2 style={{ margin: "0 0 10px", fontSize: "var(--font-md, 0.9375rem)" }}>🎙️ Voice</h2>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input style={{ ...inputStyle, flex: 1, minWidth: 180 }} placeholder="text to speak (TTS)" value={ttsText} onChange={(e) => setTtsText(e.target.value)} />
+          <button style={btnStyle} disabled={busy === "voice"} onClick={doTts}>Synthesize</button>
+        </div>
+        {ttsAudio && <audio controls src={ttsAudio} style={{ marginTop: 8, width: "100%", maxWidth: 420 }} />}
+        <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input type="file" accept="audio/*" onChange={(e) => setSttFile(e.target.files?.[0] ?? null)} />
+          <button style={btnStyle} disabled={busy === "voice"} onClick={doStt}>Transcribe (STT)</button>
+        </div>
+        {out["voice_stt"] ? <JsonPre data={out["voice_stt"]} label="voice stt result" maxH={160} /> : null}
+      </div>
+
+      {/* Hindsight */}
+      <div style={panelStyle}>
+        <h2 style={{ margin: "0 0 10px", fontSize: "var(--font-md, 0.9375rem)" }}>🔮 Hindsight</h2>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input style={{ ...inputStyle, flex: 1, minWidth: 160 }} placeholder="fact to retain" value={retainContent} onChange={(e) => setRetainContent(e.target.value)} />
+          <input style={{ ...inputStyle, width: 140 }} placeholder="context" value={retainContext} onChange={(e) => setRetainContext(e.target.value)} />
+          <button style={btnStyle} disabled={busy === "retain" || !retainContent.trim()}
+            onClick={() => void runJson("retain", "retain", "/api/hindsight/retain", { content: retainContent.trim(), context: retainContext.trim() })}>
+            Retain
+          </button>
+        </div>
+        <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input style={{ ...inputStyle, flex: 1, minWidth: 160 }} placeholder="recall query" value={recallQuery} onChange={(e) => setRecallQuery(e.target.value)} />
+          <button style={btnStyle} disabled={busy === "recall" || !recallQuery.trim()}
+            onClick={() => void runJson("recall", "recall", "/api/hindsight/recall", { query: recallQuery.trim(), limit: 5 })}>
+            Recall
+          </button>
+        </div>
+        <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input style={{ ...inputStyle, flex: 1, minWidth: 160 }} placeholder="reflect question" value={reflectQ} onChange={(e) => setReflectQ(e.target.value)} />
+          <button style={btnStyle} disabled={busy === "reflect" || !reflectQ.trim()}
+            onClick={() => void runJson("reflect", "reflect", "/api/hindsight/reflect", { question: reflectQ.trim() })}>
+            Reflect
+          </button>
+        </div>
+        {out["retain"] ? <JsonPre data={out["retain"]} label="retain" maxH={120} /> : null}
+        {out["recall"] ? <JsonPre data={out["recall"]} label="recall" maxH={200} /> : null}
+        {out["reflect"] ? <JsonPre data={out["reflect"]} label="reflect" maxH={200} /> : null}
+      </div>
+
+      {/* Dreamtime + Planner */}
+      <div style={{ ...panelStyle, display: "flex", gap: 24, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 240 }}>
+          <h2 style={{ margin: "0 0 10px", fontSize: "var(--font-md, 0.9375rem)" }}>🌙 Dreamtime</h2>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <input style={{ ...inputStyle, flex: 1, minWidth: 120 }} placeholder="focus area" value={dreamFocus} onChange={(e) => setDreamFocus(e.target.value)} />
+            <input style={{ ...inputStyle, width: 70 }} type="number" min="1" max="200" value={dreamMax} onChange={(e) => setDreamMax(Number(e.target.value) || 20)} title="max memories" />
+            <button style={btnStyle} disabled={busy === "dream"}
+              onClick={() => void runJson("dream", "dreamtime/run", "/api/dreamtime/run", { focus_area: dreamFocus.trim(), max_memories: dreamMax })}>
+              Run
+            </button>
+          </div>
+          {out["dream"] ? <JsonPre data={out["dream"]} label="dreamtime" maxH={200} /> : null}
+        </div>
+        <div style={{ flex: 1, minWidth: 240 }}>
+          <h2 style={{ margin: "0 0 10px", fontSize: "var(--font-md, 0.9375rem)" }}>📋 Planner</h2>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <input style={{ ...inputStyle, flex: 1, minWidth: 140 }} placeholder="natural-language goal to plan" value={planPrompt} onChange={(e) => setPlanPrompt(e.target.value)} />
+            <button style={btnStyle} disabled={busy === "plan" || !planPrompt.trim()}
+              onClick={() => void runJson("plan", "planner/plan", "/api/planner/plan", { prompt: planPrompt.trim() })}>
+              Plan
+            </button>
+          </div>
+          {out["plan"] ? <JsonPre data={out["plan"]} label="plan (BuildSpec)" maxH={260} /> : null}
+        </div>
+      </div>
+
+      {/* Delegate */}
+      <div style={panelStyle}>
+        <h2 style={{ margin: "0 0 10px", fontSize: "var(--font-md, 0.9375rem)" }}>🤖 Delegate subagent</h2>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input style={{ ...inputStyle, flex: 1, minWidth: 200 }} placeholder="subtask goal" value={delGoal} onChange={(e) => setDelGoal(e.target.value)} />
+          <input style={{ ...inputStyle, flex: 1, minWidth: 160 }} placeholder="context (optional)" value={delContext} onChange={(e) => setDelContext(e.target.value)} />
+          <button style={btnStyle} disabled={busy === "delegate" || !delGoal.trim()}
+            onClick={() => void runJson("delegate", "delegate", "/api/delegate", { goal: delGoal.trim(), context: delContext.trim() })}>
+            Delegate
+          </button>
+        </div>
+        <EmptyNote>Delegate spawns a fresh sub-session and awaits its full turn — this can take minutes. The turn loop must be online (KOSMOS_TEKTOS_TURN_LOOP=on).</EmptyNote>
+        {out["delegate"] ? <JsonPre data={out["delegate"]} label="delegate" maxH={140} /> : null}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tab: Terminal (live PTY over WebSocket)
+// ---------------------------------------------------------------------------
+// Stage 14.12 exposure fix — the kernel's `/ws/pty` endpoint (Stage 14.9,
+// ADR-138-era port of donor main.py:5862) was live and tested but had zero
+// UI consumers. This tab drives it with xterm.js:
+//   client → { type: "input", data } / { type: "resize", cols, rows }
+//   server → { type: "output", data } / { type: "exit", code }
+// The xterm theme mirrors the app's dark palette; fit addon resizes the
+// PTY on container changes. On disconnect the shell is gone server-side —
+// "Reconnect" spawns a fresh login shell.
+//
+// SSR/SSG note: xterm.js references `self` at module-eval time, which breaks
+// the static-export prerender of this page. So it is lazy-imported inside the
+// effect (client-only) and the xterm.css side effect is injected via a
+// <link> at runtime instead of a top-level `import ...css`.
+
+type XTermLib = {
+  Terminal: new (opts: Record<string, unknown>) => {
+    open(el: HTMLElement): void;
+    write(s: string): void;
+    focus(): void;
+    dispose(): void;
+    cols: number;
+    rows: number;
+    onData(cb: (d: string) => void): { dispose(): void };
+    onResize(cb: (r: { cols: number; rows: number }) => void): { dispose(): void };
+    loadAddon(a: unknown): void;
+  };
+  FitAddon: new () => { fit(): void; dispose(): void };
+};
+
+function TerminalTab() {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const termRef = useRef<InstanceType<XTermLib["Terminal"]> | null>(null);
+  const fitRef = useRef<{ fit(): void } | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const [state, setState] = useState<"idle" | "connecting" | "live" | "exited" | "error">("idle");
+  const [exitCode, setExitCode] = useState<number | null>(null);
+
+  // keep a ref of state for the onclose closure (avoids stale-capture)
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  const connect = useCallback(async () => {
+    if (wsRef.current && wsRef.current.readyState <= WebSocket.OPEN) return;
+    const host = hostRef.current;
+    if (!host) return;
+    setState("connecting");
+    setExitCode(null);
+
+    // Client-only lazy load — keeps the xterm module (which references `self`
+    // at eval time) off the SSG prerender path.
+    const [{ Terminal: XTerm }, { FitAddon }] = await Promise.all([
+      import("@xterm/xterm"),
+      import("@xterm/addon-fit"),
+    ]);
+
+    const term = new XTerm({
+      cursorBlink: true,
+      fontSize: 13,
+      fontFamily: "'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace",
+      theme: {
+        background: "#0d1117",
+        foreground: "#e6edf3",
+        cursor: "#58a6ff",
+        cursorAccent: "#0d1117",
+        selectionBackground: "#1f6feb55",
+      },
+    });
+    const fit = new FitAddon();
+    term.loadAddon(fit);
+    term.open(host);
+    fit.fit();
+    term.focus();
+    termRef.current = term;
+    fitRef.current = fit;
+
+    const proto = typeof window !== "undefined" ? window.location.protocol : "https:";
+    const ws = new WebSocket(`${proto === "https:" ? "wss" : "ws"}://${window.location.host}/ws/pty`);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      setState("live");
+      try {
+        fit.fit();
+        ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+      } catch { /* fit may throw before layout settles */ }
+    };
+    ws.onmessage = (ev) => {
+      let msg: { type: string; data?: string; code?: number };
+      try { msg = JSON.parse(String(ev.data)); } catch { return; }
+      if (msg.type === "output" && typeof msg.data === "string") {
+        term.write(msg.data);
+      } else if (msg.type === "exit") {
+        term.write(`\r\n\x1b[90m[shell exited with code ${msg.code ?? 0}]\x1b[0m\r\n`);
+        setState("exited");
+        setExitCode(msg.code ?? null);
+      }
+    };
+    ws.onclose = () => {
+      if (stateRef.current !== "exited") setState("error");
+    };
+    ws.onerror = () => setState("error");
+
+    term.onData((data) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "input", data }));
+    });
+    term.onResize(({ cols, rows }) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "resize", cols, rows }));
+    });
+  }, []);
+
+  useEffect(() => {
+    void connect();
+    const el = hostRef.current;
+    const ro = el ? new ResizeObserver(() => { try { fitRef.current?.fit(); } catch { /* ignore */ } }) : null;
+    if (el && ro) ro.observe(el);
+    return () => {
+      ro?.disconnect();
+      wsRef.current?.close();
+      wsRef.current = null;
+      termRef.current?.dispose();
+      termRef.current = null;
+      setState("idle");
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div data-testid="tektos-panels-terminal">
+      <div style={{ ...panelStyle, padding: 0, overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderBottom: "1px solid var(--border, #21262d)" }}>
+          <span style={{ fontSize: "var(--font-sm, 0.8125rem)" }}>
+            {state === "live" && <span style={{ color: "var(--color-accent, #58a6ff)" }}>● live shell</span>}
+            {state === "connecting" && <span style={{ color: "#8b949e" }}>○ connecting…</span>}
+            {state === "exited" && <span style={{ color: "#8b949e" }}>○ shell exited{exitCode != null ? ` (code ${exitCode})` : ""}</span>}
+            {state === "error" && <span style={{ color: "#f85149" }}>● connection error</span>}
+            {state === "idle" && <span style={{ color: "#8b949e" }}>○ idle</span>}
+          </span>
+          <div style={{ flex: 1 }} />
+          <button style={btnStyle} onClick={connect}>Reconnect</button>
+        </div>
+        <div ref={hostRef} style={{ height: 420, padding: 6, background: "#0d1117" }} />
+      </div>
+      <EmptyNote>Live PTY over <code>/ws/pty</code> (kernel Stage 14.9, donor main.py:5862 port) — a real login shell
+        on the host. Input/resize frames are JSON; output is utf-8. When the shell exits the server closes the
+        socket; use Reconnect for a fresh one.</EmptyNote>
     </div>
   );
 }
@@ -1765,6 +2642,9 @@ export default function TektosUltimaPanelsPage() {
         {tab === "dreamtime" && <DreamtimeTab />}
         {tab === "metabolism" && <MetabolismTab />}
         {tab === "agents" && <AgentsTab />}
+        {tab === "skills" && <SkillsLifecycleTab />}
+        {tab === "actions" && <ActionsTab />}
+        {tab === "terminal" && <TerminalTab />}
         {tab === "selfimp" && <SelfImpTab />}
         {tab === "schema" && <SchemaTab />}
         {tab === "hindsight" && <HindsightTab />}

@@ -104,12 +104,18 @@ export const kernelClient = {
           resolved_by: opts?.resolved_by ?? "kosmos_ui",
         }),
 
-  // ADR-067 D4: Tektos Plan→Approve→Execute→Diff route surface deferred to Stage 2
-  // pending a dedicated Tektos-plan-surface ADR. Kernel currently exposes only
-  // POST /api/tektos/turn (ADR-063). The four calls below will 404 until then.
-  getPlanDetail: (approvalId: string) => getJSON<ApprovalRecord>(`/api/tektos/plan/${approvalId}`),
+  // ADR-067 D4 discharge (Stage 14.12): the Tektos Plan→Approve→Execute→Diff
+  // surface is now kernel-native. Detail + Approve are the native approval
+  // routes (same ApprovalRecord shape the list/detail panels already use);
+  // Execute + Diff are the two kernel legs added alongside (JSON ports of the
+  // /tektos-ui sub-app legs). All four resolve on the live kernel.
+  getPlanDetail: (approvalId: string) => getJSON<ApprovalRecord>(`/api/approvals/${approvalId}`),
   approveTektosPlan: (approvalId: string) =>
-    postJSON<ApprovalRecord>(`/api/tektos/plan/${approvalId}/approve`, {}),
+    postJSON<ApprovalRecord>(`/api/approvals/${approvalId}/approve`, {
+      reason: null,
+      modifications: {},
+      resolved_by: "kosmos_ui",
+    }),
   executeTektosPlan: (approvalId: string) =>
     postJSON<ExecutionResult>(`/api/tektos/plan/${approvalId}/execute`, {}),
   getTektosDiff: (approvalId: string) => getJSON<DiffRender>(`/api/tektos/plan/${approvalId}/diff`),
