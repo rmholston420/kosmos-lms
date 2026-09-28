@@ -6345,3 +6345,30 @@ consumer (terminal) **on top of** the discharged donor surface — these are new
 kernel capabilities surfaced to the UI, not donor-route restorations, so the donor
 tally does not move. The only ADR-141 edit is the `/ws/pty` row's consumer note
 (discharge was already P; the "no consumer" qualifier is now stale).
+
+
+## 2026-09-28 09:22 EDT — Workbench conformity & migration plan landed (docs/implementation)
+
+- **Stage / plugin / port:** Stage 15 (Workbench program) · pre-15.0 · documentation only
+- **What changed:** Added the Hermes execution contract `docs/implementation/TEKTOS_HERMES_IMPLEMENTATION_PLAN.md` (v1.0, baseline `main@7e7b1e3`), produced by a multi-pass audit of the repository against seven source documents (Hermes plan, gap audit, multi-pass audit, Unified Workbench Specification, blueprint, cybernetic architecture, cybernetic GUI/UX). Governing user decisions recorded in the plan header: full Workbench migration (src/kosmos layout + Tauri 2 desktop), Workbench spec authoritative, security containment as Stage 15.1, plan delivered as Markdown + PR. Verified findings B-01…B-26 (incl. new B-03: the governed `SandboxPort`/`TektosToolRegistry` is never booted by the kernel — all live tool execution runs through the donor `SandboxProvider` with `shell=True` and `/` as FS root). Stages 15.0–15.16 with steps, tests, exit gates, commits, ADR queue ADR-147…ADR-163.
+- **Files touched:**
+  - `docs/implementation/TEKTOS_HERMES_IMPLEMENTATION_PLAN.md` (new)
+  - `docs/implementation/README.md`, `docs/implementation/baseline/README.md` (new)
+  - `docs/implementation/sources/*.md` (7 verbatim source documents, new)
+  - `SESSION_HANDOFF.md` (overwritten: position = Stage 15.0 pending)
+- **Ports / adapters affected:** none (no code change)
+- **PORTING_LEDGER / ADR updated:** — (ADR-147 is the first action of Stage 15.0)
+- **Stop-condition status:** in-progress — Stage 15.0 not started; plan awaiting merge on branch `feat/tektos-autonomous-runtime`
+
+## 2026-09-28 11:02 EDT — Plan v2.0: conformed to the Kosmos-LMS Architecture Report v1 (docs/implementation)
+
+- **Stage / plugin / port:** Stage 15 (architecture program) · pre-15.0 · documentation only
+- **What changed:** `docs/implementation/TEKTOS_HERMES_IMPLEMENTATION_PLAN.md` rewritten as v2.0 after a full read of the user's Architecture Report (`kosmos-lms_architecture-v1`). Governing decisions recorded in the plan header: (5) the Architecture Report outranks the Workbench specification; (6) OpenHands SDK is the primary Tekton coding worker with the Tektos-native loop as fallback behind one `CodingWorkerPort`; (7) stages follow the report's Phases 1–8 with P0 containment first; (8) Epimeleia drives hermes-agent through its API server (HTTP + SSE, `127.0.0.1:8642`). Changes: canonical VSM/Koinon nomenclature (Praxis/Harmonia/Kybernesis/Euthyna/Pronoia/Telos/Sema; Koinon ⊃ Syndesmos ⊃ Mesiteia; Mneme/Aisthesis; eleven subsystems) replaces the Workbench/UX names everywhere (crosswalk in Appendix C.3); repository layout per the report (`koinon/src/koinon/…`, `plugins/<11>`, `extensions/adapters/…`, `policies/…`, `workflows/`, `apps/`, `tests/{architecture,integration,policy,conformance}`) with renames `plugins/tektos`→`plugins/tekton`, `plugins/praxis`→`koinon.policy` + `kybernesis.apex`, `plugins/phrouros`→`koinon.kernel.sema.detectors`, `governance/constitution`→`policies/constitution`; component taxonomy registry (`ComponentKind`) with architecture tests; sixteen invariants each mapped to an enforcing stage; Stage 15.0–15.15 in report phase order (new 15.4 contracts/taxonomy/manifests, 15.10 Epimeleia + Hermes API-server adapter, 15.11 Zetesis/Gnosis/Synedrion/Agora; Mesiteia gains the inference gateway, Kosmos MCP server and A2A transport; Poros/Noesis split; Telos authority chain + capability tokens + protected paths + Integrity Tripwire); `mn_*` tables and `io.kosmos.<subsystem>.*` events; ADR queue ADR-147…ADR-166; Definition of Done extended to 16 points. Architecture Report added to `sources/`.
+- **Files touched:**
+  - `docs/implementation/TEKTOS_HERMES_IMPLEMENTATION_PLAN.md` (v1.0 → v2.0)
+  - `docs/implementation/sources/kosmos-lms_architecture-v1.md` (new; verbatim conversion of the user's RTF)
+  - `docs/implementation/README.md` (precedence updated)
+  - `SESSION_HANDOFF.md` (overwritten)
+- **Ports / adapters affected:** none (no code change)
+- **PORTING_LEDGER / ADR updated:** — (ADR-147 is the first action of Stage 15.0)
+- **Stop-condition status:** in-progress — Stage 15.0 not started; plan v2.0 awaiting merge on branch `feat/tektos-autonomous-runtime` (PR #1)
