@@ -6345,3 +6345,17 @@ consumer (terminal) **on top of** the discharged donor surface — these are new
 kernel capabilities surfaced to the UI, not donor-route restorations, so the donor
 tally does not move. The only ADR-141 edit is the `/ws/pty` row's consumer note
 (discharge was already P; the "no consumer" qualifier is now stale).
+
+
+## 2026-09-28 09:22 EDT — Workbench conformity & migration plan landed (docs/implementation)
+
+- **Stage / plugin / port:** Stage 15 (Workbench program) · pre-15.0 · documentation only
+- **What changed:** Added the Hermes execution contract `docs/implementation/TEKTOS_HERMES_IMPLEMENTATION_PLAN.md` (v1.0, baseline `main@7e7b1e3`), produced by a multi-pass audit of the repository against seven source documents (Hermes plan, gap audit, multi-pass audit, Unified Workbench Specification, blueprint, cybernetic architecture, cybernetic GUI/UX). Governing user decisions recorded in the plan header: full Workbench migration (src/kosmos layout + Tauri 2 desktop), Workbench spec authoritative, security containment as Stage 15.1, plan delivered as Markdown + PR. Verified findings B-01…B-26 (incl. new B-03: the governed `SandboxPort`/`TektosToolRegistry` is never booted by the kernel — all live tool execution runs through the donor `SandboxProvider` with `shell=True` and `/` as FS root). Stages 15.0–15.16 with steps, tests, exit gates, commits, ADR queue ADR-147…ADR-163.
+- **Files touched:**
+  - `docs/implementation/TEKTOS_HERMES_IMPLEMENTATION_PLAN.md` (new)
+  - `docs/implementation/README.md`, `docs/implementation/baseline/README.md` (new)
+  - `docs/implementation/sources/*.md` (7 verbatim source documents, new)
+  - `SESSION_HANDOFF.md` (overwritten: position = Stage 15.0 pending)
+- **Ports / adapters affected:** none (no code change)
+- **PORTING_LEDGER / ADR updated:** — (ADR-147 is the first action of Stage 15.0)
+- **Stop-condition status:** in-progress — Stage 15.0 not started; plan awaiting merge on branch `feat/tektos-autonomous-runtime`
